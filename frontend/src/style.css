@@ -1,0 +1,78 @@
+/* Orion — Warp-inspired terminal aesthetic */
+
+:root {
+  /* Tokyo Night palette */
+  --bg-primary: #1a1b26;
+  --bg-secondary: #16161e;
+  --bg-surface: #1e1e2e;
+  --bg-hover: #24253a;
+  --bg-active: #292a3c;
+  --bg-terminal: #13131e;
+
+  --border: #2a2b3d;
+  --border-dim: #222336;
+  --border-bright: #3d3e52;
+
+  --text-primary: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-dim: #565f89;
+  --text-muted: #414868;
+
+  --accent-blue: #7aa2f7;
+  --accent-purple: #bb9af7;
+  --accent-green: #9ece6a;
+  --accent-red: #f7768e;
+  --accent-yellow: #e0af68;
+  --accent-cyan: #7dcfff;
+  --accent-orange: #ff9e64;
+
+  --font-mono: 'JetBrains Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
+  --font-size: 13px;
+  --font-size-sm: 12px;
+  --font-size-xs: 11px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-bright);
+}
+
+::selection {
+  background: rgba(122, 162, 247, 0.3);
+  color: inherit;
+}
+
+*:focus {
+  outline: none;
+}

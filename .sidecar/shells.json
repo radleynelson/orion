@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "shells": [
+    {
+      "tmuxName": "sidecar-sh-orion-1",
+      "displayName": "Shell 1",
+      "createdAt": "2026-04-02T14:25:38.060645-06:00"
+    },
+    {
+      "tmuxName": "sidecar-sh-orion-2",
+      "displayName": "Shell 2",
+      "createdAt": "2026-04-02T15:08:08.417838-06:00"
+    }
+  ]
+}
