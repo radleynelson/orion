@@ -1,0 +1,448 @@
+import { useCallback, useState, useEffect } from 'react';
+import { useStore, generateId, PaneLeaf } from '../store';
+import { server, main } from '../../wailsjs/go/models';
+import {
+  ListWorkspaces,
+  CreateWorkspace,
+  DeleteWorkspace,
+  LaunchAgent,
+  CreateAttachedTerminal,
+  CreateTerminalInDir,
+  CloseTerminal,
+  OpenProjectDialog,
+  StartServers,
+  StopServers,
+  GetServerStatuses,
+  OpenBrowser,
+  GetAgentTypes,
+  GetLastProject,
+  GetProjectInfo,
+  GetSavedTabs,
+  SaveTabs,
+  GetTmuxSession,
+} from '../../wailsjs/go/main/App';
+
+export default function Sidebar() {
+  const {
+    project,
+    setProject,
+    workspaces,
+    activeWorkspacePath,
+    setWorkspaces,
+    setActiveWorkspace,
+    addTab,
+    tabs,
+  } = useStore();
+
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [serverStatuses, setServerStatuses] = useState<Record<string, server.ServerStatus[]>>({});
+  const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+
+  // Initialize app on mount — load last project and restore saved tabs
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const lastRoot = await GetLastProject();
+        if (!lastRoot) return;
+
+        const info = await GetProjectInfo(lastRoot);
+        setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
+        const ws = await ListWorkspaces(info.root);
+        setWorkspaces(ws);
+        const agents = await GetAgentTypes(info.root);
+        setAgentTypes(agents);
+
+        const mainWs = ws.find((w: any) => w.isMain);
+        if (mainWs) {
+          setActiveWorkspace(mainWs.path);
+        }
+
+        // Restore saved tabs
+        const savedTabs = await GetSavedTabs();
+        if (savedTabs && savedTabs.length > 0) {
+          for (const saved of savedTabs) {
+            const termId = generateId('term');
+            try {
+              await CreateAttachedTerminal(termId, saved.tmuxSession);
+              addTab({
+                id: generateId('tab'),
+                label: saved.label,
+                rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+                tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
+                workspacePath: saved.workspacePath,
+              });
+            } catch {}
+          }
+        } else if (mainWs) {
+          const termId = generateId('term');
+          await CreateTerminalInDir(termId, mainWs.path);
+          addTab({
+            id: generateId('tab'),
+            label: 'Shell 1',
+            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+            tabType: 'shell',
+            workspacePath: mainWs.path,
+          });
+        }
+      } catch {}
+    };
+
+    init();
+  }, []);
+
+  // Load agent types when project changes
+  useEffect(() => {
+    if (!project) return;
+    (async () => {
+      try {
+        const agents = await GetAgentTypes(project.root);
+        setAgentTypes(agents);
+      } catch {}
+    })();
+  }, [project]);
+
+  // Poll server statuses for active workspace
+  useEffect(() => {
+    if (!project || !activeWorkspacePath) return;
+    const fetchStatuses = async () => {
+      try {
+        const statuses = await GetServerStatuses(project.root, activeWorkspacePath);
+        if (statuses) {
+          setServerStatuses((prev) => ({ ...prev, [activeWorkspacePath]: statuses }));
+        }
+      } catch {}
+    };
+    fetchStatuses();
+    const interval = setInterval(fetchStatuses, 5000);
+    return () => clearInterval(interval);
+  }, [project, activeWorkspacePath]);
+
+  // Keyboard shortcut: Cmd+\ to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey && e.key === '\\') {
+        e.preventDefault();
+        setSidebarVisible((v) => !v);
+      }
+      // Cmd+Shift+B: open browser
+      if (e.metaKey && e.shiftKey && e.key === 'B' && project && activeWorkspacePath) {
+        e.preventDefault();
+        OpenBrowser(project.root, activeWorkspacePath);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [project, activeWorkspacePath]);
+
+  const refreshWorkspaces = useCallback(async () => {
+    if (!project) return;
+    try {
+      const ws = await ListWorkspaces(project.root);
+      setWorkspaces(ws);
+    } catch (err) {
+      console.error('Failed to list workspaces:', err);
+    }
+  }, [project, setWorkspaces]);
+
+  const handleCreate = useCallback(async () => {
+    if (!project || !newName.trim()) return;
+    try {
+      await CreateWorkspace(project.root, newName.trim());
+      setNewName('');
+      setCreating(false);
+      await refreshWorkspaces();
+    } catch (err) {
+      console.error('Failed to create workspace:', err);
+    }
+  }, [project, newName, refreshWorkspaces]);
+
+  const handleDelete = useCallback(async (path: string) => {
+    if (!project) return;
+    try {
+      const wsTabs = tabs.filter((t) => t.workspacePath === path);
+      for (const tab of wsTabs) {
+        const termIds = useStore.getState().getAllTerminalIds(tab);
+        for (const termId of termIds) {
+          await CloseTerminal(termId);
+        }
+      }
+      await DeleteWorkspace(project.root, path);
+      setConfirmDelete(null);
+      await refreshWorkspaces();
+    } catch (err) {
+      console.error('Failed to delete workspace:', err);
+    }
+  }, [project, tabs, refreshWorkspaces]);
+
+  const handleLaunchAgent = useCallback(async (wsPath: string, agentName: string) => {
+    if (!project) return;
+    try {
+      const tmuxSession = await LaunchAgent(project.root, wsPath, agentName);
+      const termId = generateId('term');
+      await CreateAttachedTerminal(termId, tmuxSession);
+      const agent = agentTypes.find((a) => a.name === agentName);
+      addTab({
+        id: generateId('tab'),
+        label: agent?.label || agentName,
+        rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+        tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
+        workspacePath: wsPath,
+      });
+    } catch (err) {
+      console.error('Failed to launch agent:', err);
+    }
+  }, [project, agentTypes, addTab]);
+
+  const handleLaunchShell = useCallback(async (wsPath: string) => {
+    if (!project) return;
+    try {
+      const termId = generateId('term');
+      await CreateTerminalInDir(termId, wsPath);
+      const shellNum = tabs.filter((t) => t.workspacePath === wsPath && t.tabType === 'shell').length + 1;
+      addTab({
+        id: generateId('tab'),
+        label: `Shell ${shellNum}`,
+        rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+        tabType: 'shell',
+        workspacePath: wsPath,
+      });
+    } catch (err) {
+      console.error('Failed to launch shell:', err);
+    }
+  }, [project, tabs, addTab]);
+
+  const handleStartServers = useCallback(async (wsPath: string, isMain: boolean) => {
+    if (!project) return;
+    try {
+      const statuses = await StartServers(project.root, wsPath, isMain);
+      setServerStatuses((prev) => ({ ...prev, [wsPath]: statuses }));
+      for (const srv of statuses) {
+        if (srv.running && srv.tmuxSession) {
+          const termId = generateId('term');
+          await CreateAttachedTerminal(termId, srv.tmuxSession);
+          addTab({
+            id: generateId('tab'),
+            label: srv.name.charAt(0).toUpperCase() + srv.name.slice(1),
+            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+            tabType: 'server',
+            workspacePath: wsPath,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to start servers:', err);
+    }
+  }, [project, addTab]);
+
+  const handleStopServers = useCallback(async (wsPath: string) => {
+    if (!project) return;
+    try {
+      await StopServers(wsPath);
+      setServerStatuses((prev) => ({ ...prev, [wsPath]: [] }));
+      const serverTabs = tabs.filter((t) => t.workspacePath === wsPath && t.tabType === 'server');
+      for (const tab of serverTabs) {
+        const termIds = useStore.getState().getAllTerminalIds(tab);
+        for (const termId of termIds) {
+          await CloseTerminal(termId);
+        }
+        useStore.getState().removeTab(tab.id);
+      }
+    } catch (err) {
+      console.error('Failed to stop servers:', err);
+    }
+  }, [project, tabs]);
+
+  const handleOpenBrowser = useCallback(async (wsPath: string) => {
+    if (!project) return;
+    try {
+      await OpenBrowser(project.root, wsPath);
+    } catch (err) {
+      console.error('Failed to open browser:', err);
+    }
+  }, [project]);
+
+  const handleOpenProject = useCallback(async () => {
+    try {
+      const info = await OpenProjectDialog();
+      setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
+      const ws = await ListWorkspaces(info.root);
+      setWorkspaces(ws);
+      const agents = await GetAgentTypes(info.root);
+      setAgentTypes(agents);
+      const main = ws.find((w) => w.isMain);
+      if (main) {
+        setActiveWorkspace(main.path);
+        const termId = generateId('term');
+        await CreateTerminalInDir(termId, main.path);
+        addTab({
+          id: generateId('tab'),
+          label: 'Shell 1',
+          rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+          tabType: 'shell',
+          workspacePath: main.path,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to open project:', err);
+    }
+  }, [setProject, setWorkspaces, setActiveWorkspace, addTab]);
+
+  if (!sidebarVisible) {
+    return null;
+  }
+
+  if (!project) {
+    return (
+      <div className="sidebar">
+        <div className="sidebar-section">
+          <div className="sidebar-label">Project</div>
+          <div className="sidebar-item" onClick={handleOpenProject} style={{ cursor: 'pointer' }}>
+            <span className="icon inactive">+</span>
+            <span className="label">Open project...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="sidebar">
+      {/* Project name */}
+      <div className="sidebar-section">
+        <div className="sidebar-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{project.name}</span>
+          <span
+            style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size-xs)' }}
+            onClick={handleOpenProject}
+            title="Switch project"
+          >
+            ↗
+          </span>
+        </div>
+      </div>
+
+      {/* Workspaces */}
+      <div className="sidebar-section" style={{ flex: 1 }}>
+        <div className="sidebar-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Workspaces</span>
+          <span
+            style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: '14px' }}
+            onClick={() => setCreating(true)}
+            title="New workspace"
+          >
+            +
+          </span>
+        </div>
+
+        {workspaces.map((ws) => {
+          const wsStatuses = serverStatuses[ws.path] || [];
+          const wsHasServers = wsStatuses.some((s) => s.running);
+
+          return (
+            <div key={ws.path}>
+              <div
+                className={`sidebar-item ${ws.path === activeWorkspacePath ? 'active' : ''}`}
+                onClick={() => setActiveWorkspace(ws.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (!ws.isMain) setConfirmDelete(ws.path);
+                }}
+              >
+                <span className={`icon ${ws.hasAgent || wsHasServers ? '' : 'inactive'}`}>
+                  {ws.isMain ? '◉' : ws.hasAgent || wsHasServers ? '●' : '○'}
+                </span>
+                <span className="label">{ws.isMain ? 'main' : ws.branch || ws.name}</span>
+              </div>
+
+              {/* Actions when workspace is selected */}
+              {ws.path === activeWorkspacePath && (
+                <>
+                  {/* Dynamic agent buttons from config */}
+                  <div className="sidebar-actions">
+                    {agentTypes.map((agent) => (
+                      <span
+                        key={agent.name}
+                        className="sidebar-action"
+                        onClick={() => handleLaunchAgent(ws.path, agent.name)}
+                        title={agent.command}
+                      >
+                        + {agent.label}
+                      </span>
+                    ))}
+                    <span className="sidebar-action" onClick={() => handleLaunchShell(ws.path)}>
+                      + Shell
+                    </span>
+                  </div>
+
+                  {/* Server controls */}
+                  <div className="sidebar-actions">
+                    {!wsHasServers ? (
+                      <span className="sidebar-action" onClick={() => handleStartServers(ws.path, ws.isMain)} style={{ color: 'var(--accent-green)' }}>
+                        ▶ Start Servers
+                      </span>
+                    ) : (
+                      <>
+                        <span className="sidebar-action" onClick={() => handleStopServers(ws.path)} style={{ color: 'var(--accent-red)' }}>
+                          ■ Stop
+                        </span>
+                        <span className="sidebar-action" onClick={() => handleOpenBrowser(ws.path)} style={{ color: 'var(--accent-cyan)' }}>
+                          ◎ Browser
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Server port display */}
+                  {wsStatuses.length > 0 && (
+                    <div className="sidebar-servers">
+                      {wsStatuses.map((srv) => (
+                        <div key={srv.name} className="sidebar-server">
+                          <span className={`server-dot ${srv.running ? 'running' : 'stopped'}`}>●</span>
+                          <span className="server-name">{srv.name}</span>
+                          {srv.port > 0 && <span className="server-port">:{srv.port}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Delete confirmation */}
+              {confirmDelete === ws.path && (
+                <div className="sidebar-confirm">
+                  <span style={{ color: 'var(--accent-red)', fontSize: 'var(--font-size-xs)' }}>Delete?</span>
+                  <span className="sidebar-action" style={{ color: 'var(--accent-red)' }} onClick={() => handleDelete(ws.path)}>
+                    yes
+                  </span>
+                  <span className="sidebar-action" onClick={() => setConfirmDelete(null)}>
+                    no
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {creating && (
+          <div style={{ padding: '4px 12px' }}>
+            <input
+              autoFocus
+              className="sidebar-input"
+              placeholder="branch-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreate();
+                if (e.key === 'Escape') { setCreating(false); setNewName(''); }
+              }}
+              onBlur={() => { if (!newName.trim()) { setCreating(false); setNewName(''); } }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

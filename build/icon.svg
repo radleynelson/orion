@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background gradient - deep space -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1650"/>
+      <stop offset="50%" stop-color="#2a1f6e"/>
+      <stop offset="100%" stop-color="#162040"/>
+    </linearGradient>
+
+    <!-- Nebula glow centered on constellation -->
+    <radialGradient id="nebula1" cx="50%" cy="50%" r="45%">
+      <stop offset="0%" stop-color="#7b2ff7" stop-opacity="0.3"/>
+      <stop offset="50%" stop-color="#5b3cc4" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#1e1650" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="nebula2" cx="55%" cy="48%" r="40%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.2"/>
+      <stop offset="60%" stop-color="#1d4ed8" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#1e1650" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Bright star glow -->
+    <radialGradient id="brightStarGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="15%" stop-color="#e0e8ff" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#7aa2f7" stop-opacity="0.5"/>
+      <stop offset="70%" stop-color="#7aa2f7" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#7aa2f7" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Betelgeuse reddish glow -->
+    <radialGradient id="betelgeuseGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="15%" stop-color="#ffd4c4" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#ff8a65" stop-opacity="0.5"/>
+      <stop offset="70%" stop-color="#ff7043" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#ff7043" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Rigel blue-white glow -->
+    <radialGradient id="rigelGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="15%" stop-color="#d0e4ff" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#64b5f6" stop-opacity="0.5"/>
+      <stop offset="70%" stop-color="#42a5f5" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#42a5f5" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Line glow filter -->
+    <filter id="lineGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Star cross-flare filter -->
+    <filter id="starFlare" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3"/>
+    </filter>
+
+    <!-- macOS squircle clip path -->
+    <clipPath id="squircle">
+      <path d="M512 60c195 0 280 0 362 82s82 167 82 362c0 195 0 280-82 362s-167 82-362 82c-195 0-280 0-362-82S68 699 68 504c0-195 0-280 82-362S317 60 512 60z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Squircle background -->
+  <g clip-path="url(#squircle)">
+    <!-- Deep space background -->
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <!-- Nebula effects -->
+    <rect width="1024" height="1024" fill="url(#nebula1)"/>
+    <rect width="1024" height="1024" fill="url(#nebula2)"/>
+
+    <!-- Tiny background stars -->
+    <circle cx="150" cy="180" r="1.5" fill="#ffffff" opacity="0.3"/>
+    <circle cx="280" cy="120" r="1" fill="#ffffff" opacity="0.25"/>
+    <circle cx="820" cy="200" r="1.5" fill="#ffffff" opacity="0.3"/>
+    <circle cx="750" cy="150" r="1" fill="#ffffff" opacity="0.2"/>
+    <circle cx="900" cy="350" r="1" fill="#ffffff" opacity="0.25"/>
+    <circle cx="130" cy="400" r="1.2" fill="#ffffff" opacity="0.25"/>
+    <circle cx="880" cy="550" r="1" fill="#ffffff" opacity="0.2"/>
+    <circle cx="200" cy="700" r="1.2" fill="#ffffff" opacity="0.3"/>
+    <circle cx="850" cy="750" r="1" fill="#ffffff" opacity="0.2"/>
+    <circle cx="170" cy="850" r="1" fill="#ffffff" opacity="0.25"/>
+    <circle cx="700" cy="870" r="1.2" fill="#ffffff" opacity="0.2"/>
+    <circle cx="400" cy="160" r="1" fill="#ffffff" opacity="0.2"/>
+    <circle cx="600" cy="130" r="1" fill="#ffffff" opacity="0.25"/>
+    <circle cx="500" cy="880" r="1" fill="#ffffff" opacity="0.2"/>
+    <circle cx="920" cy="450" r="1" fill="#ffffff" opacity="0.2"/>
+    <circle cx="110" cy="600" r="1" fill="#ffffff" opacity="0.25"/>
+
+    <!-- Constellation lines - glowing and visible -->
+    <g stroke="#8ecbff" stroke-opacity="0.7" stroke-width="3" fill="none" stroke-linecap="round" filter="url(#lineGlow)">
+      <!-- Shoulders to belt -->
+      <line x1="330" y1="280" x2="420" y2="470"/>
+      <line x1="690" y1="290" x2="600" y2="470"/>
+      <!-- Belt stars connected -->
+      <line x1="420" y1="470" x2="512" y2="490"/>
+      <line x1="512" y1="490" x2="600" y2="470"/>
+      <!-- Belt to feet -->
+      <line x1="420" y1="470" x2="345" y2="720"/>
+      <line x1="600" y1="470" x2="680" y2="710"/>
+      <!-- Shoulders connected (top) -->
+      <line x1="330" y1="280" x2="690" y2="290"/>
+    </g>
+
+    <!-- Star outer glow halos (large, bright) -->
+    <circle cx="330" cy="280" r="55" fill="url(#betelgeuseGlow)"/>
+    <circle cx="690" cy="290" r="44" fill="url(#brightStarGlow)"/>
+    <circle cx="420" cy="470" r="38" fill="url(#brightStarGlow)"/>
+    <circle cx="512" cy="490" r="50" fill="url(#brightStarGlow)"/>
+    <circle cx="600" cy="470" r="38" fill="url(#brightStarGlow)"/>
+    <circle cx="345" cy="720" r="38" fill="url(#brightStarGlow)"/>
+    <circle cx="680" cy="710" r="55" fill="url(#rigelGlow)"/>
+
+    <!-- Star cross-flare effect (soft glow behind stars) -->
+    <g filter="url(#starFlare)" opacity="0.8">
+      <circle cx="330" cy="280" r="8" fill="#ffb07c"/>
+      <circle cx="690" cy="290" r="6" fill="#a0c4ff"/>
+      <circle cx="420" cy="470" r="5" fill="#a0c4ff"/>
+      <circle cx="512" cy="490" r="8" fill="#c0d8ff"/>
+      <circle cx="600" cy="470" r="5" fill="#a0c4ff"/>
+      <circle cx="345" cy="720" r="5" fill="#a0c4ff"/>
+      <circle cx="680" cy="710" r="8" fill="#80b8ff"/>
+    </g>
+
+    <!-- Star bright cores -->
+    <!-- Betelgeuse (top-left shoulder, reddish, LARGE) -->
+    <circle cx="330" cy="280" r="11" fill="#ffffff"/>
+
+    <!-- Bellatrix (top-right shoulder) -->
+    <circle cx="690" cy="290" r="9" fill="#ffffff"/>
+
+    <!-- Mintaka (left belt star) -->
+    <circle cx="420" cy="470" r="8" fill="#ffffff"/>
+
+    <!-- Alnilam (center belt star - brightest) -->
+    <circle cx="512" cy="490" r="11" fill="#ffffff"/>
+
+    <!-- Alnitak (right belt star) -->
+    <circle cx="600" cy="470" r="8" fill="#ffffff"/>
+
+    <!-- Saiph (bottom-left foot) -->
+    <circle cx="345" cy="720" r="8" fill="#ffffff"/>
+
+    <!-- Rigel (bottom-right foot, blue-white, LARGE) -->
+    <circle cx="680" cy="710" r="11" fill="#ffffff"/>
+  </g>
+
+  <!-- Subtle border for macOS depth -->
+  <path d="M512 60c195 0 280 0 362 82s82 167 82 362c0 195 0 280-82 362s-167 82-362 82c-195 0-280 0-362-82S68 699 68 504c0-195 0-280 82-362S317 60 512 60z" fill="none" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1.5"/>
+</svg>

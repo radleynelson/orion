@@ -24,9 +24,9 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		// Deep dark background matching the terminal theme
-		BackgroundColour: &options.RGBA{R: 26, G: 27, B: 38, A: 255},
+		BackgroundColour: &options.RGBA{R: 37, G: 37, B: 37, A: 255},
 		OnStartup:        app.startup,
+		OnDomReady:       app.domReady,
 		OnShutdown:       app.shutdown,
 		Frameless:        false,
 		Mac: &mac.Options{
@@ -35,9 +35,9 @@ func main() {
 				HideTitle:                 true,
 				HideTitleBar:              false,
 				FullSizeContent:           true,
-				UseToolbar:                false,
+				UseToolbar:                true,
 			},
-			WebviewIsTransparent: true,
+			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
 				Title:   "Orion",

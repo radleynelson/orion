@@ -8,15 +8,17 @@
   background: var(--bg-primary);
 }
 
-/* Title bar drag region for macOS */
+/* Title bar drag region for macOS — overlays the native toolbar area */
 .titlebar {
-  height: 38px;
-  min-height: 38px;
+  height: 52px;
+  min-height: 52px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
+  padding-bottom: 8px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-dim);
+  --wails-draggable: drag;
   -webkit-app-region: drag;
   user-select: none;
   position: relative;
@@ -48,6 +50,8 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 .sidebar-section {
@@ -101,6 +105,140 @@
   white-space: nowrap;
 }
 
+/* Sidebar workspace actions */
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
+  padding: 2px 12px 6px 28px;
+}
+
+.sidebar-action {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.1s;
+}
+
+.sidebar-action:hover {
+  color: var(--accent-blue);
+}
+
+.sidebar-confirm {
+  display: flex;
+  gap: 8px;
+  padding: 2px 12px 6px 28px;
+  align-items: center;
+}
+
+/* Sidebar input */
+.sidebar-input {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.sidebar-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.sidebar-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Server status display */
+.sidebar-servers {
+  padding: 2px 12px 6px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-server {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+}
+
+.server-dot {
+  font-size: 8px;
+}
+
+.server-dot.running {
+  color: var(--accent-green);
+}
+
+.server-dot.stopped {
+  color: var(--text-muted);
+}
+
+.server-name {
+  color: var(--text-secondary);
+}
+
+.server-port {
+  color: var(--accent-cyan);
+  font-size: var(--font-size-xs);
+}
+
+/* Tab icon */
+.tab-icon {
+  font-size: 10px;
+  color: var(--accent-purple);
+}
+
+/* Split pane system */
+.split-container {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-child {
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-divider {
+  flex-shrink: 0;
+  background: var(--border-dim);
+  transition: background 0.15s;
+  z-index: 1;
+}
+
+.split-divider:hover,
+.split-divider.divider-active {
+  background: var(--accent-blue);
+}
+
+.divider-vertical {
+  width: 3px;
+  cursor: col-resize;
+}
+
+.divider-horizontal {
+  height: 3px;
+  cursor: row-resize;
+}
+
+.pane-leaf {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.pane-leaf.pane-focused {
+  box-shadow: inset 0 0 0 1px var(--accent-blue);
+}
+
 /* Terminal area */
 .terminal-area {
   flex: 1;
@@ -120,6 +258,8 @@
   border-bottom: 1px solid var(--border-dim);
   padding: 0 8px;
   gap: 2px;
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
   overflow-x: auto;
   -webkit-app-region: no-drag;
 }
@@ -148,6 +288,23 @@
   background: var(--bg-active);
   color: var(--text-primary);
   border-color: var(--border);
+}
+
+.tab.tab-drop-target {
+  border-color: var(--accent-blue) !important;
+  background: var(--bg-hover);
+}
+
+.tab-rename-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-blue);
+  border-radius: 2px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 0 4px;
+  width: 80px;
+  outline: none;
 }
 
 .tab .close {

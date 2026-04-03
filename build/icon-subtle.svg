@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background gradient - deep space -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f0c29"/>
+      <stop offset="50%" stop-color="#1a1040"/>
+      <stop offset="100%" stop-color="#0d1b2a"/>
+    </linearGradient>
+
+    <!-- Nebula glow -->
+    <radialGradient id="nebula1" cx="45%" cy="50%" r="35%">
+      <stop offset="0%" stop-color="#7b2ff7" stop-opacity="0.15"/>
+      <stop offset="60%" stop-color="#5b3cc4" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#0f0c29" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="nebula2" cx="60%" cy="55%" r="30%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.12"/>
+      <stop offset="70%" stop-color="#1d4ed8" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#0f0c29" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Star glow effect -->
+    <radialGradient id="starGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="30%" stop-color="#c8d6f0" stop-opacity="0.6"/>
+      <stop offset="70%" stop-color="#6cb6ff" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#6cb6ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Bright star glow (for belt and Rigel/Betelgeuse) -->
+    <radialGradient id="brightStarGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="20%" stop-color="#e0e8ff" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#7aa2f7" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#7aa2f7" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Betelgeuse reddish glow -->
+    <radialGradient id="betelgeuseGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="20%" stop-color="#ffd4c4" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#ff8a65" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ff7043" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Rigel blue-white glow -->
+    <radialGradient id="rigelGlow">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="20%" stop-color="#d0e4ff" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#64b5f6" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#42a5f5" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- macOS squircle clip path -->
+    <clipPath id="squircle">
+      <path d="M512 60c195 0 280 0 362 82s82 167 82 362c0 195 0 280-82 362s-167 82-362 82c-195 0-280 0-362-82S68 699 68 504c0-195 0-280 82-362S317 60 512 60z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Squircle background -->
+  <g clip-path="url(#squircle)">
+    <!-- Deep space background -->
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <!-- Nebula effects -->
+    <rect width="1024" height="1024" fill="url(#nebula1)"/>
+    <rect width="1024" height="1024" fill="url(#nebula2)"/>
+
+    <!-- Tiny background stars -->
+    <circle cx="150" cy="180" r="1" fill="#ffffff" opacity="0.4"/>
+    <circle cx="280" cy="120" r="0.8" fill="#ffffff" opacity="0.3"/>
+    <circle cx="820" cy="200" r="1" fill="#ffffff" opacity="0.35"/>
+    <circle cx="750" cy="150" r="0.7" fill="#ffffff" opacity="0.25"/>
+    <circle cx="900" cy="350" r="0.8" fill="#ffffff" opacity="0.3"/>
+    <circle cx="130" cy="400" r="1" fill="#ffffff" opacity="0.3"/>
+    <circle cx="880" cy="550" r="0.8" fill="#ffffff" opacity="0.25"/>
+    <circle cx="200" cy="700" r="1" fill="#ffffff" opacity="0.35"/>
+    <circle cx="850" cy="750" r="0.7" fill="#ffffff" opacity="0.2"/>
+    <circle cx="170" cy="850" r="0.8" fill="#ffffff" opacity="0.3"/>
+    <circle cx="700" cy="870" r="1" fill="#ffffff" opacity="0.25"/>
+    <circle cx="400" cy="160" r="0.6" fill="#ffffff" opacity="0.2"/>
+    <circle cx="600" cy="130" r="0.8" fill="#ffffff" opacity="0.3"/>
+    <circle cx="500" cy="880" r="0.7" fill="#ffffff" opacity="0.25"/>
+    <circle cx="920" cy="450" r="0.6" fill="#ffffff" opacity="0.2"/>
+    <circle cx="110" cy="600" r="0.8" fill="#ffffff" opacity="0.3"/>
+
+    <!-- Constellation lines - subtle -->
+    <g stroke="#6cb6ff" stroke-opacity="0.18" stroke-width="1.5" fill="none" stroke-linecap="round">
+      <!-- Shoulders to belt -->
+      <line x1="340" y1="300" x2="430" y2="480"/>
+      <line x1="680" y1="310" x2="590" y2="480"/>
+      <!-- Belt stars connected -->
+      <line x1="430" y1="480" x2="512" y2="495"/>
+      <line x1="512" y1="495" x2="590" y2="480"/>
+      <!-- Belt to feet -->
+      <line x1="430" y1="480" x2="360" y2="720"/>
+      <line x1="590" y1="480" x2="670" y2="710"/>
+      <!-- Shoulders connected (top) -->
+      <line x1="340" y1="300" x2="680" y2="310"/>
+    </g>
+
+    <!-- Orion constellation stars -->
+
+    <!-- Betelgeuse (top-left shoulder, reddish) -->
+    <circle cx="340" cy="300" r="20" fill="url(#betelgeuseGlow)"/>
+    <circle cx="340" cy="300" r="5" fill="#ffffff"/>
+
+    <!-- Bellatrix (top-right shoulder) -->
+    <circle cx="680" cy="310" r="16" fill="url(#brightStarGlow)"/>
+    <circle cx="680" cy="310" r="4" fill="#ffffff"/>
+
+    <!-- Mintaka (left belt star) -->
+    <circle cx="430" cy="480" r="14" fill="url(#brightStarGlow)"/>
+    <circle cx="430" cy="480" r="3.5" fill="#ffffff"/>
+
+    <!-- Alnilam (center belt star - brightest) -->
+    <circle cx="512" cy="495" r="18" fill="url(#brightStarGlow)"/>
+    <circle cx="512" cy="495" r="5" fill="#ffffff"/>
+
+    <!-- Alnitak (right belt star) -->
+    <circle cx="590" cy="480" r="14" fill="url(#brightStarGlow)"/>
+    <circle cx="590" cy="480" r="3.5" fill="#ffffff"/>
+
+    <!-- Saiph (bottom-left foot) -->
+    <circle cx="360" cy="720" r="14" fill="url(#brightStarGlow)"/>
+    <circle cx="360" cy="720" r="3.5" fill="#ffffff"/>
+
+    <!-- Rigel (bottom-right foot, blue-white, very bright) -->
+    <circle cx="670" cy="710" r="22" fill="url(#rigelGlow)"/>
+    <circle cx="670" cy="710" r="5.5" fill="#ffffff"/>
+  </g>
+
+  <!-- Subtle border for macOS depth -->
+  <path d="M512 60c195 0 280 0 362 82s82 167 82 362c0 195 0 280-82 362s-167 82-362 82c-195 0-280 0-362-82S68 699 68 504c0-195 0-280 82-362S317 60 512 60z" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1"/>
+</svg>

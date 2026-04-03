@@ -1,11 +1,14 @@
 package terminal
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -16,10 +19,11 @@ import (
 
 // Terminal represents a single terminal session backed by a PTY.
 type Terminal struct {
-	ID   string
-	pty  *os.File
-	cmd  *exec.Cmd
-	done chan struct{}
+	ID          string
+	pty         *os.File
+	cmd         *exec.Cmd
+	done        chan struct{}
+	tmuxSession string // if attached to a tmux session, track it for cleanup
 }
 
 // Manager manages multiple terminal sessions.
@@ -56,7 +60,12 @@ func (m *Manager) Create(id string) error {
 	}
 
 	cmd := exec.Command(shell, "-l")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"LC_ALL=en_US.UTF-8",
+		"LC_CTYPE=en_US.UTF-8",
+	)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -77,6 +86,62 @@ func (m *Manager) Create(id string) error {
 	return nil
 }
 
+// CreateInDir creates a tmux session in the given directory and attaches to it.
+// Uses tmux so the session is recoverable after Orion restarts.
+// Automatically sources .orion/env.sh if it exists (for port awareness).
+func (m *Manager) CreateInDir(id string, dir string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.terminals[id]; exists {
+		return fmt.Errorf("terminal %s already exists", id)
+	}
+
+	// Create a tmux session with a name based on the terminal id
+	tmuxName := "orion-shell-" + id
+
+	createCmd := exec.Command("tmux", "new-session", "-d", "-s", tmuxName, "-c", dir)
+	if out, err := createCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux new-session failed: err=%v out=%q name=%s dir=%s", err, strings.TrimSpace(string(out)), tmuxName, dir)
+	}
+	exec.Command("tmux", "set-option", "-t", tmuxName, "history-limit", "10000").Run()
+
+	// Source .orion/env.sh if it exists
+	envFile := filepath.Join(dir, ".orion", "env.sh")
+	if _, err := os.Stat(envFile); err == nil {
+		exec.Command("tmux", "send-keys", "-t", tmuxName, "source .orion/env.sh", "Enter").Run()
+	}
+
+	// Attach to the tmux session
+	cmd := exec.Command("tmux", "attach-session", "-d", "-t", tmuxName)
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"LC_ALL=en_US.UTF-8",
+		"LC_CTYPE=en_US.UTF-8",
+	)
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		// Clean up the tmux session if attach fails
+		exec.Command("tmux", "kill-session", "-t", tmuxName).Run()
+		return fmt.Errorf("failed to attach to tmux session: %w", err)
+	}
+
+	t := &Terminal{
+		ID:          id,
+		pty:         ptmx,
+		cmd:         cmd,
+		done:        make(chan struct{}),
+		tmuxSession: tmuxName,
+	}
+	m.terminals[id] = t
+
+	go m.readLoop(t)
+
+	return nil
+}
+
 // CreateAttached spawns a terminal that attaches to an existing tmux session.
 func (m *Manager) CreateAttached(id, tmuxSession string) error {
 	m.mu.Lock()
@@ -86,8 +151,13 @@ func (m *Manager) CreateAttached(id, tmuxSession string) error {
 		return fmt.Errorf("terminal %s already exists", id)
 	}
 
-	cmd := exec.Command("tmux", "attach-session", "-t", tmuxSession)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd := exec.Command("tmux", "attach-session", "-d", "-t", tmuxSession)
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"LC_ALL=en_US.UTF-8",
+		"LC_CTYPE=en_US.UTF-8",
+	)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -95,10 +165,11 @@ func (m *Manager) CreateAttached(id, tmuxSession string) error {
 	}
 
 	t := &Terminal{
-		ID:   id,
-		pty:  ptmx,
-		cmd:  cmd,
-		done: make(chan struct{}),
+		ID:          id,
+		pty:         ptmx,
+		cmd:         cmd,
+		done:        make(chan struct{}),
+		tmuxSession: tmuxSession,
 	}
 	m.terminals[id] = t
 
@@ -161,7 +232,7 @@ func (m *Manager) Resize(id string, cols, rows int) error {
 	return nil
 }
 
-// Close terminates a terminal session.
+// Close terminates a terminal session and kills its tmux session if attached.
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	t, ok := m.terminals[id]
@@ -177,10 +248,35 @@ func (m *Manager) Close(id string) error {
 	t.cmd.Process.Signal(syscall.SIGHUP)
 	t.cmd.Wait()
 
+	// Kill the underlying tmux session so no zombie processes remain
+	if t.tmuxSession != "" {
+		exec.Command("tmux", "kill-session", "-t", t.tmuxSession).Run()
+	}
+
 	return nil
 }
 
-// CloseAll closes all terminal sessions.
+// DetachAll detaches from all terminal PTYs without killing tmux sessions.
+// Used on app shutdown so sessions survive for recovery on next launch.
+func (m *Manager) DetachAll() {
+	m.mu.Lock()
+	terminals := make([]*Terminal, 0, len(m.terminals))
+	for _, t := range m.terminals {
+		terminals = append(terminals, t)
+	}
+	m.terminals = make(map[string]*Terminal)
+	m.mu.Unlock()
+
+	for _, t := range terminals {
+		close(t.done)
+		t.pty.Close()
+		t.cmd.Process.Signal(syscall.SIGHUP)
+		t.cmd.Wait()
+		// Do NOT kill tmux session — leave it alive for recovery
+	}
+}
+
+// CloseAll closes all terminal sessions and kills their tmux sessions.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.terminals))
@@ -192,6 +288,16 @@ func (m *Manager) CloseAll() {
 	for _, id := range ids {
 		m.Close(id)
 	}
+}
+
+// GetTmuxSession returns the tmux session name for a terminal, or empty string.
+func (m *Manager) GetTmuxSession(id string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if t, ok := m.terminals[id]; ok {
+		return t.tmuxSession
+	}
+	return ""
 }
 
 // List returns IDs of all active terminals.
@@ -230,4 +336,31 @@ func (m *Manager) readLoop(t *Terminal) {
 			}
 		}
 	}
+}
+
+// appendOrionEnv reads .orion/env.sh from a workspace dir and appends
+// the exported variables to the given environment slice.
+func appendOrionEnv(workspaceDir string, env []string) []string {
+	envFile := filepath.Join(workspaceDir, ".orion", "env.sh")
+	f, err := os.Open(envFile)
+	if err != nil {
+		return env
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Parse "export KEY=VALUE" lines
+		if strings.HasPrefix(line, "export ") {
+			kv := strings.TrimPrefix(line, "export ")
+			if strings.Contains(kv, "=") {
+				env = append(env, kv)
+			}
+		}
+	}
+	return env
 }

@@ -1,30 +1,30 @@
-/* Orion — Warp-inspired terminal aesthetic */
+/* Orion — Warp-inspired dark palette */
 
 :root {
-  /* Tokyo Night palette */
-  --bg-primary: #1a1b26;
-  --bg-secondary: #16161e;
-  --bg-surface: #1e1e2e;
-  --bg-hover: #24253a;
-  --bg-active: #292a3c;
-  --bg-terminal: #13131e;
+  /* Warp-inspired warm dark palette */
+  --bg-primary: #2d2d2d;
+  --bg-secondary: #252525;
+  --bg-surface: #333333;
+  --bg-hover: #3a3a3a;
+  --bg-active: #404040;
+  --bg-terminal: #1e1e1e;
 
-  --border: #2a2b3d;
-  --border-dim: #222336;
-  --border-bright: #3d3e52;
+  --border: #3d3d3d;
+  --border-dim: #333333;
+  --border-bright: #4a4a4a;
 
-  --text-primary: #c0caf5;
-  --text-secondary: #a9b1d6;
-  --text-dim: #565f89;
-  --text-muted: #414868;
+  --text-primary: #d4d4d4;
+  --text-secondary: #b0b0b0;
+  --text-dim: #808080;
+  --text-muted: #5a5a5a;
 
-  --accent-blue: #7aa2f7;
-  --accent-purple: #bb9af7;
-  --accent-green: #9ece6a;
-  --accent-red: #f7768e;
-  --accent-yellow: #e0af68;
-  --accent-cyan: #7dcfff;
-  --accent-orange: #ff9e64;
+  --accent-blue: #6cb6ff;
+  --accent-purple: #d2a8ff;
+  --accent-green: #7ee787;
+  --accent-red: #ff7b72;
+  --accent-yellow: #d29922;
+  --accent-cyan: #76e3ea;
+  --accent-orange: #ffa657;
 
   --font-mono: 'JetBrains Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
   --font-size: 13px;
@@ -69,7 +69,7 @@ html, body, #root {
 }
 
 ::selection {
-  background: rgba(122, 162, 247, 0.3);
+  background: rgba(108, 182, 255, 0.3);
   color: inherit;
 }
 

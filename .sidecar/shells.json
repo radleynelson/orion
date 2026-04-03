@@ -10,6 +10,11 @@
       "tmuxName": "sidecar-sh-orion-2",
       "displayName": "Shell 2",
       "createdAt": "2026-04-02T15:08:08.417838-06:00"
+    },
+    {
+      "tmuxName": "sidecar-sh-orion-3",
+      "displayName": "Shell 3",
+      "createdAt": "2026-04-02T20:15:18.04468-06:00"
     }
   ]
 }
