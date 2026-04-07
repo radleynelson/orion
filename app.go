@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"orion/internal/config"
+	"orion/internal/files"
+	"orion/internal/git"
 	"orion/internal/port"
 	"orion/internal/server"
 	"orion/internal/state"
@@ -26,6 +28,8 @@ type App struct {
 	srvMgr   *server.Manager
 	portReg  *port.Registry
 	appState *state.AppState
+	filesMgr *files.Manager
+	gitMgr   *git.Manager
 }
 
 // NewApp creates a new App instance.
@@ -37,6 +41,8 @@ func NewApp() *App {
 		srvMgr:   server.NewManager(portReg),
 		portReg:  portReg,
 		appState: state.NewAppState(),
+		filesMgr: files.NewManager(),
+		gitMgr:   git.NewManager(),
 	}
 }
 
@@ -57,6 +63,8 @@ func (a *App) startup(ctx context.Context) {
 	a.termMgr.SetContext(ctx)
 	a.wsMgr.SetContext(ctx)
 	a.srvMgr.SetContext(ctx)
+	a.filesMgr.SetContext(ctx)
+	a.gitMgr.SetContext(ctx)
 
 	// Clear macOS saved application state to prevent stale WKWebView restoration
 	home, _ := os.UserHomeDir()
@@ -150,8 +158,42 @@ func (a *App) OpenProjectDialog() (*workspace.ProjectInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.appState.SetLastProject(info.Root)
+	a.appState.SetProject(info.Root)
 	return info, nil
+}
+
+// SetActiveProject sets the project and loads its per-project state.
+func (a *App) SetActiveProject(root string) {
+	a.appState.SetProject(root)
+}
+
+// NewWindow launches a new Orion instance.
+func (a *App) NewWindow() error {
+	execPath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	// Find the .app bundle path
+	appPath := execPath
+	if idx := strings.Index(execPath, ".app/"); idx > 0 {
+		appPath = execPath[:idx+4]
+	}
+	cmd := exec.Command("open", "-n", appPath)
+	return cmd.Start()
+}
+
+// NewWindowWithProject launches a new Orion instance for a specific project.
+func (a *App) NewWindowWithProject(projectRoot string) error {
+	execPath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	appPath := execPath
+	if idx := strings.Index(execPath, ".app/"); idx > 0 {
+		appPath = execPath[:idx+4]
+	}
+	cmd := exec.Command("open", "-n", appPath, "--args", "--project", projectRoot)
+	return cmd.Start()
 }
 
 func (a *App) ListWorkspaces(repoRoot string) ([]workspace.Workspace, error) {
@@ -192,6 +234,29 @@ func (a *App) GetServerStatuses(repoRoot string, workspacePath string) []server.
 	return a.srvMgr.GetServerStatuses(repoRoot, workspacePath)
 }
 
+// GetWorkspaceEnv returns the env vars from .orion/env.sh for display.
+func (a *App) GetWorkspaceEnv(workspacePath string) map[string]string {
+	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			kv := strings.TrimPrefix(line, "export ")
+			if idx := strings.Index(kv, "="); idx > 0 {
+				result[kv[:idx]] = kv[idx+1:]
+			}
+		}
+	}
+	return result
+}
+
 func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {
 	cfg := config.Load(repoRoot)
 	wsID := filepath.Base(workspacePath)
@@ -224,7 +289,15 @@ func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {
 // --- State methods ---
 
 func (a *App) GetLastProject() string {
+	// Check CLI flag first (for multi-instance launches)
+	if envProject := os.Getenv("ORION_PROJECT"); envProject != "" {
+		return envProject
+	}
 	return a.appState.GetLastProject()
+}
+
+func (a *App) GetRecentProjects() []string {
+	return a.appState.GetRecentProjects()
 }
 
 func (a *App) RecoverSessions(repoName string, workspacePaths []string) []state.SessionInfo {
@@ -282,6 +355,41 @@ func capitalize(s string) string {
 		return string(s[0]-32) + s[1:]
 	}
 	return s
+}
+
+// --- File & Git methods ---
+
+func (a *App) ListDirectory(dir string, depth int) ([]files.FileEntry, error) {
+	return a.filesMgr.ListDirectory(dir, depth)
+}
+
+func (a *App) ReadFileContents(path string) (string, error) {
+	return a.filesMgr.ReadFileContents(path)
+}
+
+func (a *App) GetChangedFiles(workspacePath string) ([]git.ChangedFile, error) {
+	return a.gitMgr.GetChangedFiles(workspacePath)
+}
+
+func (a *App) GetFileDiff(workspacePath string, filePath string) (*git.FileDiff, error) {
+	return a.gitMgr.GetFileDiff(workspacePath, filePath)
+}
+
+func (a *App) SearchFiles(root string, query string) ([]files.SearchResult, error) {
+	return a.filesMgr.SearchFiles(root, query, 50)
+}
+
+func (a *App) SearchContents(root string, query string) ([]files.GrepResult, error) {
+	return a.filesMgr.SearchContents(root, query, 100)
+}
+
+func (a *App) GetClipboard() string {
+	text, _ := wailsRuntime.ClipboardGetText(a.ctx)
+	return text
+}
+
+func (a *App) SetClipboard(text string) {
+	wailsRuntime.ClipboardSetText(a.ctx, text)
 }
 
 func sortAgents(agents []AgentTypeInfo) {

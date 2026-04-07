@@ -104,7 +104,8 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux new-session failed: err=%v out=%q name=%s dir=%s", err, strings.TrimSpace(string(out)), tmuxName, dir)
 	}
-	exec.Command("tmux", "set-option", "-t", tmuxName, "history-limit", "10000").Run()
+	exec.Command("tmux", "set-option", "-t", tmuxName, "history-limit", "50000").Run()
+	exec.Command("tmux", "set-option", "-t", tmuxName, "mouse", "on").Run()
 
 	// Source .orion/env.sh if it exists
 	envFile := filepath.Join(dir, ".orion", "env.sh")

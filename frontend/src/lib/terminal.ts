@@ -51,9 +51,9 @@ export function createTerminal(
     cursorBlink: true,
     cursorStyle: 'bar',
     cursorWidth: 2,
-    scrollback: 10000,
+    scrollback: 0, // tmux handles scrollback; 0 prevents xterm.js from intercepting wheel events
     allowProposedApi: true,
-    macOptionIsMeta: true,
+    macOptionIsMeta: false, // false so Option+click works for text selection
     macOptionClickForcesSelection: true,
   });
 
@@ -80,8 +80,55 @@ export function createTerminal(
 
   fitAddon.fit();
 
+  // Handle keyboard shortcuts that the Wails webview doesn't route natively
+  terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    if (e.type !== 'keydown') return true;
+
+    // Shift+Enter: send distinct escape sequence so Claude Code can
+    // differentiate it from Enter (new line vs submit)
+    if (e.key === 'Enter' && e.shiftKey) {
+      const seq = '\x1b[13;2u';
+      const bytes = new TextEncoder().encode(seq);
+      const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+      EventsEmit('terminal:input', terminalId, btoa(binary));
+      return false;
+    }
+
+    return true;
+  });
+
+  // Alternate screen mouse handling for TUI apps (Claude Code, Codex, vim, etc.)
+  // - Wheel events: sent as SGR mouse sequences so the app can scroll
+  // - Click/drag events: blocked from PTY so text selection works without
+  //   the app snapping back to bottom on mousedown
+  const el = container;
+
+  const wheelHandler = (e: WheelEvent) => {
+    const buffer = terminal.buffer.active;
+    if (buffer.type === 'alternate') {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const rect = el.getBoundingClientRect();
+      const cellWidth = rect.width / terminal.cols;
+      const cellHeight = rect.height / terminal.rows;
+      const col = Math.min(terminal.cols, Math.max(1, Math.floor((e.clientX - rect.left) / cellWidth) + 1));
+      const row = Math.min(terminal.rows, Math.max(1, Math.floor((e.clientY - rect.top) / cellHeight) + 1));
+
+      const button = e.deltaY < 0 ? 64 : 65;
+      const lines = Math.max(1, Math.ceil(Math.abs(e.deltaY) / 30));
+      for (let i = 0; i < lines; i++) {
+        const seq = `\x1b[<${button};${col};${row}M`;
+        const bytes = new TextEncoder().encode(seq);
+        const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+        EventsEmit('terminal:input', terminalId, btoa(binary));
+      }
+    }
+  };
+  // Use capture phase so we intercept before xterm.js's internal handlers
+  el.addEventListener('wheel', wheelHandler, { passive: false, capture: true });
+
   // Wire up input: terminal -> Go backend
-  // Use binary-safe base64 encoding
   const onDataDispose = terminal.onData((data) => {
     const bytes = new TextEncoder().encode(data);
     const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
@@ -118,6 +165,7 @@ export function createTerminal(
   EventsEmit('terminal:resize', terminalId, terminal.cols, terminal.rows);
 
   const dispose = () => {
+    el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     onDataDispose.dispose();
     onResizeDispose.dispose();
     cancelOutput();

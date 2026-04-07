@@ -1,6 +1,7 @@
 package state
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,9 +13,9 @@ import (
 // SessionInfo represents a recovered tmux session matched to a workspace.
 type SessionInfo struct {
 	TmuxName      string `json:"tmuxName"`
-	Type          string `json:"type"`          // "server", "agent", "shell"
-	Label         string `json:"label"`         // Display name for the tab
-	WorkspacePath string `json:"workspacePath"` // Full path to matched workspace
+	Type          string `json:"type"`
+	Label         string `json:"label"`
+	WorkspacePath string `json:"workspacePath"`
 }
 
 // SavedTab represents a tab that can be restored on next launch.
@@ -25,50 +26,209 @@ type SavedTab struct {
 	WorkspacePath string `json:"workspacePath"`
 }
 
-// AppState persists across Orion restarts.
-type AppState struct {
-	LastProject string     `json:"lastProject"`
-	SavedTabs   []SavedTab `json:"savedTabs,omitempty"`
-	filePath    string
+// --- Global State (shared across instances) ---
+
+// GlobalState tracks recent projects and the last opened project.
+type GlobalState struct {
+	LastProject    string   `json:"lastProject"`
+	RecentProjects []string `json:"recentProjects"`
+	filePath       string
 }
 
-func NewAppState() *AppState {
+func NewGlobalState() *GlobalState {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".orion")
 	os.MkdirAll(dir, 0755)
-	fp := filepath.Join(dir, "state.json")
 
-	s := &AppState{filePath: fp}
-	s.load()
-	return s
+	g := &GlobalState{filePath: filepath.Join(dir, "global.json")}
+	g.load()
+
+	// Migrate from old state.json if global.json doesn't exist yet
+	oldPath := filepath.Join(dir, "state.json")
+	if g.LastProject == "" {
+		var old struct {
+			LastProject string `json:"lastProject"`
+		}
+		if data, err := os.ReadFile(oldPath); err == nil {
+			json.Unmarshal(data, &old)
+			if old.LastProject != "" {
+				g.LastProject = old.LastProject
+				g.AddRecentProject(old.LastProject)
+				g.save()
+			}
+		}
+	}
+
+	return g
 }
 
-func (s *AppState) SetLastProject(root string) {
-	s.LastProject = root
-	s.save()
+func (g *GlobalState) GetLastProject() string {
+	return g.LastProject
 }
 
-func (s *AppState) GetLastProject() string {
-	return s.LastProject
+func (g *GlobalState) SetLastProject(root string) {
+	g.LastProject = root
+	g.AddRecentProject(root)
+	g.save()
 }
 
-func (s *AppState) SaveTabs(tabs []SavedTab) {
-	s.SavedTabs = tabs
-	s.save()
+func (g *GlobalState) GetRecentProjects() []string {
+	return g.RecentProjects
 }
 
-func (s *AppState) GetSavedTabs() []SavedTab {
-	return s.SavedTabs
+func (g *GlobalState) AddRecentProject(root string) {
+	// Remove if already exists, add to front
+	var filtered []string
+	for _, p := range g.RecentProjects {
+		if p != root {
+			filtered = append(filtered, p)
+		}
+	}
+	g.RecentProjects = append([]string{root}, filtered...)
+	// Keep max 20
+	if len(g.RecentProjects) > 20 {
+		g.RecentProjects = g.RecentProjects[:20]
+	}
+	g.save()
 }
 
-func (s *AppState) ClearSavedTabs() {
-	s.SavedTabs = nil
-	s.save()
+func (g *GlobalState) load() {
+	data, err := os.ReadFile(g.filePath)
+	if err != nil {
+		return
+	}
+	json.Unmarshal(data, g)
 }
 
-// RecoverSessions finds orion-* tmux sessions and matches them to workspaces.
-// workspacePaths is a list of actual workspace directory paths (e.g., /Users/.../slant, /Users/.../slant-fix-auth).
-// repoName is the base repo name (e.g., "slant").
+func (g *GlobalState) save() {
+	data, _ := json.MarshalIndent(g, "", "  ")
+	os.WriteFile(g.filePath, data, 0644)
+}
+
+// --- Per-Project State ---
+
+// ProjectState stores state for a single project (saved tabs, etc.)
+type ProjectState struct {
+	SavedTabs []SavedTab `json:"savedTabs,omitempty"`
+	filePath  string
+}
+
+func projectHash(root string) string {
+	h := sha256.Sum256([]byte(root))
+	return fmt.Sprintf("%x", h[:8])
+}
+
+func NewProjectState(projectRoot string) *ProjectState {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".orion", "projects", projectHash(projectRoot))
+	os.MkdirAll(dir, 0755)
+
+	ps := &ProjectState{filePath: filepath.Join(dir, "state.json")}
+	ps.load()
+
+	// Migrate from old global state.json if this project has no saved tabs
+	if len(ps.SavedTabs) == 0 {
+		migrateOldTabs(projectRoot, ps)
+	}
+
+	return ps
+}
+
+func (ps *ProjectState) SaveTabs(tabs []SavedTab) {
+	ps.SavedTabs = tabs
+	ps.save()
+}
+
+func (ps *ProjectState) GetSavedTabs() []SavedTab {
+	return ps.SavedTabs
+}
+
+func (ps *ProjectState) load() {
+	data, err := os.ReadFile(ps.filePath)
+	if err != nil {
+		return
+	}
+	json.Unmarshal(data, ps)
+}
+
+func (ps *ProjectState) save() {
+	data, _ := json.MarshalIndent(ps, "", "  ")
+	os.WriteFile(ps.filePath, data, 0644)
+}
+
+// migrateOldTabs reads the old global state.json and migrates tabs for this project.
+func migrateOldTabs(projectRoot string, ps *ProjectState) {
+	home, _ := os.UserHomeDir()
+	oldPath := filepath.Join(home, ".orion", "state.json")
+	data, err := os.ReadFile(oldPath)
+	if err != nil {
+		return
+	}
+
+	var old struct {
+		SavedTabs []SavedTab `json:"savedTabs"`
+	}
+	if err := json.Unmarshal(data, &old); err != nil {
+		return
+	}
+
+	// Filter tabs belonging to this project (workspace paths under the project root)
+	seen := make(map[string]bool) // dedup by tmux session
+	var migrated []SavedTab
+	for _, tab := range old.SavedTabs {
+		if strings.HasPrefix(tab.WorkspacePath, filepath.Dir(projectRoot)) && !seen[tab.TmuxSession] {
+			seen[tab.TmuxSession] = true
+			migrated = append(migrated, tab)
+		}
+	}
+
+	if len(migrated) > 0 {
+		ps.SavedTabs = migrated
+		ps.save()
+	}
+}
+
+// --- AppState wraps both global and project state ---
+
+type AppState struct {
+	global  *GlobalState
+	project *ProjectState
+}
+
+func NewAppState() *AppState {
+	return &AppState{
+		global: NewGlobalState(),
+	}
+}
+
+func (a *AppState) SetProject(root string) {
+	a.global.SetLastProject(root)
+	a.project = NewProjectState(root)
+}
+
+func (a *AppState) GetLastProject() string {
+	return a.global.GetLastProject()
+}
+
+func (a *AppState) GetRecentProjects() []string {
+	return a.global.GetRecentProjects()
+}
+
+func (a *AppState) SaveTabs(tabs []SavedTab) {
+	if a.project != nil {
+		a.project.SaveTabs(tabs)
+	}
+}
+
+func (a *AppState) GetSavedTabs() []SavedTab {
+	if a.project != nil {
+		return a.project.GetSavedTabs()
+	}
+	return nil
+}
+
+// --- Session Recovery (unchanged) ---
+
 func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
@@ -76,8 +236,6 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 		return nil
 	}
 
-	// Build a lookup: workspace basename -> full path
-	// Sort by length descending so longer (more specific) names match first
 	type wsEntry struct {
 		basename string
 		path     string
@@ -86,7 +244,6 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	for _, p := range workspacePaths {
 		wsEntries = append(wsEntries, wsEntry{basename: filepath.Base(p), path: p})
 	}
-	// Sort longest basename first for greedy matching
 	for i := 0; i < len(wsEntries); i++ {
 		for j := i + 1; j < len(wsEntries); j++ {
 			if len(wsEntries[j].basename) > len(wsEntries[i].basename) {
@@ -100,7 +257,7 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	shellPrefix := "orion-shell-"
 
 	var sessions []SessionInfo
-	shellCount := make(map[string]int) // workspace path -> shell count for labeling
+	shellCount := make(map[string]int)
 
 	for _, line := range strings.Split(string(out), "\n") {
 		name := strings.TrimSpace(line)
@@ -108,18 +265,13 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 			continue
 		}
 
-		// Shell sessions created by CreateInDir: orion-shell-<id>
-		// These need to be matched by checking tmux's working directory
 		if strings.HasPrefix(name, shellPrefix) {
-			// Get the tmux session's current directory
 			dirCmd := exec.Command("tmux", "display-message", "-t", name, "-p", "#{pane_current_path}")
 			dirOut, err := dirCmd.Output()
 			if err != nil {
 				continue
 			}
 			sessionDir := strings.TrimSpace(string(dirOut))
-
-			// Match to a workspace
 			for _, ws := range wsEntries {
 				if strings.HasPrefix(sessionDir, ws.path) {
 					shellCount[ws.path]++
@@ -139,7 +291,6 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 			continue
 		}
 
-		// Server sessions: orion-srv-<workspace-basename>-<servername>
 		if strings.HasPrefix(name, srvPrefix) {
 			rest := strings.TrimPrefix(name, srvPrefix)
 			for _, ws := range wsEntries {
@@ -157,7 +308,6 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 			continue
 		}
 
-		// Agent/shell sessions: orion-<repo>-<workspace-basename>[-<N>]
 		rest := strings.TrimPrefix(name, prefix)
 		repoPrefix := repoName + "-"
 		if !strings.HasPrefix(rest, repoPrefix) {
@@ -165,11 +315,9 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 		}
 		afterRepo := strings.TrimPrefix(rest, repoPrefix)
 
-		// Try matching against workspace basenames (longest first)
 		matched := false
 		for _, ws := range wsEntries {
 			if afterRepo == ws.basename {
-				// Exact match: orion-slant-slant (main workspace)
 				sessions = append(sessions, SessionInfo{
 					TmuxName:      name,
 					Type:          "shell",
@@ -180,7 +328,6 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 				break
 			}
 			if strings.HasPrefix(afterRepo, ws.basename+"-") {
-				// Numbered session: orion-slant-slant-1
 				suffix := strings.TrimPrefix(afterRepo, ws.basename+"-")
 				label := "Shell " + suffix
 				sessions = append(sessions, SessionInfo{
@@ -193,11 +340,7 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 				break
 			}
 		}
-
-		if !matched {
-			// Couldn't match to a workspace — skip it
-			continue
-		}
+		_ = matched
 	}
 
 	return sessions
@@ -208,17 +351,4 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-func (s *AppState) load() {
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return
-	}
-	json.Unmarshal(data, s)
-}
-
-func (s *AppState) save() {
-	data, _ := json.MarshalIndent(s, "", "  ")
-	os.WriteFile(s.filePath, data, 0644)
 }

@@ -93,6 +93,9 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 			killSession(tmuxName)
 		}
 
+		// Clean up stale lock files (e.g., Next.js .next/dev/lock)
+		cleanStaleLocks(workspacePath, srv.Dir)
+
 		// Determine working directory
 		workDir := workspacePath
 		if srv.Dir != "" {
@@ -240,6 +243,20 @@ func killProcessOnPort(port int) {
 	}
 }
 
+// cleanStaleLocks removes lock files that can prevent servers from starting.
+func cleanStaleLocks(workspacePath, serverDir string) {
+	dir := workspacePath
+	if serverDir != "" {
+		dir = filepath.Join(workspacePath, serverDir)
+	}
+	// Next.js lock
+	os.Remove(filepath.Join(dir, ".next", "dev", "lock"))
+	// Vite lock
+	os.Remove(filepath.Join(dir, "node_modules", ".vite", "deps", "_lock"))
+	// Rails tmp/pids
+	os.Remove(filepath.Join(dir, "tmp", "pids", "server.pid"))
+}
+
 func hasSession(name string) bool {
 	cmd := exec.Command("tmux", "has-session", "-t", name)
 	return cmd.Run() == nil
@@ -250,7 +267,8 @@ func createTmuxSession(name, workDir string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
 	}
-	exec.Command("tmux", "set-option", "-t", name, "history-limit", "10000").Run()
+	exec.Command("tmux", "set-option", "-t", name, "history-limit", "50000").Run()
+	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()
 	return nil
 }
 

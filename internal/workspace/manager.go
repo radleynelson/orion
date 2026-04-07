@@ -315,9 +315,13 @@ func createTmuxSession(name, workDir string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
 	}
-	exec.Command("tmux", "set-option", "-t", name, "history-limit", "10000").Run()
+	exec.Command("tmux", "set-option", "-t", name, "history-limit", "50000").Run()
+	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()
 	return nil
 }
+
+// createTmuxSessionForAgent creates a tmux session with mouse OFF so that
+// TUI apps like Claude Code and Codex handle their own mouse/scroll events.
 
 func sendKeys(name, keys string) error {
 	if keys == "" {

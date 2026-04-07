@@ -81,6 +81,118 @@ export namespace config {
 
 }
 
+export namespace files {
+	
+	export class FileEntry {
+	    name: string;
+	    path: string;
+	    isDir: boolean;
+	    size: number;
+	    children?: FileEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FileEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.isDir = source["isDir"];
+	        this.size = source["size"];
+	        this.children = this.convertValues(source["children"], FileEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class GrepResult {
+	    file: string;
+	    line: number;
+	    content: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GrepResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.file = source["file"];
+	        this.line = source["line"];
+	        this.content = source["content"];
+	    }
+	}
+	export class SearchResult {
+	    name: string;
+	    path: string;
+	    isDir: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.isDir = source["isDir"];
+	    }
+	}
+
+}
+
+export namespace git {
+	
+	export class ChangedFile {
+	    path: string;
+	    status: string;
+	    statusText: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChangedFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.status = source["status"];
+	        this.statusText = source["statusText"];
+	    }
+	}
+	export class FileDiff {
+	    originalContent: string;
+	    modifiedContent: string;
+	    language: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileDiff(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.originalContent = source["originalContent"];
+	        this.modifiedContent = source["modifiedContent"];
+	        this.language = source["language"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class AgentTypeInfo {

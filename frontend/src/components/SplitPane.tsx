@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
-import { Pane, useStore } from '../store';
+import { Pane, PaneSplit, useStore } from '../store';
 import Terminal from './Terminal';
+import MonacoEditor from './MonacoEditor';
+import DiffViewer from './DiffViewer';
 
 interface SplitPaneProps {
   pane: Pane;
@@ -17,7 +19,31 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
         onClick={() => setFocusedPane(pane.id)}
       >
-        <Terminal terminalId={pane.terminalId} visible={visible} />
+        <Terminal terminalId={pane.terminalId!} visible={visible} />
+      </div>
+    );
+  }
+
+  if (pane.type === 'editor') {
+    const isFocused = pane.id === focusedPaneId;
+    return (
+      <div
+        className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
+        onClick={() => setFocusedPane(pane.id)}
+      >
+        <MonacoEditor filePath={pane.filePath!} language={pane.language || 'plaintext'} visible={visible} line={pane.line} />
+      </div>
+    );
+  }
+
+  if (pane.type === 'diff') {
+    const isFocused = pane.id === focusedPaneId;
+    return (
+      <div
+        className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
+        onClick={() => setFocusedPane(pane.id)}
+      >
+        <DiffViewer filePath={pane.filePath!} visible={visible} />
       </div>
     );
   }
@@ -25,7 +51,7 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
   // Split container
   return (
     <SplitContainer
-      splitPane={pane}
+      splitPane={pane as PaneSplit}
       visible={visible}
       onResize={(sizes) => resizePanes(pane.id, sizes)}
     />

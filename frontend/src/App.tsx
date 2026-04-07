@@ -2,18 +2,37 @@ import { useEffect, useCallback, useState, DragEvent } from 'react';
 import './App.css';
 import SplitPane from './components/SplitPane';
 import Sidebar from './components/Sidebar';
+import ActivityBar from './components/ActivityBar';
+import FileExplorer from './components/FileExplorer';
+import GitPanel from './components/GitPanel';
+import GlobalSearch from './components/GlobalSearch';
+import SearchEverywhere from './components/SearchEverywhere';
 import { useStore, generateId, Tab, PaneLeaf } from './store';
+import { configureMonacoTheme } from './lib/monacoTheme';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 import {
   CreateTerminalInDir,
+  CreateAttachedTerminal,
   CloseTerminal,
   SaveTabs,
+  GetLastProject,
+  GetProjectInfo,
+  SetActiveProject,
+  ListWorkspaces,
+  NewWindow,
+  GetAgentTypes,
+  GetSavedTabs,
   GetTmuxSession,
 } from '../wailsjs/go/main/App';
 
 function App() {
   const {
+    project,
+    setProject,
     workspaces,
+    setWorkspaces,
     activeWorkspacePath,
+    setActiveWorkspace,
     tabs,
     activeTabId,
     addTab,
@@ -29,13 +48,100 @@ function App() {
     renameTab,
     focusedPaneId,
     getAllTerminalIds,
+    serverTabs,
+    activeServerTabId,
+    serverPaneVisible,
+    serverPaneHeight,
+    setActiveServerTab,
+    removeServerTab,
+    setServerPaneVisible,
+    setServerPaneHeight,
+    sidebarMode,
+    setSidebarMode,
   } = useStore();
 
+  // Initialize Monaco theme once
+  useEffect(() => { configureMonacoTheme(); }, []);
+
+  // Menu events are registered after callbacks are defined (see below)
+
+  // Initialize app on mount — load last project and restore saved tabs
+  // Lives here (not in Sidebar) because App never unmounts, preventing duplicate tabs
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const lastRoot = await GetLastProject();
+        if (!lastRoot) return;
+
+        const info = await GetProjectInfo(lastRoot);
+        await SetActiveProject(info.root); // load per-project state
+        setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
+        const ws = await ListWorkspaces(info.root);
+        setWorkspaces(ws);
+
+        const mainWs = ws.find((w: any) => w.isMain);
+        if (mainWs) {
+          setActiveWorkspace(mainWs.path);
+        }
+
+        const savedTabs = await GetSavedTabs();
+        if (savedTabs && savedTabs.length > 0) {
+          for (const saved of savedTabs) {
+            const termId = generateId('term');
+            try {
+              await CreateAttachedTerminal(termId, saved.tmuxSession);
+              addTab({
+                id: generateId('tab'),
+                label: saved.label,
+                rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+                tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
+                workspacePath: saved.workspacePath,
+              });
+            } catch {}
+          }
+        } else if (mainWs) {
+          const termId = generateId('term');
+          await CreateTerminalInDir(termId, mainWs.path);
+          addTab({
+            id: generateId('tab'),
+            label: 'Shell 1',
+            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+            tabType: 'shell',
+            workspacePath: mainWs.path,
+          });
+        }
+      } catch {}
+    };
+    init();
+  }, []);
+
   const activeTabs = tabs.filter((t) => t.workspacePath === activeWorkspacePath);
+  const activeServerTabs = serverTabs.filter((t) => t.workspacePath === activeWorkspacePath);
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
+
+  // Double-shift detection for Search Everywhere (like JetBrains)
+  useEffect(() => {
+    let lastShiftTime = 0;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const now = Date.now();
+        if (now - lastShiftTime < 400) {
+          setSearchEverywhereVisible(true);
+          lastShiftTime = 0;
+        } else {
+          lastShiftTime = now;
+        }
+      } else {
+        lastShiftTime = 0;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const createNewShell = useCallback(async () => {
     if (!activeWorkspacePath) return;
@@ -177,11 +283,37 @@ function App() {
           setActiveTab(activeTabs[idx].id);
         }
       }
+      // Cmd+Shift+N: new Orion window
+      if (e.metaKey && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        NewWindow();
+      }
+      // Cmd+Shift+F: global search
+      if (e.metaKey && e.shiftKey && e.key === 'F') {
+        e.preventDefault();
+        setSidebarMode(sidebarMode === 'search' ? null : 'search');
+      }
+      // Cmd+Shift+E: file explorer
+      if (e.metaKey && e.shiftKey && e.key === 'E') {
+        e.preventDefault();
+        setSidebarMode(sidebarMode === 'files' ? null : 'files');
+      }
+      // Cmd+Shift+G: git panel
+      if (e.metaKey && e.shiftKey && e.key === 'G') {
+        e.preventDefault();
+        setSidebarMode(sidebarMode === 'git' ? null : 'git');
+      }
+      // Cmd+B: toggle sidebar
+      if (e.metaKey && !e.shiftKey && e.key === 'b') {
+        e.preventDefault();
+        setSidebarMode(sidebarMode ? null : 'workspaces');
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeTabs, activeTabId, createNewShell, handleClosePane, handleSplit, navigatePane, setActiveTab]);
+
 
   const activeWorkspace = workspaces.find((w) => w.path === activeWorkspacePath);
 
@@ -199,7 +331,15 @@ function App() {
       </div>
 
       <div className="content">
-        <Sidebar />
+        <ActivityBar />
+        {sidebarMode && (
+          <div className="sidebar-container">
+            {sidebarMode === 'workspaces' && <Sidebar />}
+            {sidebarMode === 'files' && <FileExplorer />}
+            {sidebarMode === 'git' && <GitPanel />}
+            {sidebarMode === 'search' && <GlobalSearch />}
+          </div>
+        )}
 
         <div className="terminal-area">
           {/* Tab bar */}
@@ -232,7 +372,9 @@ function App() {
                 <span className="tab-icon">
                   {tab.tabType === 'claude' ? '◆' :
                    tab.tabType === 'codex' ? '◇' :
-                   tab.tabType === 'server' ? '▸' : '›'}
+                   tab.tabType === 'server' ? '▸' :
+                   tab.tabType === 'editor' ? '◈' :
+                   tab.tabType === 'diff' ? '⟷' : '›'}
                 </span>
                 {renamingTabId === tab.id ? (
                   <input
@@ -281,8 +423,10 @@ function App() {
             </div>
           </div>
 
-          {/* Pane area — render active tab's pane tree */}
-          <div className="terminal-container">
+          {/* Main terminal area */}
+          <div className="terminal-container" style={{
+            height: serverPaneVisible && activeServerTabs.length > 0 ? `${100 - serverPaneHeight}%` : '100%',
+          }}>
             {tabs.map((tab) => (
               <div
                 key={tab.id}
@@ -296,8 +440,95 @@ function App() {
               </div>
             ))}
           </div>
+
+          {/* Server bottom pane */}
+          {activeServerTabs.length > 0 && (
+            <>
+              <div
+                className="server-pane-divider"
+                onMouseDown={(e) => {
+                  const startY = e.clientY;
+                  const termArea = e.currentTarget.parentElement;
+                  if (!termArea) return;
+                  const totalHeight = termArea.clientHeight;
+                  const startHeight = serverPaneHeight;
+
+                  const onMove = (me: MouseEvent) => {
+                    const delta = startY - me.clientY;
+                    const deltaPercent = (delta / totalHeight) * 100;
+                    setServerPaneHeight(startHeight + deltaPercent);
+                  };
+                  const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                  };
+                  document.addEventListener('mousemove', onMove);
+                  document.addEventListener('mouseup', onUp);
+                  document.body.style.cursor = 'row-resize';
+                  document.body.style.userSelect = 'none';
+                }}
+              />
+              <div className="server-pane" style={{
+                height: serverPaneVisible ? `${serverPaneHeight}%` : '28px',
+              }}>
+                <div className="server-pane-header">
+                  <div className="tab-bar" style={{ background: 'transparent', borderBottom: 'none' }}>
+                    {activeServerTabs.map((tab) => (
+                      <div
+                        key={tab.id}
+                        className={`tab ${tab.id === activeServerTabId ? 'active' : ''}`}
+                        onClick={() => {
+                          setActiveServerTab(tab.id);
+                          if (!serverPaneVisible) setServerPaneVisible(true);
+                        }}
+                      >
+                        <span className="tab-icon">▸</span>
+                        <span>{tab.label}</span>
+                        <span className="close" onClick={(e) => {
+                          e.stopPropagation();
+                          const termIds = getAllTerminalIds(tab);
+                          termIds.forEach((id) => CloseTerminal(id));
+                          removeServerTab(tab.id);
+                        }}>×</span>
+                      </div>
+                    ))}
+                  </div>
+                  <span
+                    className="server-pane-toggle"
+                    onClick={() => setServerPaneVisible(!serverPaneVisible)}
+                  >
+                    {serverPaneVisible ? '▾ hide' : '▸ show'}
+                  </span>
+                </div>
+                {serverPaneVisible && (
+                  <div className="server-pane-content">
+                    {serverTabs.map((tab) => (
+                      <div
+                        key={tab.id}
+                        style={{
+                          display: tab.id === activeServerTabId ? 'flex' : 'none',
+                          width: '100%',
+                          height: '100%',
+                        }}
+                      >
+                        <SplitPane pane={tab.rootPane} visible={tab.id === activeServerTabId && serverPaneVisible} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Search Everywhere modal (double-tap Shift) */}
+      <SearchEverywhere
+        visible={searchEverywhereVisible}
+        onClose={() => setSearchEverywhereVisible(false)}
+      />
 
       {/* Status bar */}
       <div className="status-bar">

@@ -2,6 +2,8 @@ package main
 
 import (
 	"embed"
+	"flag"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -12,7 +14,20 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+var projectFlag string
+
 func main() {
+	flag.StringVar(&projectFlag, "project", "", "Project directory to open")
+	flag.Parse()
+
+	if projectFlag == "" && flag.NArg() > 0 {
+		projectFlag = flag.Arg(0)
+	}
+
+	if projectFlag != "" {
+		os.Setenv("ORION_PROJECT", projectFlag)
+	}
+
 	app := NewApp()
 
 	err := wails.Run(&options.App{

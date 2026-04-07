@@ -30,8 +30,20 @@ export function GetAgentTypes(arg1) {
   return window['go']['main']['App']['GetAgentTypes'](arg1);
 }
 
+export function GetChangedFiles(arg1) {
+  return window['go']['main']['App']['GetChangedFiles'](arg1);
+}
+
+export function GetClipboard() {
+  return window['go']['main']['App']['GetClipboard']();
+}
+
 export function GetConfig(arg1) {
   return window['go']['main']['App']['GetConfig'](arg1);
+}
+
+export function GetFileDiff(arg1, arg2) {
+  return window['go']['main']['App']['GetFileDiff'](arg1, arg2);
 }
 
 export function GetLastProject() {
@@ -46,6 +58,10 @@ export function GetProjectInfoFromCwd() {
   return window['go']['main']['App']['GetProjectInfoFromCwd']();
 }
 
+export function GetRecentProjects() {
+  return window['go']['main']['App']['GetRecentProjects']();
+}
+
 export function GetSavedTabs() {
   return window['go']['main']['App']['GetSavedTabs']();
 }
@@ -58,12 +74,20 @@ export function GetTmuxSession(arg1) {
   return window['go']['main']['App']['GetTmuxSession'](arg1);
 }
 
+export function GetWorkspaceEnv(arg1) {
+  return window['go']['main']['App']['GetWorkspaceEnv'](arg1);
+}
+
 export function LaunchAgent(arg1, arg2, arg3) {
   return window['go']['main']['App']['LaunchAgent'](arg1, arg2, arg3);
 }
 
 export function LaunchShell(arg1, arg2) {
   return window['go']['main']['App']['LaunchShell'](arg1, arg2);
+}
+
+export function ListDirectory(arg1, arg2) {
+  return window['go']['main']['App']['ListDirectory'](arg1, arg2);
 }
 
 export function ListTerminals() {
@@ -74,6 +98,14 @@ export function ListWorkspaces(arg1) {
   return window['go']['main']['App']['ListWorkspaces'](arg1);
 }
 
+export function NewWindow() {
+  return window['go']['main']['App']['NewWindow']();
+}
+
+export function NewWindowWithProject(arg1) {
+  return window['go']['main']['App']['NewWindowWithProject'](arg1);
+}
+
 export function OpenBrowser(arg1, arg2) {
   return window['go']['main']['App']['OpenBrowser'](arg1, arg2);
 }
@@ -82,12 +114,32 @@ export function OpenProjectDialog() {
   return window['go']['main']['App']['OpenProjectDialog']();
 }
 
+export function ReadFileContents(arg1) {
+  return window['go']['main']['App']['ReadFileContents'](arg1);
+}
+
 export function RecoverSessions(arg1, arg2) {
   return window['go']['main']['App']['RecoverSessions'](arg1, arg2);
 }
 
 export function SaveTabs(arg1) {
   return window['go']['main']['App']['SaveTabs'](arg1);
+}
+
+export function SearchContents(arg1, arg2) {
+  return window['go']['main']['App']['SearchContents'](arg1, arg2);
+}
+
+export function SearchFiles(arg1, arg2) {
+  return window['go']['main']['App']['SearchFiles'](arg1, arg2);
+}
+
+export function SetActiveProject(arg1) {
+  return window['go']['main']['App']['SetActiveProject'](arg1);
+}
+
+export function SetClipboard(arg1) {
+  return window['go']['main']['App']['SetClipboard'](arg1);
 }
 
 export function StartServers(arg1, arg2, arg3) {

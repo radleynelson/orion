@@ -15,11 +15,9 @@ import {
   GetServerStatuses,
   OpenBrowser,
   GetAgentTypes,
-  GetLastProject,
-  GetProjectInfo,
-  GetSavedTabs,
   SaveTabs,
   GetTmuxSession,
+  GetWorkspaceEnv,
 } from '../../wailsjs/go/main/App';
 
 export default function Sidebar() {
@@ -31,6 +29,8 @@ export default function Sidebar() {
     setWorkspaces,
     setActiveWorkspace,
     addTab,
+    addServerTab,
+    serverTabs,
     tabs,
   } = useStore();
 
@@ -40,58 +40,10 @@ export default function Sidebar() {
   const [serverStatuses, setServerStatuses] = useState<Record<string, server.ServerStatus[]>>({});
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [envVars, setEnvVars] = useState<Record<string, string>>({});
+  const [envVisible, setEnvVisible] = useState(false);
 
-  // Initialize app on mount — load last project and restore saved tabs
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const lastRoot = await GetLastProject();
-        if (!lastRoot) return;
-
-        const info = await GetProjectInfo(lastRoot);
-        setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
-        const ws = await ListWorkspaces(info.root);
-        setWorkspaces(ws);
-        const agents = await GetAgentTypes(info.root);
-        setAgentTypes(agents);
-
-        const mainWs = ws.find((w: any) => w.isMain);
-        if (mainWs) {
-          setActiveWorkspace(mainWs.path);
-        }
-
-        // Restore saved tabs
-        const savedTabs = await GetSavedTabs();
-        if (savedTabs && savedTabs.length > 0) {
-          for (const saved of savedTabs) {
-            const termId = generateId('term');
-            try {
-              await CreateAttachedTerminal(termId, saved.tmuxSession);
-              addTab({
-                id: generateId('tab'),
-                label: saved.label,
-                rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-                tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
-                workspacePath: saved.workspacePath,
-              });
-            } catch {}
-          }
-        } else if (mainWs) {
-          const termId = generateId('term');
-          await CreateTerminalInDir(termId, mainWs.path);
-          addTab({
-            id: generateId('tab'),
-            label: 'Shell 1',
-            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-            tabType: 'shell',
-            workspacePath: mainWs.path,
-          });
-        }
-      } catch {}
-    };
-
-    init();
-  }, []);
+  // Init is handled by App.tsx (which never unmounts)
 
   // Load agent types when project changes
   useEffect(() => {
@@ -103,6 +55,17 @@ export default function Sidebar() {
       } catch {}
     })();
   }, [project]);
+
+  // Fetch env vars when active workspace changes
+  useEffect(() => {
+    if (!activeWorkspacePath) return;
+    (async () => {
+      try {
+        const env = await GetWorkspaceEnv(activeWorkspacePath);
+        setEnvVars(env || {});
+      } catch {}
+    })();
+  }, [activeWorkspacePath, serverStatuses]);
 
   // Poll server statuses for active workspace
   useEffect(() => {
@@ -132,10 +95,23 @@ export default function Sidebar() {
         e.preventDefault();
         OpenBrowser(project.root, activeWorkspacePath);
       }
+      // Cmd+N: new workspace
+      if (e.metaKey && !e.shiftKey && e.key === 'n') {
+        e.preventDefault();
+        setCreating(true);
+      }
+      // Cmd+Shift+Backspace: delete active workspace
+      if (e.metaKey && e.shiftKey && e.key === 'Backspace' && activeWorkspacePath) {
+        e.preventDefault();
+        const ws = workspaces.find((w) => w.path === activeWorkspacePath);
+        if (ws && !ws.isMain) {
+          setConfirmDelete(activeWorkspacePath);
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [project, activeWorkspacePath]);
+  }, [project, activeWorkspacePath, workspaces]);
 
   const refreshWorkspaces = useCallback(async () => {
     if (!project) return;
@@ -223,7 +199,7 @@ export default function Sidebar() {
         if (srv.running && srv.tmuxSession) {
           const termId = generateId('term');
           await CreateAttachedTerminal(termId, srv.tmuxSession);
-          addTab({
+          addServerTab({
             id: generateId('tab'),
             label: srv.name.charAt(0).toUpperCase() + srv.name.slice(1),
             rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
@@ -242,13 +218,14 @@ export default function Sidebar() {
     try {
       await StopServers(wsPath);
       setServerStatuses((prev) => ({ ...prev, [wsPath]: [] }));
-      const serverTabs = tabs.filter((t) => t.workspacePath === wsPath && t.tabType === 'server');
-      for (const tab of serverTabs) {
+      // Clean up server tabs from the bottom pane
+      const srvTabs = useStore.getState().serverTabs.filter((t) => t.workspacePath === wsPath);
+      for (const tab of srvTabs) {
         const termIds = useStore.getState().getAllTerminalIds(tab);
         for (const termId of termIds) {
           await CloseTerminal(termId);
         }
-        useStore.getState().removeTab(tab.id);
+        useStore.getState().removeServerTab(tab.id);
       }
     } catch (err) {
       console.error('Failed to stop servers:', err);
@@ -405,6 +382,33 @@ export default function Sidebar() {
                           {srv.port > 0 && <span className="server-port">:{srv.port}</span>}
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Environment variables panel */}
+                  {Object.keys(envVars).length > 0 && ws.path === activeWorkspacePath && (
+                    <div className="sidebar-env">
+                      <div
+                        className="sidebar-env-header"
+                        onClick={() => setEnvVisible(!envVisible)}
+                      >
+                        <span>{envVisible ? '▾' : '▸'} Env</span>
+                      </div>
+                      {envVisible && (
+                        <div className="sidebar-env-list">
+                          {Object.entries(envVars).map(([key, val]) => (
+                            <div
+                              key={key}
+                              className="sidebar-env-item"
+                              onClick={() => navigator.clipboard.writeText(val)}
+                              title="Click to copy"
+                            >
+                              <span className="env-key">{key}</span>
+                              <span className="env-val">{val}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
