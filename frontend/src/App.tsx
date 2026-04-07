@@ -314,6 +314,35 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeTabs, activeTabId, createNewShell, handleClosePane, handleSplit, navigatePane, setActiveTab]);
 
+  // Listen for native menu bar events from Go
+  useEffect(() => {
+    const cancels = [
+      EventsOn('menu:open-project', async () => {
+        try {
+          const { OpenProjectDialog } = await import('../wailsjs/go/main/App');
+          const info = await OpenProjectDialog();
+          if (info) {
+            await SetActiveProject(info.root);
+            setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
+            const ws = await ListWorkspaces(info.root);
+            setWorkspaces(ws);
+          }
+        } catch {}
+      }),
+      EventsOn('menu:new-terminal', () => createNewShell()),
+      EventsOn('menu:close-tab', () => handleClosePane()),
+      EventsOn('menu:toggle-sidebar', () => setSidebarMode(sidebarMode ? null : 'workspaces')),
+      EventsOn('menu:show-files', () => setSidebarMode('files')),
+      EventsOn('menu:show-search', () => setSidebarMode('search')),
+      EventsOn('menu:show-git', () => setSidebarMode('git')),
+      EventsOn('menu:show-workspaces', () => setSidebarMode('workspaces')),
+      EventsOn('menu:split-right', () => handleSplit('vertical')),
+      EventsOn('menu:split-down', () => handleSplit('horizontal')),
+      EventsOn('menu:next-pane', () => navigatePane('next')),
+      EventsOn('menu:prev-pane', () => navigatePane('prev')),
+    ];
+    return () => cancels.forEach((c) => c());
+  }, [sidebarMode, createNewShell, handleClosePane, handleSplit, navigatePane, setSidebarMode]);
 
   const activeWorkspace = workspaces.find((w) => w.path === activeWorkspacePath);
 
