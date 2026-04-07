@@ -45,10 +45,30 @@ orion/
 │   │   ├── style.css                    # CSS variables, global resets, scrollbar styling
 │   │   ├── components/
 │   │   │   ├── Sidebar.tsx              # Workspace list, agent buttons, server controls, project picker
-│   │   │   └── Terminal.tsx             # xterm.js wrapper with resize observer
-│   │   ├── store/index.ts              # Zustand state: project, workspaces, tabs
-│   │   └── lib/terminal.ts             # xterm.js setup, theme, event wiring, Unicode support
+│   │   │   ├── Terminal.tsx             # xterm.js wrapper with resize observer
+│   │   │   ├── SplitPane.tsx            # Recursive split pane renderer (terminals + editors)
+│   │   │   ├── ActivityBar.tsx          # Far-left icon bar: Workspaces, Files, Search, Git
+│   │   │   ├── FileExplorer.tsx         # Lazy-loading file tree sidebar
+│   │   │   ├── GitPanel.tsx             # Git changes list with status badges
+│   │   │   ├── GlobalSearch.tsx         # Content search sidebar (ripgrep-powered)
+│   │   │   ├── SearchEverywhere.tsx     # Fuzzy file finder modal (double-tap Shift)
+│   │   │   ├── MonacoEditor.tsx         # Read-only file viewer (Monaco Editor)
+│   │   │   └── DiffViewer.tsx           # Side-by-side git diff viewer (Monaco DiffEditor)
+│   │   ├── store/index.ts              # Zustand state: project, workspaces, tabs, panes, sidebar mode
+│   │   └── lib/
+│   │       ├── terminal.ts             # xterm.js setup, theme, event wiring, Unicode support
+│   │       ├── monacoTheme.ts          # Orion dark theme + enhanced Ruby tokenizer for Monaco
+│   │       └── languages.ts            # File extension → Monaco language mapping
 │   └── wailsjs/                        # Auto-generated Go bindings (DO NOT EDIT)
+├── internal/
+│   ├── terminal/manager.go              # PTY lifecycle, tmux attach, I/O streaming via Wails Events
+│   ├── workspace/manager.go             # Git worktree CRUD, credential copying, agent/shell launching
+│   ├── config/config.go                 # .orion.toml parser (falls back to .radconfig)
+│   ├── port/manager.go                  # Random port allocation, persistence to ~/.orion/ports.json
+│   ├── server/manager.go               # Server process lifecycle, port injection, env template resolution
+│   ├── state/state.go                   # Per-project state persistence, tmux session recovery
+│   ├── files/manager.go                 # File listing, reading, fuzzy search, content search (ripgrep)
+│   └── git/manager.go                   # Git status, file diff for Monaco DiffEditor
 ├── build/
 │   ├── appicon.png                      # Orion constellation icon (1024x1024)
 │   ├── appicon.icns                     # macOS icon bundle
