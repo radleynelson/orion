@@ -632,7 +632,7 @@ function App() {
                 </div>
                 {serverPaneVisible && (
                   <div className="server-pane-content">
-                    {serverTabs.map((tab) => (
+                    {activeServerTabs.map((tab) => (
                       <div
                         key={tab.id}
                         style={{

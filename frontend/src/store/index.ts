@@ -219,6 +219,11 @@ export const useStore = create<OrionState>((set, get) => ({
     } else {
       set({ activeTabId: null, focusedPaneId: null });
     }
+    // Switch server tab to this workspace's servers
+    const srvTabs = get().serverTabs.filter((t) => t.workspacePath === path);
+    if (srvTabs.length > 0) {
+      set({ activeServerTabId: srvTabs[0].id });
+    }
   },
 
   tabs: [],
