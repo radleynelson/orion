@@ -256,28 +256,21 @@ export default function Sidebar() {
   const handleOpenProject = useCallback(async () => {
     try {
       const info = await OpenProjectDialog();
-      setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
-      const ws = await ListWorkspaces(info.root);
-      setWorkspaces(ws);
-      const agents = await GetAgentTypes(info.root);
-      setAgentTypes(agents);
-      const main = ws.find((w) => w.isMain);
-      if (main) {
-        setActiveWorkspace(main.path);
-        const termId = generateId('term');
-        await CreateTerminalInDir(termId, main.path);
-        addTab({
-          id: generateId('tab'),
-          label: 'Shell 1',
-          rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-          tabType: 'shell',
-          workspacePath: main.path,
-        });
+      if (!info) return;
+      // Delegate to App.loadProject which handles tab restore + tmux recovery.
+      const loader = (window as any).__orionLoadProject;
+      if (loader) {
+        await loader(info);
+      } else {
+        // Fallback: minimal load (shouldn't happen)
+        setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
+        const ws = await ListWorkspaces(info.root);
+        setWorkspaces(ws);
       }
     } catch (err) {
       console.error('Failed to open project:', err);
     }
-  }, [setProject, setWorkspaces, setActiveWorkspace, addTab]);
+  }, [setProject, setWorkspaces]);
 
   if (!sidebarVisible) {
     return null;

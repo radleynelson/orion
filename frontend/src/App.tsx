@@ -75,78 +75,97 @@ function App() {
 
   // Menu events are registered after callbacks are defined (see below)
 
+  // Load a project: set state, restore saved tabs, fall back to tmux scan.
+  // Closes any currently-open tabs from a prior project first.
+  const loadProject = useCallback(async (info: { name: string; root: string; mainBranch: string }) => {
+    try {
+      // Close existing tabs (release their PTYs but leave tmux alive)
+      const currentTabs = useStore.getState().tabs;
+      for (const t of currentTabs) {
+        for (const termId of useStore.getState().getAllTerminalIds(t)) {
+          try { await CloseTerminal(termId); } catch {}
+        }
+        useStore.getState().removeTab(t.id);
+      }
+
+      await SetActiveProject(info.root);
+      setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
+      const ws = await ListWorkspaces(info.root);
+      setWorkspaces(ws);
+
+      const mainWs = ws.find((w: any) => w.isMain);
+      if (mainWs) setActiveWorkspace(mainWs.path);
+
+      const savedTabs = (await GetSavedTabs()) || [];
+      const restoredSessions = new Set<string>();
+      for (const saved of savedTabs) {
+        const termId = generateId('term');
+        try {
+          await CreateAttachedTerminal(termId, saved.tmuxSession);
+          addTab({
+            id: generateId('tab'),
+            label: saved.label,
+            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+            tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
+            workspacePath: saved.workspacePath,
+          });
+          restoredSessions.add(saved.tmuxSession);
+        } catch {}
+      }
+
+      // Fallback: scan tmux directly for any orion-* sessions that weren't
+      // in savedTabs (e.g. saved-state was stale or never persisted before quit).
+      try {
+        const recovered = await RecoverSessions(info.name, ws.map((w: any) => w.path));
+        for (const sess of (recovered || [])) {
+          if (sess.type === 'server') continue;
+          if (restoredSessions.has(sess.tmuxName)) continue;
+          const termId = generateId('term');
+          try {
+            await CreateAttachedTerminal(termId, sess.tmuxName);
+            addTab({
+              id: generateId('tab'),
+              label: sess.label,
+              rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+              tabType: 'shell',
+              workspacePath: sess.workspacePath,
+            });
+            restoredSessions.add(sess.tmuxName);
+          } catch {}
+        }
+      } catch {}
+
+      if (savedTabs.length === 0 && restoredSessions.size === 0 && mainWs) {
+        const termId = generateId('term');
+        await CreateTerminalInDir(termId, mainWs.path);
+        addTab({
+          id: generateId('tab'),
+          label: 'Shell 1',
+          rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+          tabType: 'shell',
+          workspacePath: mainWs.path,
+        });
+      }
+    } catch {}
+  }, [addTab, setProject, setWorkspaces, setActiveWorkspace]);
+
+  // Expose loadProject globally so Sidebar can trigger it after picking a project
+  useEffect(() => {
+    (window as any).__orionLoadProject = loadProject;
+    return () => { delete (window as any).__orionLoadProject; };
+  }, [loadProject]);
+
   // Initialize app on mount — load last project and restore saved tabs
   // Lives here (not in Sidebar) because App never unmounts, preventing duplicate tabs
   useEffect(() => {
-    const init = async () => {
+    (async () => {
       try {
         const lastRoot = await GetLastProject();
         if (!lastRoot) return;
-
         const info = await GetProjectInfo(lastRoot);
-        await SetActiveProject(info.root); // load per-project state
-        setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
-        const ws = await ListWorkspaces(info.root);
-        setWorkspaces(ws);
-
-        const mainWs = ws.find((w: any) => w.isMain);
-        if (mainWs) {
-          setActiveWorkspace(mainWs.path);
-        }
-
-        const savedTabs = (await GetSavedTabs()) || [];
-        const restoredSessions = new Set<string>();
-        for (const saved of savedTabs) {
-          const termId = generateId('term');
-          try {
-            await CreateAttachedTerminal(termId, saved.tmuxSession);
-            addTab({
-              id: generateId('tab'),
-              label: saved.label,
-              rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-              tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
-              workspacePath: saved.workspacePath,
-            });
-            restoredSessions.add(saved.tmuxSession);
-          } catch {}
-        }
-
-        // Fallback: scan tmux directly for any orion-* sessions that weren't
-        // in savedTabs (e.g. saved-state was stale or never persisted before quit).
-        try {
-          const recovered = await RecoverSessions(info.name, ws.map((w: any) => w.path));
-          for (const sess of (recovered || [])) {
-            if (sess.type === 'server') continue; // server tabs handled separately
-            if (restoredSessions.has(sess.tmuxName)) continue;
-            const termId = generateId('term');
-            try {
-              await CreateAttachedTerminal(termId, sess.tmuxName);
-              addTab({
-                id: generateId('tab'),
-                label: sess.label,
-                rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-                tabType: 'shell',
-                workspacePath: sess.workspacePath,
-              });
-              restoredSessions.add(sess.tmuxName);
-            } catch {}
-          }
-        } catch {}
-
-        if (savedTabs.length === 0 && restoredSessions.size === 0 && mainWs) {
-          const termId = generateId('term');
-          await CreateTerminalInDir(termId, mainWs.path);
-          addTab({
-            id: generateId('tab'),
-            label: 'Shell 1',
-            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-            tabType: 'shell',
-            workspacePath: mainWs.path,
-          });
-        }
+        await loadProject(info);
       } catch {}
-    };
-    init();
+    })();
   }, []);
 
   const activeTabs = tabs.filter((t) => t.workspacePath === activeWorkspacePath);
@@ -396,12 +415,7 @@ function App() {
         try {
           const { OpenProjectDialog } = await import('../wailsjs/go/main/App');
           const info = await OpenProjectDialog();
-          if (info) {
-            await SetActiveProject(info.root);
-            setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
-            const ws = await ListWorkspaces(info.root);
-            setWorkspaces(ws);
-          }
+          if (info) await loadProject(info);
         } catch {}
       }),
       EventsOn('menu:new-terminal', () => createNewShell()),

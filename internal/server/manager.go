@@ -232,8 +232,14 @@ func (m *Manager) GetServerStatuses(repoRoot string, workspacePath string) []Ser
 	wsID := filepath.Base(workspacePath)
 	alloc := m.portReg.GetAllocation(wsID)
 
-	var statuses []ServerStatus
+	names := make([]string, 0, len(cfg.Servers))
 	for name := range cfg.Servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var statuses []ServerStatus
+	for _, name := range names {
 		tmuxName := fmt.Sprintf("orion-srv-%s-%s", wsID, name)
 		assignedPort := 0
 		if alloc != nil {
