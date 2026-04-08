@@ -23,6 +23,7 @@ import {
   GetAgentTypes,
   GetSavedTabs,
   GetTmuxSession,
+  RecoverSessions,
 } from '../wailsjs/go/main/App';
 
 function App() {
@@ -93,22 +94,46 @@ function App() {
           setActiveWorkspace(mainWs.path);
         }
 
-        const savedTabs = await GetSavedTabs();
-        if (savedTabs && savedTabs.length > 0) {
-          for (const saved of savedTabs) {
+        const savedTabs = (await GetSavedTabs()) || [];
+        const restoredSessions = new Set<string>();
+        for (const saved of savedTabs) {
+          const termId = generateId('term');
+          try {
+            await CreateAttachedTerminal(termId, saved.tmuxSession);
+            addTab({
+              id: generateId('tab'),
+              label: saved.label,
+              rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+              tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
+              workspacePath: saved.workspacePath,
+            });
+            restoredSessions.add(saved.tmuxSession);
+          } catch {}
+        }
+
+        // Fallback: scan tmux directly for any orion-* sessions that weren't
+        // in savedTabs (e.g. saved-state was stale or never persisted before quit).
+        try {
+          const recovered = await RecoverSessions(info.name, ws.map((w: any) => w.path));
+          for (const sess of (recovered || [])) {
+            if (sess.type === 'server') continue; // server tabs handled separately
+            if (restoredSessions.has(sess.tmuxName)) continue;
             const termId = generateId('term');
             try {
-              await CreateAttachedTerminal(termId, saved.tmuxSession);
+              await CreateAttachedTerminal(termId, sess.tmuxName);
               addTab({
                 id: generateId('tab'),
-                label: saved.label,
+                label: sess.label,
                 rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-                tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
-                workspacePath: saved.workspacePath,
+                tabType: 'shell',
+                workspacePath: sess.workspacePath,
               });
+              restoredSessions.add(sess.tmuxName);
             } catch {}
           }
-        } else if (mainWs) {
+        } catch {}
+
+        if (savedTabs.length === 0 && restoredSessions.size === 0 && mainWs) {
           const termId = generateId('term');
           await CreateTerminalInDir(termId, mainWs.path);
           addTab({
@@ -131,6 +156,14 @@ function App() {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
+    return isNaN(v) ? 250 : v;
+  });
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+  useEffect(() => {
+    localStorage.setItem('orion.sidebarWidth', String(sidebarWidth));
+  }, [sidebarWidth]);
 
   // Double-shift detection for Search Everywhere (like JetBrains)
   useEffect(() => {
@@ -404,11 +437,35 @@ function App() {
       <div className="content">
         <ActivityBar />
         {sidebarMode && (
-          <div className="sidebar-container">
+          <div className="sidebar-container" style={{ width: sidebarWidth }}>
             {sidebarMode === 'workspaces' && <Sidebar />}
             {sidebarMode === 'files' && <FileExplorer />}
             {sidebarMode === 'git' && <GitPanel />}
             {sidebarMode === 'search' && <GlobalSearch />}
+            <div
+              className={`sidebar-resizer${resizingSidebar ? ' dragging' : ''}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = sidebarWidth;
+                setResizingSidebar(true);
+                const onMove = (me: MouseEvent) => {
+                  const next = Math.max(160, Math.min(800, startW + (me.clientX - startX)));
+                  setSidebarWidth(next);
+                };
+                const onUp = () => {
+                  document.removeEventListener('mousemove', onMove);
+                  document.removeEventListener('mouseup', onUp);
+                  document.body.style.cursor = '';
+                  document.body.style.userSelect = '';
+                  setResizingSidebar(false);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+              }}
+            />
           </div>
         )}
 

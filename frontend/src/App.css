@@ -82,12 +82,28 @@
 /* Sidebar container */
 .sidebar-container {
   width: 250px;
-  min-width: 200px;
-  max-width: 400px;
   border-right: 1px solid var(--border-dim);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+}
+.sidebar-resizer:hover,
+.sidebar-resizer.dragging {
+  background: var(--accent, #4a9eff);
+  opacity: 0.4;
 }
 
 /* Sidebar */

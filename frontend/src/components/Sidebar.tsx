@@ -68,21 +68,32 @@ export default function Sidebar() {
     })();
   }, [activeWorkspacePath, serverStatuses]);
 
-  // Poll server statuses for active workspace
+  // Poll server statuses for ALL workspaces (so indicators are correct on startup)
   useEffect(() => {
-    if (!project || !activeWorkspacePath) return;
-    const fetchStatuses = async () => {
+    if (!project || workspaces.length === 0) return;
+    const fetchAll = async () => {
       try {
-        const statuses = await GetServerStatuses(project.root, activeWorkspacePath);
-        if (statuses) {
-          setServerStatuses((prev) => ({ ...prev, [activeWorkspacePath]: statuses }));
-        }
+        const results = await Promise.all(
+          workspaces.map(async (ws) => {
+            try {
+              const statuses = await GetServerStatuses(project.root, ws.path);
+              return [ws.path, statuses || []] as [string, server.ServerStatus[]];
+            } catch {
+              return [ws.path, [] as server.ServerStatus[]] as [string, server.ServerStatus[]];
+            }
+          })
+        );
+        setServerStatuses((prev) => {
+          const next = { ...prev };
+          for (const [path, statuses] of results) next[path] = statuses;
+          return next;
+        });
       } catch {}
     };
-    fetchStatuses();
-    const interval = setInterval(fetchStatuses, 5000);
+    fetchAll();
+    const interval = setInterval(fetchAll, 5000);
     return () => clearInterval(interval);
-  }, [project, activeWorkspacePath]);
+  }, [project, workspaces]);
 
   // Keyboard shortcut: Cmd+\ to toggle sidebar
   useEffect(() => {
@@ -315,7 +326,13 @@ export default function Sidebar() {
           </span>
         </div>
 
-        {workspaces.map((ws) => {
+        {[...workspaces].sort((a, b) => {
+          if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
+          const aActive = (serverStatuses[a.path] || []).some((s) => s.running) || a.hasAgent;
+          const bActive = (serverStatuses[b.path] || []).some((s) => s.running) || b.hasAgent;
+          if (aActive !== bActive) return aActive ? -1 : 1;
+          return (a.branch || a.name).localeCompare(b.branch || b.name);
+        }).map((ws) => {
           const wsStatuses = serverStatuses[ws.path] || [];
           const wsHasServers = wsStatuses.some((s) => s.running);
 
