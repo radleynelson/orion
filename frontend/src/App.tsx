@@ -241,7 +241,7 @@ function App() {
         handleSplit('vertical');
       }
       // Cmd+Shift+D: split down (horizontal)
-      if (e.metaKey && e.shiftKey && e.key === 'D') {
+      if (e.metaKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault();
         handleSplit('horizontal');
       }
@@ -275,13 +275,31 @@ function App() {
         e.preventDefault();
         swapPane('next');
       }
-      // Cmd+1-9: switch tabs
-      if (e.metaKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
+      // Cmd+Up/Down: cycle through workspaces
+      if (e.metaKey && !e.shiftKey && e.key === 'ArrowUp') {
         e.preventDefault();
-        const idx = parseInt(e.key) - 1;
-        if (idx < activeTabs.length) {
-          setActiveTab(activeTabs[idx].id);
-        }
+        const currentIdx = workspaces.findIndex((w) => w.path === activeWorkspacePath);
+        const prevIdx = (currentIdx - 1 + workspaces.length) % workspaces.length;
+        if (workspaces[prevIdx]) setActiveWorkspace(workspaces[prevIdx].path);
+      }
+      if (e.metaKey && !e.shiftKey && e.key === 'ArrowDown') {
+        e.preventDefault();
+        const currentIdx = workspaces.findIndex((w) => w.path === activeWorkspacePath);
+        const nextIdx = (currentIdx + 1) % workspaces.length;
+        if (workspaces[nextIdx]) setActiveWorkspace(workspaces[nextIdx].path);
+      }
+      // Cmd+Left/Right: cycle tabs
+      if (e.metaKey && !e.shiftKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const currentIdx = activeTabs.findIndex((t) => t.id === activeTabId);
+        const prevIdx = (currentIdx - 1 + activeTabs.length) % activeTabs.length;
+        if (activeTabs[prevIdx]) setActiveTab(activeTabs[prevIdx].id);
+      }
+      if (e.metaKey && !e.shiftKey && e.key === 'ArrowRight') {
+        e.preventDefault();
+        const currentIdx = activeTabs.findIndex((t) => t.id === activeTabId);
+        const nextIdx = (currentIdx + 1) % activeTabs.length;
+        if (activeTabs[nextIdx]) setActiveTab(activeTabs[nextIdx].id);
       }
       // Cmd+Shift+N: new Orion window
       if (e.metaKey && e.shiftKey && e.key === 'N') {
@@ -558,6 +576,7 @@ function App() {
         visible={searchEverywhereVisible}
         onClose={() => setSearchEverywhereVisible(false)}
       />
+
 
       {/* Status bar */}
       <div className="status-bar">

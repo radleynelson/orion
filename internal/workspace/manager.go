@@ -317,6 +317,7 @@ func createTmuxSession(name, workDir string) error {
 	}
 	exec.Command("tmux", "set-option", "-t", name, "history-limit", "50000").Run()
 	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()
+	exec.Command("tmux", "set-option", "-t", name, "status", "off").Run()
 	return nil
 }
 

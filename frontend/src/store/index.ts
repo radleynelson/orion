@@ -148,16 +148,10 @@ function removePaneFromTree(root: Pane, targetId: string): Pane | null {
   if (newChildren.length === 0) return null;
   if (newChildren.length === 1) return newChildren[0];
 
-  const totalSize = split.sizes.reduce((a: number, b: number) => a + b, 0);
-  const remainingIndices: number[] = [];
-  split.children.forEach((c: Pane, i: number) => {
-    if (newChildren.some((nc: Pane) => nc.id === c.id)) {
-      remainingIndices.push(i);
-    }
-  });
-  let newSizes = remainingIndices.map((i: number) => split.sizes[i]);
-  const newTotal = newSizes.reduce((a: number, b: number) => a + b, 0);
-  newSizes = newSizes.map((s: number) => (s / newTotal) * totalSize);
+  // Distribute sizes evenly among remaining children.
+  // We can't match by ID because collapsed splits change IDs.
+  const evenSize = 100 / newChildren.length;
+  const newSizes = newChildren.map(() => evenSize);
 
   return { ...split, children: newChildren, sizes: newSizes };
 }

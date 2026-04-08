@@ -375,6 +375,59 @@
   white-space: nowrap;
 }
 
+/* Workspace switcher modal (Ctrl+Tab) */
+.switcher-modal {
+  width: 350px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 8px 0;
+}
+
+.switcher-title {
+  padding: 8px 16px;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.switcher-item:hover,
+.switcher-item.selected {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.switcher-item.selected {
+  border-left: 2px solid var(--accent-blue);
+}
+
+.switcher-icon {
+  font-size: 10px;
+  color: var(--accent-green);
+}
+
+.switcher-name {
+  flex: 1;
+}
+
+.switcher-current {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
 /* Global search results (sidebar panel) */
 .search-content-results {
   overflow-y: auto;
