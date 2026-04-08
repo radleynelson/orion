@@ -19,7 +19,7 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
         onClick={() => setFocusedPane(pane.id)}
       >
-        <Terminal terminalId={pane.terminalId!} visible={visible} />
+        <Terminal terminalId={pane.terminalId!} visible={visible} focused={isFocused} />
       </div>
     );
   }

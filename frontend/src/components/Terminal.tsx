@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 interface TerminalProps {
   terminalId: string;
   visible: boolean;
+  focused?: boolean;
 }
 
 // Refuse to resize below this width — prevents tmux scrollback from
@@ -27,7 +28,7 @@ function safeFit(term: OrionTerminal | null, container: HTMLElement | null) {
   } catch {}
 }
 
-export default function Terminal({ terminalId, visible }: TerminalProps) {
+export default function Terminal({ terminalId, visible, focused }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<OrionTerminal | null>(null);
   const zoomLevel = useStore((s) => s.zoomLevel);
@@ -59,6 +60,13 @@ export default function Terminal({ terminalId, visible }: TerminalProps) {
       return () => clearTimeout(timer);
     }
   }, [visible]);
+
+  // Focus xterm when this pane becomes the focused pane (e.g. via Cmd+[ / Cmd+])
+  useEffect(() => {
+    if (focused && visible) {
+      termRef.current?.terminal.focus();
+    }
+  }, [focused, visible]);
 
   // React to zoom changes
   useEffect(() => {
