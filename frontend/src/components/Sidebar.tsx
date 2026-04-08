@@ -18,6 +18,7 @@ import {
   SaveTabs,
   GetTmuxSession,
   GetWorkspaceEnv,
+  AllocatePorts,
 } from '../../wailsjs/go/main/App';
 
 export default function Sidebar() {
@@ -322,7 +323,11 @@ export default function Sidebar() {
             <div key={ws.path}>
               <div
                 className={`sidebar-item ${ws.path === activeWorkspacePath ? 'active' : ''}`}
-                onClick={() => setActiveWorkspace(ws.path)}
+                onClick={() => {
+                  setActiveWorkspace(ws.path);
+                  // Pre-allocate ports so agents/shells know them immediately
+                  if (project) AllocatePorts(project.root, ws.path, ws.isMain).catch(() => {});
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   if (!ws.isMain) setConfirmDelete(ws.path);

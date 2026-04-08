@@ -39,6 +39,50 @@ func (m *Manager) SetContext(ctx context.Context) {
 	m.ctx = ctx
 }
 
+// AllocatePorts pre-allocates ports for a workspace and writes .orion/env.sh
+// so that agents and shells know the ports before servers are started.
+func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bool) error {
+	cfg := config.Load(repoRoot)
+	if len(cfg.Servers) == 0 {
+		return nil
+	}
+
+	wsID := filepath.Base(workspacePath)
+
+	// Check if already allocated
+	existing := m.portReg.GetAllocation(wsID)
+	if existing != nil {
+		// Already allocated, just ensure env file exists
+		writeEnvFile(workspacePath, existing, cfg)
+		return nil
+	}
+
+	var alloc port.Allocation
+	if isMain {
+		alloc = make(port.Allocation)
+		for name, srv := range cfg.Servers {
+			if srv.DefaultPort > 0 {
+				alloc[name] = srv.DefaultPort
+			}
+		}
+	} else {
+		var portServers []string
+		for name, srv := range cfg.Servers {
+			if srv.DefaultPort > 0 {
+				portServers = append(portServers, name)
+			}
+		}
+		var err error
+		alloc, err = m.portReg.AllocateForWorkspace(wsID, portServers)
+		if err != nil {
+			return err
+		}
+	}
+
+	writeEnvFile(workspacePath, alloc, cfg)
+	return nil
+}
+
 // StartServers starts all configured servers for a workspace on isolated ports.
 // If isMain is true, uses the default_port from config instead of random ports.
 // Returns the list of server statuses with assigned ports.
@@ -153,11 +197,8 @@ func (m *Manager) StopServers(workspacePath string) error {
 		}
 	}
 
-	// Release ports
-	m.portReg.ReleaseWorkspace(wsID)
-
-	// Remove env file
-	removeEnvFile(workspacePath)
+	// Ports and env file stay — they belong to the workspace, not the server lifecycle.
+	// Only released when the workspace/worktree is deleted.
 
 	return nil
 }

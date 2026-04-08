@@ -168,17 +168,18 @@ func (a *App) SetActiveProject(root string) {
 }
 
 // NewWindow launches a new Orion instance.
+// Passes --new flag so the new instance opens to project picker instead of
+// auto-loading the last project (which would steal tmux sessions from this window).
 func (a *App) NewWindow() error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	// Find the .app bundle path
 	appPath := execPath
 	if idx := strings.Index(execPath, ".app/"); idx > 0 {
 		appPath = execPath[:idx+4]
 	}
-	cmd := exec.Command("open", "-n", appPath)
+	cmd := exec.Command("open", "-n", appPath, "--args", "--new")
 	return cmd.Start()
 }
 
@@ -221,6 +222,10 @@ func (a *App) GetConfig(repoRoot string) *config.OrionConfig {
 }
 
 // --- Server methods ---
+
+func (a *App) AllocatePorts(repoRoot string, workspacePath string, isMain bool) error {
+	return a.srvMgr.AllocatePorts(repoRoot, workspacePath, isMain)
+}
 
 func (a *App) StartServers(repoRoot string, workspacePath string, isMain bool) ([]server.ServerStatus, error) {
 	return a.srvMgr.StartServers(repoRoot, workspacePath, isMain)
@@ -289,6 +294,10 @@ func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {
 // --- State methods ---
 
 func (a *App) GetLastProject() string {
+	// New window flag — open to project picker, don't auto-load
+	if os.Getenv("ORION_NEW_WINDOW") == "1" {
+		return ""
+	}
 	// Check CLI flag first (for multi-instance launches)
 	if envProject := os.Getenv("ORION_PROJECT"); envProject != "" {
 		return envProject

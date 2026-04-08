@@ -17,9 +17,11 @@ import (
 var assets embed.FS
 
 var projectFlag string
+var newWindowFlag bool
 
 func main() {
 	flag.StringVar(&projectFlag, "project", "", "Project directory to open")
+	flag.BoolVar(&newWindowFlag, "new", false, "Open to project picker (don't auto-load last project)")
 	flag.Parse()
 
 	if projectFlag == "" && flag.NArg() > 0 {
@@ -28,6 +30,9 @@ func main() {
 
 	if projectFlag != "" {
 		os.Setenv("ORION_PROJECT", projectFlag)
+	}
+	if newWindowFlag {
+		os.Setenv("ORION_NEW_WINDOW", "1")
 	}
 
 	app := NewApp()

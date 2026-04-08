@@ -8,6 +8,8 @@ import {state} from '../models';
 import {server} from '../models';
 import {files} from '../models';
 
+export function AllocatePorts(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
 export function CloseTerminal(arg1:string):Promise<void>;
 
 export function CreateAttachedTerminal(arg1:string,arg2:string):Promise<void>;

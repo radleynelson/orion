@@ -103,11 +103,19 @@ export function createTerminal(
   //   the app snapping back to bottom on mousedown
   const el = container;
 
+  let lastScrollTime = 0;
+  const scrollThrottleMs = 50; // minimum ms between scroll events
+
   const wheelHandler = (e: WheelEvent) => {
     const buffer = terminal.buffer.active;
     if (buffer.type === 'alternate') {
       e.preventDefault();
       e.stopPropagation();
+
+      // Throttle scroll events to control speed
+      const now = Date.now();
+      if (now - lastScrollTime < scrollThrottleMs) return;
+      lastScrollTime = now;
 
       const rect = el.getBoundingClientRect();
       const cellWidth = rect.width / terminal.cols;
@@ -116,7 +124,7 @@ export function createTerminal(
       const row = Math.min(terminal.rows, Math.max(1, Math.floor((e.clientY - rect.top) / cellHeight) + 1));
 
       const button = e.deltaY < 0 ? 64 : 65;
-      const lines = Math.max(1, Math.ceil(Math.abs(e.deltaY) / 30));
+      const lines = 1; // one line per throttled event
       for (let i = 0; i < lines; i++) {
         const seq = `\x1b[<${button};${col};${row}M`;
         const bytes = new TextEncoder().encode(seq);
