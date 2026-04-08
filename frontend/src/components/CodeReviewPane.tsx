@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { GetChangedFilesAgainst, GetUnifiedDiff } from '../../wailsjs/go/main/App';
 import { git } from '../../wailsjs/go/models';
 import { parseUnifiedDiff, ParsedDiff } from '../lib/diffParser';
+import { getLanguageFromPath } from '../lib/languages';
 
 interface FileEntry {
   file: git.ChangedFile;
@@ -17,6 +18,7 @@ export default function CodeReviewPane() {
     codeReviewBase,
     setCodeReviewBase,
     setCodeReviewVisible,
+    openFile,
   } = useStore();
 
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -116,7 +118,19 @@ export default function CodeReviewPane() {
               <span className="cr-status" style={{ color: statusColor(file.status) }}>
                 {file.status}
               </span>
-              <span className="cr-file-path">{file.path}</span>
+              <span
+                className="cr-file-path cr-file-link"
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey) {
+                    e.stopPropagation();
+                    if (activeWorkspacePath) {
+                      const fullPath = activeWorkspacePath + '/' + file.path;
+                      openFile(fullPath, getLanguageFromPath(file.path));
+                    }
+                  }
+                }}
+                title="⌘+click to open file"
+              >{file.path}</span>
               {diff && (
                 <span className="cr-counts">
                   <span className="cr-add">+{diff.added}</span>{' '}

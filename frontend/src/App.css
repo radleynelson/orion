@@ -841,6 +841,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.cr-file-link:hover {
+  text-decoration: underline;
+  cursor: pointer;
+}
 .cr-counts {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
