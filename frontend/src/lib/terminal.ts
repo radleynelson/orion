@@ -30,6 +30,8 @@ const THEME = {
   brightWhite: '#ffffff',
 };
 
+export const TERMINAL_BASE_FONT_SIZE = 13;
+
 export interface OrionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
@@ -39,11 +41,12 @@ export interface OrionTerminal {
 export function createTerminal(
   container: HTMLElement,
   terminalId: string,
+  fontSize: number = TERMINAL_BASE_FONT_SIZE,
 ): OrionTerminal {
   const terminal = new Terminal({
     theme: THEME,
     fontFamily: "'JetBrains Mono', 'Menlo', 'Monaco', 'Cascadia Code', monospace",
-    fontSize: 13,
+    fontSize,
     fontWeight: '400',
     fontWeightBold: '600',
     lineHeight: 1.3,

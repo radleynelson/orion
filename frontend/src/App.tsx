@@ -7,7 +7,7 @@ import FileExplorer from './components/FileExplorer';
 import GitPanel from './components/GitPanel';
 import GlobalSearch from './components/GlobalSearch';
 import SearchEverywhere from './components/SearchEverywhere';
-import { useStore, generateId, Tab, PaneLeaf } from './store';
+import { useStore, generateId, Tab, PaneLeaf, zoomFactorFor } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import {
@@ -58,7 +58,16 @@ function App() {
     setServerPaneHeight,
     sidebarMode,
     setSidebarMode,
+    zoomLevel,
+    zoomIn,
+    zoomOut,
+    zoomReset,
   } = useStore();
+
+  // Apply zoom factor to CSS variable
+  useEffect(() => {
+    document.documentElement.style.setProperty('--zoom', String(zoomFactorFor(zoomLevel)));
+  }, [zoomLevel]);
 
   // Initialize Monaco theme once
   useEffect(() => { configureMonacoTheme(); }, []);
@@ -320,6 +329,21 @@ function App() {
       if (e.metaKey && e.shiftKey && e.key === 'G') {
         e.preventDefault();
         setSidebarMode(sidebarMode === 'git' ? null : 'git');
+      }
+      // Cmd+= / Cmd++ : zoom in
+      if (e.metaKey && !e.shiftKey && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        zoomIn();
+      }
+      // Cmd+- : zoom out
+      if (e.metaKey && !e.shiftKey && e.key === '-') {
+        e.preventDefault();
+        zoomOut();
+      }
+      // Cmd+0 : reset zoom
+      if (e.metaKey && !e.shiftKey && e.key === '0') {
+        e.preventDefault();
+        zoomReset();
       }
       // Cmd+B: toggle sidebar
       if (e.metaKey && !e.shiftKey && e.key === 'b') {

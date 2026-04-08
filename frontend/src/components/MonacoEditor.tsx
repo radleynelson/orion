@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import { ReadFileContents } from '../../wailsjs/go/main/App';
 import type { editor } from 'monaco-editor';
+import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
 
 interface MonacoEditorProps {
   filePath: string;
@@ -14,6 +15,12 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const zoomLevel = useStore((s) => s.zoomLevel);
+  const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ fontSize });
+  }, [fontSize]);
 
   useEffect(() => {
     (async () => {
@@ -89,7 +96,7 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       options={{
         readOnly: true,
         minimap: { enabled: false },
-        fontSize: 13,
+        fontSize,
         fontFamily: "'JetBrains Mono', 'Menlo', 'Monaco', monospace",
         lineNumbers: 'on',
         scrollBeyondLastLine: false,
