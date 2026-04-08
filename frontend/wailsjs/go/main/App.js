@@ -30,6 +30,14 @@ export function DeleteWorkspace(arg1, arg2) {
   return window['go']['main']['App']['DeleteWorkspace'](arg1, arg2);
 }
 
+export function DiscardAllChanges(arg1) {
+  return window['go']['main']['App']['DiscardAllChanges'](arg1);
+}
+
+export function DiscardFileChanges(arg1, arg2) {
+  return window['go']['main']['App']['DiscardFileChanges'](arg1, arg2);
+}
+
 export function GetAgentTypes(arg1) {
   return window['go']['main']['App']['GetAgentTypes'](arg1);
 }

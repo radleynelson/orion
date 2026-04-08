@@ -22,6 +22,10 @@ export function CreateWorkspace(arg1:string,arg2:string):Promise<workspace.Works
 
 export function DeleteWorkspace(arg1:string,arg2:string):Promise<void>;
 
+export function DiscardAllChanges(arg1:string):Promise<void>;
+
+export function DiscardFileChanges(arg1:string,arg2:string):Promise<void>;
+
 export function GetAgentTypes(arg1:string):Promise<Array<main.AgentTypeInfo>>;
 
 export function GetChangedFiles(arg1:string):Promise<Array<git.ChangedFile>>;

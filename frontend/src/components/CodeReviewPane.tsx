@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../store';
-import { GetChangedFilesAgainst, GetUnifiedDiff } from '../../wailsjs/go/main/App';
+import {
+  GetChangedFilesAgainst,
+  GetUnifiedDiff,
+  DiscardFileChanges,
+  DiscardAllChanges,
+} from '../../wailsjs/go/main/App';
 import { git } from '../../wailsjs/go/models';
 import { parseUnifiedDiff, ParsedDiff } from '../lib/diffParser';
 import { getLanguageFromPath } from '../lib/languages';
@@ -33,6 +38,9 @@ export default function CodeReviewPane() {
       return;
     }
     const myReq = ++reqId.current;
+    // Clear stale entries from the previous workspace/base immediately so we
+    // never show the wrong diff while the new fetch is in flight.
+    setEntries([]);
     setLoading(true);
     try {
       const files = (await GetChangedFilesAgainst(activeWorkspacePath, baseArg)) || [];
@@ -65,6 +73,28 @@ export default function CodeReviewPane() {
     refresh();
   }, [refresh]);
 
+  const discardFile = async (path: string) => {
+    if (!activeWorkspacePath) return;
+    if (!window.confirm(`Discard all changes to ${path}? This cannot be undone.`)) return;
+    try {
+      await DiscardFileChanges(activeWorkspacePath, path);
+      await refresh();
+    } catch (err) {
+      console.error('Discard failed:', err);
+    }
+  };
+
+  const discardAll = async () => {
+    if (!activeWorkspacePath || entries.length === 0) return;
+    if (!window.confirm(`Discard ALL ${entries.length} changed file(s)? This cannot be undone.`)) return;
+    try {
+      await DiscardAllChanges(activeWorkspacePath);
+      await refresh();
+    } catch (err) {
+      console.error('Discard all failed:', err);
+    }
+  };
+
   const toggleCollapse = (path: string) => {
     setEntries((prev) =>
       prev.map((e) => (e.file.path === path ? { ...e, collapsed: !e.collapsed } : e))
@@ -95,6 +125,15 @@ export default function CodeReviewPane() {
           <option value="main">vs {project?.mainBranch || 'main'}</option>
         </select>
         <span className="cr-spacer" />
+        {codeReviewBase === 'uncommitted' && entries.length > 0 && (
+          <button
+            className="cr-icon-btn cr-discard-all"
+            onClick={discardAll}
+            title="Discard all changes"
+          >
+            Discard all
+          </button>
+        )}
         <button className="cr-icon-btn" onClick={refresh} title="Refresh">
           {loading ? '…' : '↻'}
         </button>
@@ -131,6 +170,18 @@ export default function CodeReviewPane() {
                 }}
                 title="⌘+click to open file"
               >{file.path}</span>
+              {codeReviewBase === 'uncommitted' && (
+                <button
+                  className="cr-discard-file"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    discardFile(file.path);
+                  }}
+                  title="Discard changes to this file"
+                >
+                  ↶ Discard
+                </button>
+              )}
               {diff && (
                 <span className="cr-counts">
                   <span className="cr-add">+{diff.added}</span>{' '}

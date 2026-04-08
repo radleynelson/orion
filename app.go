@@ -395,6 +395,14 @@ func (a *App) GetUnifiedDiff(workspacePath string, base string, filePath string)
 	return a.gitMgr.GetUnifiedDiff(workspacePath, base, filePath)
 }
 
+func (a *App) DiscardFileChanges(workspacePath string, filePath string) error {
+	return a.gitMgr.DiscardFileChanges(workspacePath, filePath)
+}
+
+func (a *App) DiscardAllChanges(workspacePath string) error {
+	return a.gitMgr.DiscardAllChanges(workspacePath)
+}
+
 func (a *App) SearchFiles(root string, query string) ([]files.SearchResult, error) {
 	return a.filesMgr.SearchFiles(root, query, 50)
 }

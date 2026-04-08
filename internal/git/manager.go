@@ -191,6 +191,52 @@ func (m *Manager) GetUnifiedDiff(workspacePath string, base string, filePath str
 	return "", nil
 }
 
+// DiscardFileChanges reverts a single file to its HEAD state. For untracked
+// files (status "?"), the file is removed from disk.
+func (m *Manager) DiscardFileChanges(workspacePath string, filePath string) error {
+	relPath := filePath
+	if filepath.IsAbs(filePath) {
+		if rel, err := filepath.Rel(workspacePath, filePath); err == nil {
+			relPath = rel
+		}
+	}
+
+	// Check tracked vs untracked via ls-files.
+	out, _ := exec.Command("git", "-C", workspacePath, "ls-files", "--", relPath).Output()
+	tracked := strings.TrimSpace(string(out)) != ""
+
+	if tracked {
+		// Reset index entry, then restore working tree from HEAD.
+		_ = exec.Command("git", "-C", workspacePath, "reset", "HEAD", "--", relPath).Run()
+		if err := exec.Command("git", "-C", workspacePath, "checkout", "HEAD", "--", relPath).Run(); err != nil {
+			return fmt.Errorf("git checkout failed: %w", err)
+		}
+		return nil
+	}
+
+	// Untracked: just delete the file.
+	if err := os.Remove(filepath.Join(workspacePath, relPath)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove untracked file failed: %w", err)
+	}
+	return nil
+}
+
+// DiscardAllChanges reverts every uncommitted change in the workspace,
+// including untracked files.
+func (m *Manager) DiscardAllChanges(workspacePath string) error {
+	// Unstage everything
+	_ = exec.Command("git", "-C", workspacePath, "reset", "HEAD", "--", ".").Run()
+	// Restore tracked files
+	if err := exec.Command("git", "-C", workspacePath, "checkout", "HEAD", "--", ".").Run(); err != nil {
+		return fmt.Errorf("git checkout failed: %w", err)
+	}
+	// Remove untracked files and directories (but keep ignored)
+	if err := exec.Command("git", "-C", workspacePath, "clean", "-fd").Run(); err != nil {
+		return fmt.Errorf("git clean failed: %w", err)
+	}
+	return nil
+}
+
 // GetFileDiff returns the original (HEAD) and current content for a file.
 // These feed directly into Monaco's DiffEditor.
 func (m *Manager) GetFileDiff(workspacePath string, filePath string) (*FileDiff, error) {

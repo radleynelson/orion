@@ -143,6 +143,11 @@ function App() {
         }
       } catch {}
 
+      // Reconcile active tab to belong to the active (main) workspace.
+      // Each addTab above sets activeTabId to itself, so end state is the
+      // last-added tab, which may belong to a non-main workspace.
+      if (mainWs) setActiveWorkspace(mainWs.path);
+
       if (savedTabs.length === 0 && restoredSessions.size === 0 && mainWs) {
         const termId = generateId('term');
         await CreateTerminalInDir(termId, mainWs.path);
