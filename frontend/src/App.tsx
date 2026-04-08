@@ -7,7 +7,7 @@ import FileExplorer from './components/FileExplorer';
 import GitPanel from './components/GitPanel';
 import GlobalSearch from './components/GlobalSearch';
 import SearchEverywhere from './components/SearchEverywhere';
-import { useStore, generateId, Tab, PaneLeaf, zoomFactorFor } from './store';
+import { useStore, generateId, Tab, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import {
@@ -336,18 +336,15 @@ function App() {
         e.preventDefault();
         swapPane('next');
       }
-      // Cmd+Up/Down: cycle through workspaces
-      if (e.metaKey && !e.shiftKey && e.key === 'ArrowUp') {
+      // Cmd+Up/Down: cycle through workspaces in the same order as the sidebar
+      if (e.metaKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         e.preventDefault();
-        const currentIdx = workspaces.findIndex((w) => w.path === activeWorkspacePath);
-        const prevIdx = (currentIdx - 1 + workspaces.length) % workspaces.length;
-        if (workspaces[prevIdx]) setActiveWorkspace(workspaces[prevIdx].path);
-      }
-      if (e.metaKey && !e.shiftKey && e.key === 'ArrowDown') {
-        e.preventDefault();
-        const currentIdx = workspaces.findIndex((w) => w.path === activeWorkspacePath);
-        const nextIdx = (currentIdx + 1) % workspaces.length;
-        if (workspaces[nextIdx]) setActiveWorkspace(workspaces[nextIdx].path);
+        const sorted = sortWorkspaces(workspaces, useStore.getState().workspaceActive);
+        if (sorted.length === 0) return;
+        const currentIdx = sorted.findIndex((w) => w.path === activeWorkspacePath);
+        const delta = e.key === 'ArrowUp' ? -1 : 1;
+        const nextIdx = (currentIdx + delta + sorted.length) % sorted.length;
+        setActiveWorkspace(sorted[nextIdx].path);
       }
       // Cmd+Left/Right: cycle tabs
       if (e.metaKey && !e.shiftKey && e.key === 'ArrowLeft') {

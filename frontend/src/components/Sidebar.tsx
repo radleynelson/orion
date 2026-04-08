@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect } from 'react';
-import { useStore, generateId, PaneLeaf } from '../store';
+import { useStore, generateId, PaneLeaf, sortWorkspaces } from '../store';
 import { server, main } from '../../wailsjs/go/models';
 import {
   ListWorkspaces,
@@ -33,6 +33,8 @@ export default function Sidebar() {
     addServerTab,
     serverTabs,
     tabs,
+    workspaceActive,
+    setWorkspaceActive,
   } = useStore();
 
   const [creating, setCreating] = useState(false);
@@ -88,6 +90,12 @@ export default function Sidebar() {
           for (const [path, statuses] of results) next[path] = statuses;
           return next;
         });
+        // Publish active flags so the cycle order in App.tsx matches the sidebar sort
+        for (const [path, statuses] of results) {
+          const ws = workspaces.find((w) => w.path === path);
+          const active = statuses.some((s) => s.running) || !!ws?.hasAgent;
+          setWorkspaceActive(path, active);
+        }
       } catch {}
     };
     fetchAll();
@@ -319,13 +327,7 @@ export default function Sidebar() {
           </span>
         </div>
 
-        {[...workspaces].sort((a, b) => {
-          if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
-          const aActive = (serverStatuses[a.path] || []).some((s) => s.running) || a.hasAgent;
-          const bActive = (serverStatuses[b.path] || []).some((s) => s.running) || b.hasAgent;
-          if (aActive !== bActive) return aActive ? -1 : 1;
-          return (a.branch || a.name).localeCompare(b.branch || b.name);
-        }).map((ws) => {
+        {sortWorkspaces(workspaces, workspaceActive).map((ws) => {
           const wsStatuses = serverStatuses[ws.path] || [];
           const wsHasServers = wsStatuses.some((s) => s.running);
 

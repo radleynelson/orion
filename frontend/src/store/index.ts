@@ -71,6 +71,11 @@ interface OrionState {
   sidebarMode: 'workspaces' | 'files' | 'git' | 'search' | null;
   setSidebarMode: (mode: 'workspaces' | 'files' | 'git' | 'search' | null) => void;
 
+  // Per-workspace active state (any server running). Drives sidebar sort
+  // and Cmd+Up/Down cycle order so they stay in sync.
+  workspaceActive: Record<string, boolean>;
+  setWorkspaceActive: (path: string, active: boolean) => void;
+
   // File/editor operations
   openFile: (filePath: string, language: string, line?: number) => void;
   openDiff: (filePath: string) => void;
@@ -96,6 +101,21 @@ interface OrionState {
   // Helpers
   getAllTerminalIds: (tab: Tab) => string[];
   getFocusedTerminalId: () => string | null;
+}
+
+// Shared workspace sort: main first, then active, then alphabetical.
+// Used by both the Sidebar render and the Cmd+Up/Down cycle so order stays consistent.
+export function sortWorkspaces<T extends { path: string; isMain: boolean; branch?: string; name: string }>(
+  list: T[],
+  active: Record<string, boolean>,
+): T[] {
+  return [...list].sort((a, b) => {
+    if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
+    const aA = !!active[a.path];
+    const bA = !!active[b.path];
+    if (aA !== bA) return aA ? -1 : 1;
+    return (a.branch || a.name).localeCompare(b.branch || b.name);
+  });
 }
 
 const ZOOM_MIN = -3;
@@ -553,6 +573,13 @@ export const useStore = create<OrionState>((set, get) => ({
   // Sidebar mode
   sidebarMode: 'workspaces' as 'workspaces' | 'files' | 'git' | 'search' | null,
   setSidebarMode: (mode) => set({ sidebarMode: mode }),
+
+  workspaceActive: {},
+  setWorkspaceActive: (path, active) =>
+    set((state) => {
+      if (!!state.workspaceActive[path] === active) return state;
+      return { workspaceActive: { ...state.workspaceActive, [path]: active } };
+    }),
 
   // File/editor operations
   openFile: (filePath, language, line) => {
