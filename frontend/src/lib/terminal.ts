@@ -97,6 +97,40 @@ export function createTerminal(
     return true;
   });
 
+  // Clean up copied text: trim trailing whitespace and join wrapped lines.
+  // Prevents random spaces in copied URLs and rejoins text that wraps
+  // at the terminal edge.
+  const copyHandler = (e: ClipboardEvent) => {
+    const selection = terminal.getSelection();
+    if (selection) {
+      e.preventDefault();
+      const lines = selection.split('\n').map((line: string) => line.trimEnd());
+      // Join lines that are likely wrapped (previous line is full-width
+      // or doesn't end with a natural break, next line doesn't start with space)
+      const joined: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const prevLine = joined.length > 0 ? joined[joined.length - 1] : '';
+        // Join with previous line if:
+        // - previous line exists and is close to terminal width (wrapped)
+        // - OR previous line doesn't end with a natural sentence/command break
+        // - AND current line doesn't start with whitespace (indented = new line)
+        if (joined.length > 0 && line.length > 0 && !line.startsWith(' ') && !line.startsWith('\t')) {
+          const prevLen = prevLine.length;
+          const nearFullWidth = prevLen >= terminal.cols - 2;
+          const endsWithContinuation = /[^.\s:;,)}\]>]$/.test(prevLine);
+          if (nearFullWidth || (endsWithContinuation && prevLen > 20)) {
+            joined[joined.length - 1] = prevLine + line;
+            continue;
+          }
+        }
+        joined.push(line);
+      }
+      e.clipboardData?.setData('text/plain', joined.join('\n'));
+    }
+  };
+  container.addEventListener('copy', copyHandler);
+
   // Alternate screen mouse handling for TUI apps (Claude Code, Codex, vim, etc.)
   // - Wheel events: sent as SGR mouse sequences so the app can scroll
   // - Click/drag events: blocked from PTY so text selection works without
@@ -174,6 +208,7 @@ export function createTerminal(
 
   const dispose = () => {
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
+    container.removeEventListener('copy', copyHandler);
     onDataDispose.dispose();
     onResizeDispose.dispose();
     cancelOutput();
