@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import { GetFileDiff } from '../../wailsjs/go/main/App';
-import { useStore } from '../store';
+import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
+import type { editor } from 'monaco-editor';
 
 interface DiffViewerProps {
   filePath: string;
@@ -15,6 +16,16 @@ export default function DiffViewer({ filePath, visible }: DiffViewerProps) {
   const [language, setLanguage] = useState<string>('plaintext');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const editorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+  const zoomLevel = useStore((s) => s.zoomLevel);
+  const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
+
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.getOriginalEditor().updateOptions({ fontSize });
+    ed.getModifiedEditor().updateOptions({ fontSize });
+  }, [fontSize]);
 
   useEffect(() => {
     if (!project) return;
@@ -76,11 +87,12 @@ export default function DiffViewer({ filePath, visible }: DiffViewerProps) {
       modified={modified}
       language={language}
       theme="orion-dark"
+      onMount={(ed) => { editorRef.current = ed; }}
       options={{
         readOnly: true,
         renderSideBySide: true,
         minimap: { enabled: false },
-        fontSize: 13,
+        fontSize,
         fontFamily: "'JetBrains Mono', 'Menlo', 'Monaco', monospace",
         scrollBeyondLastLine: false,
         automaticLayout: true,

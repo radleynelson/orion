@@ -27,9 +27,10 @@
   --accent-orange: #ffa657;
 
   --font-mono: 'JetBrains Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
-  --font-size: 13px;
-  --font-size-sm: 12px;
-  --font-size-xs: 11px;
+  --zoom: 1;
+  --font-size: calc(13px * var(--zoom));
+  --font-size-sm: calc(12px * var(--zoom));
+  --font-size-xs: calc(11px * var(--zoom));
 }
 
 * {

@@ -86,9 +86,41 @@ interface OrionState {
   setServerPaneVisible: (v: boolean) => void;
   setServerPaneHeight: (h: number) => void;
 
+  // Zoom
+  zoomLevel: number;
+  setZoomLevel: (n: number) => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
+
   // Helpers
   getAllTerminalIds: (tab: Tab) => string[];
   getFocusedTerminalId: () => string | null;
+}
+
+const ZOOM_MIN = -3;
+const ZOOM_MAX = 10;
+const ZOOM_KEY = 'orion.zoomLevel';
+
+function loadZoom(): number {
+  try {
+    const v = localStorage.getItem(ZOOM_KEY);
+    if (v === null) return 0;
+    const n = parseInt(v, 10);
+    if (isNaN(n)) return 0;
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n));
+  } catch {
+    return 0;
+  }
+}
+
+function saveZoom(n: number) {
+  try { localStorage.setItem(ZOOM_KEY, String(n)); } catch {}
+}
+
+export const BASE_FONT_SIZE = 13;
+export function zoomFactorFor(level: number): number {
+  return 1 + level * 0.1;
 }
 
 let counter = 0;
@@ -627,6 +659,27 @@ export const useStore = create<OrionState>((set, get) => ({
         serverPaneVisible: newTabs.length > 0,
       };
     });
+  },
+
+  zoomLevel: loadZoom(),
+  setZoomLevel: (n) => {
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n));
+    saveZoom(clamped);
+    set({ zoomLevel: clamped });
+  },
+  zoomIn: () => {
+    const next = Math.min(ZOOM_MAX, get().zoomLevel + 1);
+    saveZoom(next);
+    set({ zoomLevel: next });
+  },
+  zoomOut: () => {
+    const next = Math.max(ZOOM_MIN, get().zoomLevel - 1);
+    saveZoom(next);
+    set({ zoomLevel: next });
+  },
+  zoomReset: () => {
+    saveZoom(0);
+    set({ zoomLevel: 0 });
   },
 
   setActiveServerTab: (id) => set({ activeServerTabId: id }),
