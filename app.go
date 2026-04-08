@@ -206,6 +206,9 @@ func (a *App) CreateWorkspace(repoRoot string, name string) (*workspace.Workspac
 }
 
 func (a *App) DeleteWorkspace(repoRoot string, path string) error {
+	wsID := filepath.Base(path)
+	a.portReg.ReleaseWorkspace(wsID)
+	a.portReg.ReleaseRedisDB(wsID)
 	return a.wsMgr.DeleteWorkspace(repoRoot, path)
 }
 

@@ -53,11 +53,21 @@ func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bo
 	existing := m.portReg.GetAllocation(wsID)
 	if existing != nil {
 		// Already allocated, just ensure env file exists
-		writeEnvFile(workspacePath, existing, cfg)
+		redisDB := 1 // main default
+		if !isMain {
+			if db, ok := m.portReg.GetRedisDB(wsID); ok {
+				redisDB = db
+			} else {
+				db, _ := m.portReg.AllocateRedisDB(wsID)
+				redisDB = db
+			}
+		}
+		writeEnvFile(workspacePath, existing, cfg, redisDB)
 		return nil
 	}
 
 	var alloc port.Allocation
+	redisDB := 1 // main uses DB 1
 	if isMain {
 		alloc = make(port.Allocation)
 		for name, srv := range cfg.Servers {
@@ -77,9 +87,13 @@ func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bo
 		if err != nil {
 			return err
 		}
+		db, err := m.portReg.AllocateRedisDB(wsID)
+		if err == nil {
+			redisDB = db
+		}
 	}
 
-	writeEnvFile(workspacePath, alloc, cfg)
+	writeEnvFile(workspacePath, alloc, cfg, redisDB)
 	return nil
 }
 
@@ -119,8 +133,17 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 		}
 	}
 
+	// Allocate Redis DB
+	redisDB := 1 // main uses DB 1
+	if !isMain {
+		db, err := m.portReg.AllocateRedisDB(wsID)
+		if err == nil {
+			redisDB = db
+		}
+	}
+
 	// Write .orion/env.sh so agents and shells know the ports
-	writeEnvFile(workspacePath, alloc, cfg)
+	writeEnvFile(workspacePath, alloc, cfg, redisDB)
 
 	var statuses []ServerStatus
 
@@ -155,7 +178,7 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 		}
 
 		// Build environment command prefix
-		envParts := buildEnvString(name, srv, alloc, cfg)
+		envParts := buildEnvString(name, srv, alloc, cfg, redisDB)
 
 		// Send the command
 		fullCmd := envParts + srv.Command
@@ -233,7 +256,7 @@ func (m *Manager) GetPortAllocations() map[string]port.Allocation {
 
 // --- helpers ---
 
-func buildEnvString(serverName string, srv config.ServerConfig, alloc port.Allocation, cfg *config.OrionConfig) string {
+func buildEnvString(serverName string, srv config.ServerConfig, alloc port.Allocation, cfg *config.OrionConfig, redisDB int) string {
 	var parts []string
 
 	// Set the port env var
@@ -241,6 +264,11 @@ func buildEnvString(serverName string, srv config.ServerConfig, alloc port.Alloc
 		if p, ok := alloc[serverName]; ok {
 			parts = append(parts, fmt.Sprintf("%s=%d", srv.PortEnv, p))
 		}
+	}
+
+	// Redis DB
+	if redisDB > 0 {
+		parts = append(parts, fmt.Sprintf("REDIS_DB=%d", redisDB))
 	}
 
 	// Resolve cross-server env vars with template syntax
@@ -327,7 +355,7 @@ func killSession(name string) error {
 
 // writeEnvFile creates .orion/env.sh in the workspace with all port assignments.
 // This file is auto-sourced by agent and shell sessions so they know the ports.
-func writeEnvFile(workspacePath string, alloc port.Allocation, cfg *config.OrionConfig) {
+func writeEnvFile(workspacePath string, alloc port.Allocation, cfg *config.OrionConfig, redisDB int) {
 	dir := filepath.Join(workspacePath, ".orion")
 	os.MkdirAll(dir, 0755)
 	envPath := filepath.Join(dir, "env.sh")
@@ -350,6 +378,11 @@ func writeEnvFile(workspacePath string, alloc port.Allocation, cfg *config.Orion
 		upper := strings.ToUpper(name)
 		lines = append(lines, fmt.Sprintf("export %s_PORT=%d", upper, p))
 		lines = append(lines, fmt.Sprintf("export %s_URL=http://localhost:%d", upper, p))
+	}
+
+	// Redis DB assignment
+	if redisDB > 0 {
+		lines = append(lines, fmt.Sprintf("export REDIS_DB=%d", redisDB))
 	}
 
 	// Resolved cross-server env vars from config

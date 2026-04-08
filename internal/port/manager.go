@@ -18,10 +18,16 @@ const (
 // Allocation maps server names to assigned ports for a workspace.
 type Allocation map[string]int
 
-// Registry manages port allocations across workspaces.
+// registryData is the JSON structure persisted to ports.json.
+type registryData struct {
+	Allocations map[string]Allocation `json:"allocations"`
+	RedisDBs    map[string]int        `json:"redisDBs,omitempty"`
+}
+
+// Registry manages port and Redis DB allocations across workspaces.
 type Registry struct {
-	// workspaceID -> serverName -> port
 	allocations map[string]Allocation
+	redisDBs    map[string]int // workspaceID -> Redis DB number (2-15)
 	mu          sync.RWMutex
 	filePath    string
 }
@@ -35,21 +41,21 @@ func NewRegistry() *Registry {
 
 	r := &Registry{
 		allocations: make(map[string]Allocation),
+		redisDBs:    make(map[string]int),
 		filePath:    fp,
 	}
 	r.load()
 	return r
 }
 
+// --- Port allocation ---
+
 // AllocateForWorkspace assigns ports for all servers in a workspace.
-// Returns the allocation map (serverName -> port).
 func (r *Registry) AllocateForWorkspace(wsID string, serverNames []string) (Allocation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// If already allocated, return existing
 	if existing, ok := r.allocations[wsID]; ok {
-		// Check if all servers are covered
 		allCovered := true
 		for _, name := range serverNames {
 			if _, ok := existing[name]; !ok {
@@ -66,7 +72,6 @@ func (r *Registry) AllocateForWorkspace(wsID string, serverNames []string) (Allo
 	usedPorts := r.allUsedPorts()
 
 	for _, name := range serverNames {
-		// Check if this server already has a port in existing allocation
 		if existing, ok := r.allocations[wsID]; ok {
 			if port, ok := existing[name]; ok {
 				alloc[name] = port
@@ -87,18 +92,15 @@ func (r *Registry) AllocateForWorkspace(wsID string, serverNames []string) (Allo
 	return alloc, nil
 }
 
-// GetAllocation returns the port allocation for a workspace, or nil if none.
 func (r *Registry) GetAllocation(wsID string) Allocation {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.allocations[wsID]
 }
 
-// GetAllAllocations returns all workspace allocations.
 func (r *Registry) GetAllAllocations() map[string]Allocation {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
 	result := make(map[string]Allocation)
 	for k, v := range r.allocations {
 		result[k] = v
@@ -106,13 +108,61 @@ func (r *Registry) GetAllAllocations() map[string]Allocation {
 	return result
 }
 
-// ReleaseWorkspace frees all ports for a workspace.
 func (r *Registry) ReleaseWorkspace(wsID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.allocations, wsID)
 	r.save()
 }
+
+// --- Redis DB allocation ---
+
+// AllocateRedisDB assigns a Redis DB number (2-15) for a workspace.
+// Main workspace uses DB 1 by convention and should NOT call this.
+func (r *Registry) AllocateRedisDB(wsID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Already allocated
+	if db, ok := r.redisDBs[wsID]; ok {
+		return db, nil
+	}
+
+	// Find used DBs
+	usedDBs := make(map[int]bool)
+	for _, db := range r.redisDBs {
+		usedDBs[db] = true
+	}
+
+	// Allocate from 2-15 (0=production, 1=dev main)
+	for db := 2; db <= 15; db++ {
+		if !usedDBs[db] {
+			r.redisDBs[wsID] = db
+			r.save()
+			return db, nil
+		}
+	}
+
+	return 0, fmt.Errorf("all Redis DBs (2-15) are in use")
+}
+
+// GetRedisDB returns the allocated Redis DB for a workspace.
+func (r *Registry) GetRedisDB(wsID string) (int, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	db, ok := r.redisDBs[wsID]
+	return db, ok
+}
+
+// ReleaseRedisDB frees the Redis DB for a workspace.
+func (r *Registry) ReleaseRedisDB(wsID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.redisDBs, wsID)
+	r.save()
+}
+
+// --- internal ---
 
 func (r *Registry) allUsedPorts() map[int]bool {
 	used := make(map[int]bool)
@@ -125,13 +175,11 @@ func (r *Registry) allUsedPorts() map[int]bool {
 }
 
 func findAvailablePort(used map[int]bool) (int, error) {
-	// Try random ports
 	for attempts := 0; attempts < 100; attempts++ {
 		port := portMin + rand.Intn(portMax-portMin)
 		if used[port] {
 			continue
 		}
-		// Verify port is actually available on the system
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			continue
@@ -147,10 +195,24 @@ func (r *Registry) load() {
 	if err != nil {
 		return
 	}
+	// Try new format first
+	var rd registryData
+	if err := json.Unmarshal(data, &rd); err == nil && rd.Allocations != nil {
+		r.allocations = rd.Allocations
+		if rd.RedisDBs != nil {
+			r.redisDBs = rd.RedisDBs
+		}
+		return
+	}
+	// Fall back to old format (just allocations map)
 	json.Unmarshal(data, &r.allocations)
 }
 
 func (r *Registry) save() {
-	data, _ := json.MarshalIndent(r.allocations, "", "  ")
+	rd := registryData{
+		Allocations: r.allocations,
+		RedisDBs:    r.redisDBs,
+	}
+	data, _ := json.MarshalIndent(rd, "", "  ")
 	os.WriteFile(r.filePath, data, 0644)
 }
