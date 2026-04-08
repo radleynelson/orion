@@ -118,18 +118,22 @@ function App() {
       try {
         const recovered = await RecoverSessions(info.name, ws.map((w: any) => w.path));
         for (const sess of (recovered || [])) {
-          if (sess.type === 'server') continue;
           if (restoredSessions.has(sess.tmuxName)) continue;
           const termId = generateId('term');
           try {
             await CreateAttachedTerminal(termId, sess.tmuxName);
-            addTab({
+            const tab = {
               id: generateId('tab'),
               label: sess.label,
               rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-              tabType: 'shell',
+              tabType: (sess.type === 'server' ? 'server' : 'shell') as 'shell' | 'claude' | 'codex' | 'server',
               workspacePath: sess.workspacePath,
-            });
+            };
+            if (sess.type === 'server') {
+              useStore.getState().addServerTab(tab);
+            } else {
+              addTab(tab);
+            }
             restoredSessions.add(sess.tmuxName);
           } catch {}
         }
