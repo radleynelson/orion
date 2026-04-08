@@ -28,6 +28,8 @@ export default function CodeReviewPane() {
 
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [confirmFile, setConfirmFile] = useState<string | null>(null);
   const reqId = useRef(0);
 
   const baseArg = codeReviewBase === 'main' ? (project?.mainBranch || 'main') : '';
@@ -75,7 +77,14 @@ export default function CodeReviewPane() {
 
   const discardFile = async (path: string) => {
     if (!activeWorkspacePath) return;
-    if (!window.confirm(`Discard all changes to ${path}? This cannot be undone.`)) return;
+    if (confirmFile !== path) {
+      setConfirmFile(path);
+      setConfirmAll(false);
+      // auto-cancel after 4s
+      setTimeout(() => setConfirmFile((c) => (c === path ? null : c)), 4000);
+      return;
+    }
+    setConfirmFile(null);
     try {
       await DiscardFileChanges(activeWorkspacePath, path);
       await refresh();
@@ -86,7 +95,13 @@ export default function CodeReviewPane() {
 
   const discardAll = async () => {
     if (!activeWorkspacePath || entries.length === 0) return;
-    if (!window.confirm(`Discard ALL ${entries.length} changed file(s)? This cannot be undone.`)) return;
+    if (!confirmAll) {
+      setConfirmAll(true);
+      setConfirmFile(null);
+      setTimeout(() => setConfirmAll((c) => c && false), 4000);
+      return;
+    }
+    setConfirmAll(false);
     try {
       await DiscardAllChanges(activeWorkspacePath);
       await refresh();
@@ -131,7 +146,7 @@ export default function CodeReviewPane() {
             onClick={discardAll}
             title="Discard all changes"
           >
-            Discard all
+            {confirmAll ? 'Click again to confirm' : 'Discard all'}
           </button>
         )}
         <button className="cr-icon-btn" onClick={refresh} title="Refresh">
@@ -179,7 +194,7 @@ export default function CodeReviewPane() {
                   }}
                   title="Discard changes to this file"
                 >
-                  ↶ Discard
+                  {confirmFile === file.path ? 'Click again' : '↶ Discard'}
                 </button>
               )}
               {diff && (
