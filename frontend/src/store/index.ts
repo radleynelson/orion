@@ -4,7 +4,7 @@ import { workspace } from '../../wailsjs/go/models';
 // --- Pane tree types ---
 
 export interface PaneLeaf {
-  type: 'terminal' | 'editor' | 'diff';
+  type: 'terminal' | 'editor';
   id: string;
   terminalId?: string;  // for terminal
   filePath?: string;    // for editor & diff
@@ -27,7 +27,7 @@ export interface Tab {
   id: string;
   label: string;
   rootPane: Pane;
-  tabType: 'shell' | 'claude' | 'codex' | 'server' | 'mixed' | 'editor' | 'diff';
+  tabType: 'shell' | 'claude' | 'codex' | 'server' | 'mixed' | 'editor';
   workspacePath: string;
 }
 
@@ -68,8 +68,17 @@ interface OrionState {
   detachPane: () => void;
 
   // Sidebar mode
-  sidebarMode: 'workspaces' | 'files' | 'git' | 'search' | null;
-  setSidebarMode: (mode: 'workspaces' | 'files' | 'git' | 'search' | null) => void;
+  sidebarMode: 'workspaces' | 'files' | 'search' | null;
+  setSidebarMode: (mode: 'workspaces' | 'files' | 'search' | null) => void;
+
+  // Code review pane (right-side, toggleable diff viewer)
+  codeReviewVisible: boolean;
+  codeReviewWidth: number; // percent of terminal area
+  codeReviewBase: 'uncommitted' | 'main';
+  toggleCodeReview: () => void;
+  setCodeReviewVisible: (v: boolean) => void;
+  setCodeReviewBase: (b: 'uncommitted' | 'main') => void;
+  setCodeReviewWidth: (w: number) => void;
 
   // Per-workspace active state (any server running). Drives sidebar sort
   // and Cmd+Up/Down cycle order so they stay in sync.
@@ -78,7 +87,6 @@ interface OrionState {
 
   // File/editor operations
   openFile: (filePath: string, language: string, line?: number) => void;
-  openDiff: (filePath: string) => void;
 
   // Server pane (pinned bottom panel)
   serverTabs: Tab[];
@@ -153,7 +161,7 @@ export function generateId(prefix: string): string {
 // --- Pane tree helpers ---
 
 function isLeaf(pane: Pane): pane is PaneLeaf {
-  return pane.type === 'terminal' || pane.type === 'editor' || pane.type === 'diff';
+  return pane.type === 'terminal' || pane.type === 'editor';
 }
 
 function isSplit(pane: Pane): pane is PaneSplit {
@@ -571,7 +579,7 @@ export const useStore = create<OrionState>((set, get) => ({
   },
 
   // Sidebar mode
-  sidebarMode: 'workspaces' as 'workspaces' | 'files' | 'git' | 'search' | null,
+  sidebarMode: 'workspaces' as 'workspaces' | 'files' | 'search' | null,
   setSidebarMode: (mode) => set({ sidebarMode: mode }),
 
   workspaceActive: {},
@@ -634,34 +642,20 @@ export const useStore = create<OrionState>((set, get) => ({
     }));
   },
 
-  openDiff: (filePath) => {
-    const state = get();
-    // Check if diff is already open
-    const existingTab = state.tabs.find((t) => {
-      const leaves = collectLeaves(t.rootPane);
-      return leaves.some((l) => l.type === 'diff' && l.filePath === filePath);
-    });
-    if (existingTab) {
-      set({ activeTabId: existingTab.id });
-      return;
-    }
-    const pane: PaneLeaf = {
-      type: 'diff',
-      id: generateId('pane'),
-      filePath,
-    };
-    const fileName = filePath.split('/').pop() || filePath;
-    const tab: Tab = {
-      id: generateId('tab'),
-      label: `${fileName} (diff)`,
-      rootPane: pane,
-      tabType: 'diff',
-      workspacePath: state.activeWorkspacePath || '',
-    };
-    set((s) => ({
-      tabs: [...s.tabs, tab],
-      activeTabId: tab.id,
-    }));
+  // Code review pane state
+  codeReviewVisible: false,
+  codeReviewWidth: (() => {
+    const v = parseFloat(localStorage.getItem('orion.codeReviewWidth') || '');
+    return Number.isFinite(v) && v >= 20 && v <= 90 ? v : 66;
+  })(),
+  codeReviewBase: 'uncommitted',
+  toggleCodeReview: () => set((s) => ({ codeReviewVisible: !s.codeReviewVisible })),
+  setCodeReviewVisible: (v) => set({ codeReviewVisible: v }),
+  setCodeReviewBase: (b) => set({ codeReviewBase: b }),
+  setCodeReviewWidth: (w) => {
+    const clamped = Math.max(20, Math.min(90, w));
+    localStorage.setItem('orion.codeReviewWidth', String(clamped));
+    set({ codeReviewWidth: clamped });
   },
 
   // Server pane (pinned bottom panel)

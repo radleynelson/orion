@@ -387,6 +387,14 @@ func (a *App) GetFileDiff(workspacePath string, filePath string) (*git.FileDiff,
 	return a.gitMgr.GetFileDiff(workspacePath, filePath)
 }
 
+func (a *App) GetChangedFilesAgainst(workspacePath string, base string) ([]git.ChangedFile, error) {
+	return a.gitMgr.GetChangedFilesAgainst(workspacePath, base)
+}
+
+func (a *App) GetUnifiedDiff(workspacePath string, base string, filePath string) (string, error) {
+	return a.gitMgr.GetUnifiedDiff(workspacePath, base, filePath)
+}
+
 func (a *App) SearchFiles(root string, query string) ([]files.SearchResult, error) {
 	return a.filesMgr.SearchFiles(root, query, 50)
 }

@@ -4,8 +4,8 @@ import SplitPane from './components/SplitPane';
 import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import FileExplorer from './components/FileExplorer';
-import GitPanel from './components/GitPanel';
 import GlobalSearch from './components/GlobalSearch';
+import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
 import { useStore, generateId, Tab, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
@@ -59,6 +59,10 @@ function App() {
     setServerPaneHeight,
     sidebarMode,
     setSidebarMode,
+    codeReviewVisible,
+    codeReviewWidth,
+    toggleCodeReview,
+    setCodeReviewWidth,
     zoomLevel,
     zoomIn,
     zoomOut,
@@ -340,6 +344,11 @@ function App() {
         e.preventDefault();
         swapPane('next');
       }
+      // Cmd+Shift+= (i.e. Cmd+Plus) : toggle Code Review pane
+      if (e.metaKey && e.shiftKey && (e.key === '+' || e.key === '=')) {
+        e.preventDefault();
+        toggleCodeReview();
+      }
       // Cmd+Up/Down: cycle through workspaces in the same order as the sidebar
       if (e.metaKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         e.preventDefault();
@@ -378,10 +387,10 @@ function App() {
         e.preventDefault();
         setSidebarMode(sidebarMode === 'files' ? null : 'files');
       }
-      // Cmd+Shift+G: git panel
+      // Cmd+Shift+G: toggle code review pane
       if (e.metaKey && e.shiftKey && e.key === 'G') {
         e.preventDefault();
-        setSidebarMode(sidebarMode === 'git' ? null : 'git');
+        toggleCodeReview();
       }
       // Cmd+= / Cmd++ : zoom in
       if (e.metaKey && !e.shiftKey && (e.key === '=' || e.key === '+')) {
@@ -424,7 +433,7 @@ function App() {
       EventsOn('menu:toggle-sidebar', () => setSidebarMode(sidebarMode ? null : 'workspaces')),
       EventsOn('menu:show-files', () => setSidebarMode('files')),
       EventsOn('menu:show-search', () => setSidebarMode('search')),
-      EventsOn('menu:show-git', () => setSidebarMode('git')),
+      EventsOn('menu:show-git', () => toggleCodeReview()),
       EventsOn('menu:show-workspaces', () => setSidebarMode('workspaces')),
       EventsOn('menu:split-right', () => handleSplit('vertical')),
       EventsOn('menu:split-down', () => handleSplit('horizontal')),
@@ -446,6 +455,13 @@ function App() {
   return (
     <div className="app">
       <div className="titlebar">
+        <div
+          className={`titlebar-action ${codeReviewVisible ? 'active' : ''}`}
+          onClick={toggleCodeReview}
+          title="Code Review (⌘⇧+)"
+        >
+          ⎇
+        </div>
         <span className="titlebar-title">orion</span>
       </div>
 
@@ -455,7 +471,6 @@ function App() {
           <div className="sidebar-container" style={{ width: sidebarWidth }}>
             {sidebarMode === 'workspaces' && <Sidebar />}
             {sidebarMode === 'files' && <FileExplorer />}
-            {sidebarMode === 'git' && <GitPanel />}
             {sidebarMode === 'search' && <GlobalSearch />}
             <div
               className={`sidebar-resizer${resizingSidebar ? ' dragging' : ''}`}
@@ -484,7 +499,11 @@ function App() {
           </div>
         )}
 
-        <div className="terminal-area">
+        <div className="workspace-area">
+        <div
+          className="terminal-area"
+          style={{ width: codeReviewVisible ? `${100 - codeReviewWidth}%` : '100%' }}
+        >
           {/* Tab bar */}
           <div className="tab-bar">
             {activeTabs.map((tab) => (
@@ -516,8 +535,7 @@ function App() {
                   {tab.tabType === 'claude' ? '◆' :
                    tab.tabType === 'codex' ? '◇' :
                    tab.tabType === 'server' ? '▸' :
-                   tab.tabType === 'editor' ? '◈' :
-                   tab.tabType === 'diff' ? '⟷' : '›'}
+                   tab.tabType === 'editor' ? '◈' : '›'}
                 </span>
                 {renamingTabId === tab.id ? (
                   <input
@@ -664,6 +682,39 @@ function App() {
               </div>
             </>
           )}
+        </div>
+
+        {codeReviewVisible && (
+          <>
+            <div
+              className="code-review-resizer"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = codeReviewWidth;
+                const parent = (e.currentTarget.parentElement as HTMLElement);
+                const parentW = parent ? parent.getBoundingClientRect().width : window.innerWidth;
+                const onMove = (me: MouseEvent) => {
+                  const deltaPct = ((startX - me.clientX) / parentW) * 100;
+                  setCodeReviewWidth(startW + deltaPct);
+                };
+                const onUp = () => {
+                  document.removeEventListener('mousemove', onMove);
+                  document.removeEventListener('mouseup', onUp);
+                  document.body.style.cursor = '';
+                  document.body.style.userSelect = '';
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+              }}
+            />
+            <div className="code-review-container" style={{ width: `${codeReviewWidth}%` }}>
+              <CodeReviewPane />
+            </div>
+          </>
+        )}
         </div>
       </div>
 

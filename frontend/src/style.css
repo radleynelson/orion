@@ -26,6 +26,12 @@
   --accent-cyan: #76e3ea;
   --accent-orange: #ffa657;
 
+  --diff-add-bg: rgba(126, 231, 135, 0.12);
+  --diff-add-fg: #b6f0bd;
+  --diff-del-bg: rgba(255, 123, 114, 0.14);
+  --diff-del-fg: #ffb1ab;
+  --diff-hunk-bg: rgba(108, 182, 255, 0.08);
+
   --font-mono: 'JetBrains Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
   --zoom: 1;
   --font-size: calc(13px * var(--zoom));

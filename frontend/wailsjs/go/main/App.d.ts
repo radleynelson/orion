@@ -26,6 +26,8 @@ export function GetAgentTypes(arg1:string):Promise<Array<main.AgentTypeInfo>>;
 
 export function GetChangedFiles(arg1:string):Promise<Array<git.ChangedFile>>;
 
+export function GetChangedFilesAgainst(arg1:string,arg2:string):Promise<Array<git.ChangedFile>>;
+
 export function GetClipboard():Promise<string>;
 
 export function GetConfig(arg1:string):Promise<config.OrionConfig>;
@@ -45,6 +47,8 @@ export function GetSavedTabs():Promise<Array<state.SavedTab>>;
 export function GetServerStatuses(arg1:string,arg2:string):Promise<Array<server.ServerStatus>>;
 
 export function GetTmuxSession(arg1:string):Promise<string>;
+
+export function GetUnifiedDiff(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetWorkspaceEnv(arg1:string):Promise<Record<string, string>>;
 

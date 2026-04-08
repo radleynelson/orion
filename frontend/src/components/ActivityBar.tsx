@@ -1,6 +1,6 @@
 import { useStore } from '../store';
 
-type SidebarMode = 'workspaces' | 'files' | 'git' | 'search';
+type SidebarMode = 'workspaces' | 'files' | 'search';
 
 export default function ActivityBar() {
   const { sidebarMode, setSidebarMode } = useStore();
@@ -35,13 +35,6 @@ export default function ActivityBar() {
         title="Search (⌘⇧F)"
       >
         ⌕
-      </div>
-      <div
-        className={`activity-bar-icon ${sidebarMode === 'git' ? 'active' : ''}`}
-        onClick={() => toggle('git')}
-        title="Git Changes (⌘⇧G)"
-      >
-        ⎇
       </div>
     </div>
   );

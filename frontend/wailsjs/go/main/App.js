@@ -38,6 +38,10 @@ export function GetChangedFiles(arg1) {
   return window['go']['main']['App']['GetChangedFiles'](arg1);
 }
 
+export function GetChangedFilesAgainst(arg1, arg2) {
+  return window['go']['main']['App']['GetChangedFilesAgainst'](arg1, arg2);
+}
+
 export function GetClipboard() {
   return window['go']['main']['App']['GetClipboard']();
 }
@@ -76,6 +80,10 @@ export function GetServerStatuses(arg1, arg2) {
 
 export function GetTmuxSession(arg1) {
   return window['go']['main']['App']['GetTmuxSession'](arg1);
+}
+
+export function GetUnifiedDiff(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetUnifiedDiff'](arg1, arg2, arg3);
 }
 
 export function GetWorkspaceEnv(arg1) {

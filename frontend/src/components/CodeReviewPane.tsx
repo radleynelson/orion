@@ -1,0 +1,158 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useStore } from '../store';
+import { GetChangedFilesAgainst, GetUnifiedDiff } from '../../wailsjs/go/main/App';
+import { git } from '../../wailsjs/go/models';
+import { parseUnifiedDiff, ParsedDiff } from '../lib/diffParser';
+
+interface FileEntry {
+  file: git.ChangedFile;
+  diff: ParsedDiff | null;
+  collapsed: boolean;
+}
+
+export default function CodeReviewPane() {
+  const {
+    activeWorkspacePath,
+    project,
+    codeReviewBase,
+    setCodeReviewBase,
+    setCodeReviewVisible,
+  } = useStore();
+
+  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const reqId = useRef(0);
+
+  const baseArg = codeReviewBase === 'main' ? (project?.mainBranch || 'main') : '';
+
+  const refresh = useCallback(async () => {
+    if (!activeWorkspacePath) {
+      setEntries([]);
+      return;
+    }
+    const myReq = ++reqId.current;
+    setLoading(true);
+    try {
+      const files = (await GetChangedFilesAgainst(activeWorkspacePath, baseArg)) || [];
+      if (myReq !== reqId.current) return;
+
+      // Fetch diffs in parallel
+      const diffs = await Promise.all(
+        files.map(async (f) => {
+          try {
+            const raw = await GetUnifiedDiff(activeWorkspacePath, baseArg, f.path);
+            return parseUnifiedDiff(raw || '');
+          } catch {
+            return parseUnifiedDiff('');
+          }
+        })
+      );
+      if (myReq !== reqId.current) return;
+
+      setEntries(
+        files.map((f, i) => ({ file: f, diff: diffs[i], collapsed: false }))
+      );
+    } catch {
+      if (myReq === reqId.current) setEntries([]);
+    } finally {
+      if (myReq === reqId.current) setLoading(false);
+    }
+  }, [activeWorkspacePath, baseArg]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const toggleCollapse = (path: string) => {
+    setEntries((prev) =>
+      prev.map((e) => (e.file.path === path ? { ...e, collapsed: !e.collapsed } : e))
+    );
+  };
+
+  const statusColor = (status: string) => {
+    switch (status) {
+      case 'M': return 'var(--accent-orange)';
+      case 'A': return 'var(--accent-green)';
+      case 'D': return 'var(--accent-red)';
+      case '?': return 'var(--text-dim)';
+      case 'R': return 'var(--accent-blue)';
+      default: return 'var(--text-dim)';
+    }
+  };
+
+  return (
+    <div className="code-review-pane">
+      <div className="cr-header">
+        <span className="cr-title">Code Review</span>
+        <select
+          className="cr-base-select"
+          value={codeReviewBase}
+          onChange={(e) => setCodeReviewBase(e.target.value as 'uncommitted' | 'main')}
+        >
+          <option value="uncommitted">Uncommitted changes</option>
+          <option value="main">vs {project?.mainBranch || 'main'}</option>
+        </select>
+        <span className="cr-spacer" />
+        <button className="cr-icon-btn" onClick={refresh} title="Refresh">
+          {loading ? '…' : '↻'}
+        </button>
+        <button
+          className="cr-icon-btn"
+          onClick={() => setCodeReviewVisible(false)}
+          title="Close (⌘⇧+)"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="cr-body">
+        {entries.length === 0 && !loading && (
+          <div className="cr-empty">No changes</div>
+        )}
+        {entries.map(({ file, diff, collapsed }) => (
+          <div className="cr-file-card" key={file.path}>
+            <div className="cr-file-header" onClick={() => toggleCollapse(file.path)}>
+              <span className="cr-chevron">{collapsed ? '▸' : '▾'}</span>
+              <span className="cr-status" style={{ color: statusColor(file.status) }}>
+                {file.status}
+              </span>
+              <span className="cr-file-path">{file.path}</span>
+              {diff && (
+                <span className="cr-counts">
+                  <span className="cr-add">+{diff.added}</span>{' '}
+                  <span className="cr-del">−{diff.removed}</span>
+                </span>
+              )}
+            </div>
+            {!collapsed && diff && diff.hunks.length > 0 && (
+              <div className="cr-hunks">
+                {diff.hunks.map((hunk, hi) => (
+                  <div className="cr-hunk" key={hi}>
+                    <div className="cr-hunk-header">{hunk.header}</div>
+                    {hunk.lines.map((line, li) => (
+                      <div className={`cr-line cr-${line.kind}`} key={li}>
+                        <span className="cr-gutter cr-gutter-old">
+                          {line.kind === 'add' ? '' : line.oldNum ?? ''}
+                        </span>
+                        <span className="cr-gutter cr-gutter-new">
+                          {line.kind === 'del' ? '' : line.newNum ?? ''}
+                        </span>
+                        <span className="cr-sign">
+                          {line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}
+                        </span>
+                        <span className="cr-text">{line.text || ' '}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!collapsed && diff && diff.hunks.length === 0 && (
+              <div className="cr-empty cr-empty-file">(no textual diff)</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
