@@ -188,6 +188,17 @@ export default function CodeReviewPane() {
                   <span className="cr-del">−{diff.removed}</span>
                 </span>
               )}
+              <span
+                className="cr-copy-icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(file.path);
+                  const el = e.currentTarget;
+                  el.textContent = '✓';
+                  setTimeout(() => { el.textContent = '📋'; }, 800);
+                }}
+                title="Copy path"
+              >📋</span>
             </div>
             {!collapsed && diff && diff.hunks.length > 0 && (
               <div className="cr-hunks">

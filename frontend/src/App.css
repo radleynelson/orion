@@ -861,6 +861,16 @@
   text-decoration: underline;
   cursor: pointer;
 }
+.cr-copy-icon {
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  opacity: 0.6;
+}
+.cr-copy-icon:hover {
+  opacity: 1;
+}
 .cr-counts {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
