@@ -384,6 +384,11 @@ func (a *App) ReadFileContents(path string) (string, error) {
 	return a.filesMgr.ReadFileContents(path)
 }
 
+// RevealInFinder opens Finder with the file selected.
+func (a *App) RevealInFinder(path string) error {
+	return exec.Command("open", "-R", path).Run()
+}
+
 // WatchWorkspace starts watching a workspace directory for file changes.
 // Emits "git:files-changed" events to the frontend when changes are detected.
 func (a *App) WatchWorkspace(workspacePath string) error {

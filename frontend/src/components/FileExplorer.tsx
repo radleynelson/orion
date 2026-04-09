@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore, PaneLeaf } from '../store';
-import { ListDirectory } from '../../wailsjs/go/main/App';
+import { ListDirectory, RevealInFinder } from '../../wailsjs/go/main/App';
 import { getLanguageFromPath } from '../lib/languages';
 import { files } from '../../wailsjs/go/models';
 
@@ -21,6 +21,7 @@ interface TreeNodeProps {
 function TreeNode({ entry, depth, revealPath, activeFilePath }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<files.FileEntry[] | null>(null);
+  const [contextPath, setContextPath] = useState<string | null>(null);
   const { openFile, setSidebarMode } = useStore();
   const nodeRef = useRef<HTMLDivElement>(null);
 
@@ -70,11 +71,29 @@ function TreeNode({ entry, depth, revealPath, activeFilePath }: TreeNodeProps) {
         ref={nodeRef}
         className={`file-tree-node ${isActive ? 'file-tree-active' : ''}`}
         onClick={handleClick}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setContextPath(contextPath === entry.path ? null : entry.path);
+        }}
         style={{ paddingLeft: `${12 + depth * 16}px` }}
       >
         <span className="file-tree-icon" style={{ color: iconColor }}>{icon}</span>
         <span className="file-tree-label">{entry.name}</span>
       </div>
+      {contextPath === entry.path && (
+        <div className="file-tree-context" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+          <span className="file-tree-context-item" onClick={(e) => {
+            e.stopPropagation();
+            RevealInFinder(entry.path);
+            setContextPath(null);
+          }}>Reveal in Finder</span>
+          <span className="file-tree-context-item" onClick={(e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(entry.path);
+            setContextPath(null);
+          }}>Copy Path</span>
+        </div>
+      )}
       {expanded && children && children.map((child) => (
         <TreeNode
           key={child.path}

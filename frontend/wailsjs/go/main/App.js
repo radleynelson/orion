@@ -142,6 +142,10 @@ export function RecoverSessions(arg1, arg2) {
   return window['go']['main']['App']['RecoverSessions'](arg1, arg2);
 }
 
+export function RevealInFinder(arg1) {
+  return window['go']['main']['App']['RevealInFinder'](arg1);
+}
+
 export function SaveTabs(arg1) {
   return window['go']['main']['App']['SaveTabs'](arg1);
 }

@@ -78,6 +78,8 @@ export function ReadFileContents(arg1:string):Promise<string>;
 
 export function RecoverSessions(arg1:string,arg2:Array<string>):Promise<Array<state.SessionInfo>>;
 
+export function RevealInFinder(arg1:string):Promise<void>;
+
 export function SaveTabs(arg1:Array<state.SavedTab>):Promise<void>;
 
 export function SearchContents(arg1:string,arg2:string):Promise<Array<files.GrepResult>>;

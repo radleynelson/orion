@@ -323,6 +323,22 @@
   color: var(--text-primary);
 }
 
+.file-tree-context {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+.file-tree-context-item {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.file-tree-context-item:hover {
+  color: var(--accent-blue);
+}
+
 /* Git panel */
 .git-file-list {
   overflow-y: auto;
@@ -359,6 +375,40 @@
 }
 
 /* Search Everywhere modal (Shift+Shift) */
+/* Context menu (right-click) */
+.context-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 200;
+}
+
+.context-menu {
+  position: fixed;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 180px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 201;
+}
+
+.context-menu-item {
+  padding: 6px 14px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+.context-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .search-overlay {
   position: fixed;
   top: 0;

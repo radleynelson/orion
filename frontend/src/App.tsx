@@ -24,6 +24,7 @@ import {
   GetSavedTabs,
   GetTmuxSession,
   RecoverSessions,
+  RevealInFinder,
 } from '../wailsjs/go/main/App';
 
 function App() {
@@ -188,6 +189,7 @@ function App() {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
     return isNaN(v) ? 250 : v;
@@ -527,6 +529,25 @@ function App() {
                 key={tab.id}
                 className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? 'tab-drop-target' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
+                onContextMenu={(e) => {
+                  if (tab.tabType === 'editor') {
+                    e.preventDefault();
+                    const leaves = getAllTerminalIds(tab); // won't have terminals for editor tabs
+                    // Get file path from pane tree
+                    const getFilePath = (pane: any): string | null => {
+                      if (pane.type === 'editor' && pane.filePath) return pane.filePath;
+                      if (pane.children) {
+                        for (const c of pane.children) {
+                          const r = getFilePath(c);
+                          if (r) return r;
+                        }
+                      }
+                      return null;
+                    };
+                    const fp = getFilePath(tab.rootPane);
+                    if (fp) setContextMenu({ x: e.clientX, y: e.clientY, filePath: fp });
+                  }
+                }}
                 draggable
                 onDragStart={(e) => {
                   e.dataTransfer.setData('text/plain', tab.id);
@@ -740,6 +761,40 @@ function App() {
         onClose={() => setSearchEverywhereVisible(false)}
       />
 
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          className="context-menu-overlay"
+          onClick={() => setContextMenu(null)}
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+        >
+          <div
+            className="context-menu"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="context-menu-item" onClick={() => {
+              RevealInFinder(contextMenu.filePath);
+              setContextMenu(null);
+            }}>
+              Reveal in Finder
+            </div>
+            <div className="context-menu-item" onClick={() => {
+              navigator.clipboard.writeText(contextMenu.filePath);
+              setContextMenu(null);
+            }}>
+              Copy Full Path
+            </div>
+            <div className="context-menu-item" onClick={() => {
+              const rel = activeWorkspacePath ? contextMenu.filePath.replace(activeWorkspacePath + '/', '') : contextMenu.filePath;
+              navigator.clipboard.writeText(rel);
+              setContextMenu(null);
+            }}>
+              Copy Relative Path
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Status bar */}
       <div className="status-bar">
