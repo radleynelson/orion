@@ -70,6 +70,8 @@ interface OrionState {
   // Sidebar mode
   sidebarMode: 'workspaces' | 'files' | 'search' | null;
   setSidebarMode: (mode: 'workspaces' | 'files' | 'search' | null) => void;
+  globalSearchQuery: string;
+  setGlobalSearchQuery: (q: string) => void;
 
   // Code review pane (right-side, toggleable diff viewer)
   codeReviewVisible: boolean;
@@ -87,6 +89,8 @@ interface OrionState {
 
   // File/editor operations
   openFile: (filePath: string, language: string, line?: number) => void;
+  searchInFileQuery: string;
+  setSearchInFileQuery: (q: string) => void;
 
   // Server pane (pinned bottom panel)
   serverTabs: Tab[];
@@ -581,6 +585,10 @@ export const useStore = create<OrionState>((set, get) => ({
   // Sidebar mode
   sidebarMode: 'workspaces' as 'workspaces' | 'files' | 'search' | null,
   setSidebarMode: (mode) => set({ sidebarMode: mode }),
+  globalSearchQuery: '',
+  setGlobalSearchQuery: (q) => set({ globalSearchQuery: q }),
+  searchInFileQuery: '',
+  setSearchInFileQuery: (q) => set({ searchInFileQuery: q }),
 
   workspaceActive: {},
   setWorkspaceActive: (path, active) =>

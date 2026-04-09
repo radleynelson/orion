@@ -16,6 +16,8 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
   const [error, setError] = useState<string | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const zoomLevel = useStore((s) => s.zoomLevel);
+  const searchInFileQuery = useStore((s) => s.searchInFileQuery);
+  const setSearchInFileQuery = useStore((s) => s.setSearchInFileQuery);
   const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
 
   useEffect(() => {
@@ -49,7 +51,37 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       editor.revealLineInCenter(line);
       editor.setPosition({ lineNumber: line, column: 1 });
     }
+    // Focus immediately so Cmd+F works right away
+    editor.focus();
   };
+
+  // Re-focus editor when tab becomes visible
+  useEffect(() => {
+    if (visible && editorRef.current) {
+      setTimeout(() => editorRef.current?.focus(), 50);
+    }
+  }, [visible]);
+
+  // Trigger find widget when a global search result opens this file
+  useEffect(() => {
+    if (visible && searchInFileQuery && editorRef.current) {
+      const ed = editorRef.current;
+      setTimeout(() => {
+        ed.focus();
+        // Set the search string and open the find widget
+        ed.getAction('actions.find')?.run();
+        // After the find widget opens, set its value
+        setTimeout(() => {
+          const findController = (ed as any).getContribution('editor.contrib.findController');
+          if (findController) {
+            findController.setSearchString(searchInFileQuery);
+            findController.highlightFindOptions();
+          }
+          setSearchInFileQuery('');
+        }, 100);
+      }, 100);
+    }
+  }, [visible, searchInFileQuery, setSearchInFileQuery]);
 
   if (!visible) return <div style={{ display: 'none' }} />;
 

@@ -382,9 +382,15 @@ function App() {
         e.preventDefault();
         NewWindow();
       }
-      // Cmd+Shift+F: global search
-      if (e.metaKey && e.shiftKey && e.key === 'F') {
+      // Cmd+Shift+F: global search (with selection pre-fill)
+      if (e.metaKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
         e.preventDefault();
+        e.stopPropagation();
+        // Grab selected text from window or Monaco
+        const sel = window.getSelection()?.toString()?.trim() || '';
+        if (sel) {
+          useStore.getState().setGlobalSearchQuery(sel);
+        }
         setSidebarMode(sidebarMode === 'search' ? null : 'search');
       }
       // Cmd+Shift+E: file explorer
@@ -424,8 +430,8 @@ function App() {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true } as any);
   }, [activeTabs, activeTabId, createNewShell, handleClosePane, handleSplit, navigatePane, setActiveTab]);
 
   // Listen for native menu bar events from Go
