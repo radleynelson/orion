@@ -318,12 +318,21 @@ export default function Sidebar() {
       <div className="sidebar-section" style={{ flex: 1 }}>
         <div className="sidebar-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>Workspaces</span>
-          <span
-            style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: '14px' }}
-            onClick={() => setCreating(true)}
-            title="New workspace"
-          >
-            +
+          <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span
+              style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: '13px' }}
+              onClick={refreshWorkspaces}
+              title="Refresh workspaces"
+            >
+              ↻
+            </span>
+            <span
+              style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: '14px' }}
+              onClick={() => setCreating(true)}
+              title="New workspace"
+            >
+              +
+            </span>
           </span>
         </div>
 

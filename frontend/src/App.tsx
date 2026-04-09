@@ -417,6 +417,11 @@ function App() {
         e.preventDefault();
         setSidebarMode(sidebarMode ? null : 'workspaces');
       }
+      // Cmd+J: toggle server pane
+      if (e.metaKey && !e.shiftKey && e.key === 'j') {
+        e.preventDefault();
+        setServerPaneVisible(!serverPaneVisible);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
