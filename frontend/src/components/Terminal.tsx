@@ -76,10 +76,14 @@ export default function Terminal({ terminalId, visible, focused }: TerminalProps
     safeFit(termRef.current, containerRef.current);
   }, [zoomLevel]);
 
-  // Handle window resize
+  // Handle container resize (debounced to avoid scrambling during layout transitions)
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
-      if (visible) safeFit(termRef.current, containerRef.current);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (visible) safeFit(termRef.current, containerRef.current);
+      }, 80);
     };
 
     const observer = new ResizeObserver(handleResize);
@@ -87,7 +91,10 @@ export default function Terminal({ terminalId, visible, focused }: TerminalProps
       observer.observe(containerRef.current);
     }
 
-    return () => observer.disconnect();
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [visible]);
 
   return (

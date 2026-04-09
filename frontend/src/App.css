@@ -882,6 +882,9 @@
   margin-bottom: 10px;
   overflow: hidden;
 }
+.cr-file-card.cr-file-selected {
+  border-color: var(--accent-blue);
+}
 .cr-file-card.cr-file-viewed {
   opacity: 0.5;
 }

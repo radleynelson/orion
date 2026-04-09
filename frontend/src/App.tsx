@@ -70,6 +70,15 @@ function App() {
     zoomReset,
   } = useStore();
 
+  // Refit terminals after code review pane opens/closes
+  useEffect(() => {
+    // Delay to let the layout fully settle before terminals refit
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [codeReviewVisible, codeReviewWidth]);
+
   // Apply zoom factor to CSS variable
   useEffect(() => {
     document.documentElement.style.setProperty('--zoom', String(zoomFactorFor(zoomLevel)));

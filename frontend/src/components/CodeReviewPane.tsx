@@ -34,7 +34,9 @@ export default function CodeReviewPane() {
   const [loading, setLoading] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmFile, setConfirmFile] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const reqId = useRef(0);
+  const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   // Track raw diffs for viewed files so we can detect when they change
   const viewedDiffs = useRef<Map<string, string>>(new Map());
 
@@ -168,6 +170,73 @@ export default function CodeReviewPane() {
     );
   };
 
+  // Clamp selected index when entries change
+  useEffect(() => {
+    setSelectedIndex((i) => (entries.length === 0 ? 0 : Math.min(i, entries.length - 1)));
+  }, [entries.length]);
+
+  // Scroll selected file into view
+  useEffect(() => {
+    const el = fileRefs.current.get(selectedIndex);
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selectedIndex]);
+
+  // Keyboard navigation: v = mark viewed + next, j/↓ = next, k/↑ = prev
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // Don't capture when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // Don't capture when terminal is focused (xterm captures its own keys)
+      const active = document.activeElement;
+      if (active && active.closest('.xterm')) return;
+
+      if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setEntries((prev) => {
+          if (prev.length === 0) return prev;
+          const idx = Math.min(selectedIndex, prev.length - 1);
+          const entry = prev[idx];
+          if (entry.viewed) {
+            // Unmark viewed
+            viewedDiffs.current.delete(entry.file.path);
+            return prev.map((ent, i) =>
+              i === idx ? { ...ent, viewed: false, collapsed: false } : ent
+            );
+          }
+          // Mark viewed
+          viewedDiffs.current.set(entry.file.path, entry.rawDiff);
+          const updated = prev.map((ent, i) =>
+            i === idx ? { ...ent, viewed: true, collapsed: true } : ent
+          );
+          // Move to next unviewed file
+          let next = idx + 1;
+          while (next < updated.length && updated[next].viewed) next++;
+          if (next >= updated.length) {
+            // Wrap: find first unviewed
+            next = updated.findIndex((ent) => !ent.viewed);
+            if (next === -1) next = idx; // all viewed, stay put
+          }
+          setSelectedIndex(next);
+          return updated;
+        });
+      }
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          setSelectedIndex((i) => Math.min(i + 1, entries.length - 1));
+        }
+      }
+      if (e.key === 'k' || e.key === 'ArrowUp') {
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          setSelectedIndex((i) => Math.max(i - 1, 0));
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [selectedIndex, entries.length]);
+
   const statusColor = (status: string) => {
     switch (status) {
       case 'M': return 'var(--accent-orange)';
@@ -186,7 +255,7 @@ export default function CodeReviewPane() {
         <select
           className="cr-base-select"
           value={codeReviewBase}
-          onChange={(e) => setCodeReviewBase(e.target.value as 'uncommitted' | 'main')}
+          onChange={(e) => { setCodeReviewBase(e.target.value as 'uncommitted' | 'main'); e.target.blur(); }}
         >
           <option value="uncommitted">Uncommitted changes</option>
           <option value="main">vs {project?.mainBranch || 'main'}</option>
@@ -217,8 +286,13 @@ export default function CodeReviewPane() {
         {entries.length === 0 && !loading && (
           <div className="cr-empty">No changes</div>
         )}
-        {entries.map(({ file, diff, collapsed, viewed }) => (
-          <div className={`cr-file-card ${viewed ? 'cr-file-viewed' : ''}`} key={file.path}>
+        {entries.map(({ file, diff, collapsed, viewed }, idx) => (
+          <div
+            className={`cr-file-card ${viewed ? 'cr-file-viewed' : ''} ${idx === selectedIndex ? 'cr-file-selected' : ''}`}
+            key={file.path}
+            ref={(el) => { if (el) fileRefs.current.set(idx, el); else fileRefs.current.delete(idx); }}
+            onClick={() => setSelectedIndex(idx)}
+          >
             <div className="cr-file-header" onClick={() => toggleCollapse(file.path)}>
               <span className="cr-chevron">{collapsed ? '▸' : '▾'}</span>
               <span className="cr-status" style={{ color: statusColor(file.status) }}>
