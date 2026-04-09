@@ -318,6 +318,11 @@
   text-overflow: ellipsis;
 }
 
+.file-tree-node.file-tree-active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
 /* Git panel */
 .git-file-list {
   overflow-y: auto;

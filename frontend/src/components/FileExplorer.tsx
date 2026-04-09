@@ -1,18 +1,48 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useStore } from '../store';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useStore, PaneLeaf } from '../store';
 import { ListDirectory } from '../../wailsjs/go/main/App';
 import { getLanguageFromPath } from '../lib/languages';
 import { files } from '../../wailsjs/go/models';
 
+// Collect all leaves from a pane tree
+function collectLeaves(pane: any): PaneLeaf[] {
+  if (pane.type === 'terminal' || pane.type === 'editor') return [pane];
+  if (pane.children) return pane.children.flatMap(collectLeaves);
+  return [];
+}
+
 interface TreeNodeProps {
   entry: files.FileEntry;
   depth: number;
+  revealPath: string | null;
+  activeFilePath: string | null;
 }
 
-function TreeNode({ entry, depth }: TreeNodeProps) {
+function TreeNode({ entry, depth, revealPath, activeFilePath }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<files.FileEntry[] | null>(null);
-  const { openFile } = useStore();
+  const { openFile, setSidebarMode } = useStore();
+  const nodeRef = useRef<HTMLDivElement>(null);
+
+  // Auto-expand if this directory is an ancestor of the reveal path
+  useEffect(() => {
+    if (!revealPath || !entry.isDir) return;
+    if (revealPath.startsWith(entry.path + '/')) {
+      if (!expanded) {
+        setExpanded(true);
+        if (!children) {
+          ListDirectory(entry.path, 0).then(setChildren).catch(() => {});
+        }
+      }
+    }
+  }, [revealPath, entry.path, entry.isDir]);
+
+  // Scroll into view if this is the revealed file
+  useEffect(() => {
+    if (revealPath && entry.path === revealPath && nodeRef.current) {
+      nodeRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [revealPath, entry.path]);
 
   const handleClick = useCallback(async () => {
     if (entry.isDir) {
@@ -26,19 +56,19 @@ function TreeNode({ entry, depth }: TreeNodeProps) {
     } else {
       const language = getLanguageFromPath(entry.path);
       openFile(entry.path, language);
+      setSidebarMode('files');
     }
-  }, [entry, expanded, children, openFile]);
+  }, [entry, expanded, children, openFile, setSidebarMode]);
 
-  const icon = entry.isDir
-    ? (expanded ? '▾' : '▸')
-    : '◇';
-
-  const iconColor = entry.isDir ? 'var(--accent-blue)' : 'var(--text-dim)';
+  const isActive = !entry.isDir && entry.path === activeFilePath;
+  const icon = entry.isDir ? (expanded ? '▾' : '▸') : '◇';
+  const iconColor = entry.isDir ? 'var(--accent-blue)' : isActive ? 'var(--accent-purple)' : 'var(--text-dim)';
 
   return (
     <>
       <div
-        className="file-tree-node"
+        ref={nodeRef}
+        className={`file-tree-node ${isActive ? 'file-tree-active' : ''}`}
         onClick={handleClick}
         style={{ paddingLeft: `${12 + depth * 16}px` }}
       >
@@ -46,14 +76,20 @@ function TreeNode({ entry, depth }: TreeNodeProps) {
         <span className="file-tree-label">{entry.name}</span>
       </div>
       {expanded && children && children.map((child) => (
-        <TreeNode key={child.path} entry={child} depth={depth + 1} />
+        <TreeNode
+          key={child.path}
+          entry={child}
+          depth={depth + 1}
+          revealPath={revealPath}
+          activeFilePath={activeFilePath}
+        />
       ))}
     </>
   );
 }
 
 export default function FileExplorer() {
-  const { activeWorkspacePath } = useStore();
+  const { activeWorkspacePath, tabs, activeTabId } = useStore();
   const [entries, setEntries] = useState<files.FileEntry[]>([]);
 
   useEffect(() => {
@@ -65,6 +101,15 @@ export default function FileExplorer() {
       } catch {}
     })();
   }, [activeWorkspacePath]);
+
+  // Get the active file path from the current editor tab
+  const activeFilePath = (() => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab) return null;
+    const leaves = collectLeaves(tab.rootPane);
+    const editorLeaf = leaves.find((l) => l.type === 'editor');
+    return editorLeaf?.filePath || null;
+  })();
 
   if (!activeWorkspacePath) {
     return (
@@ -88,7 +133,13 @@ export default function FileExplorer() {
       </div>
       <div className="file-tree">
         {entries.map((entry) => (
-          <TreeNode key={entry.path} entry={entry} depth={0} />
+          <TreeNode
+            key={entry.path}
+            entry={entry}
+            depth={0}
+            revealPath={activeFilePath}
+            activeFilePath={activeFilePath}
+          />
         ))}
       </div>
     </div>
