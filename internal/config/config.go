@@ -10,9 +10,10 @@ import (
 
 // OrionConfig represents the per-repo .orion.toml configuration.
 type OrionConfig struct {
-	Credentials CredentialsConfig          `toml:"credentials"`
-	Servers     map[string]ServerConfig    `toml:"servers"`
-	Agents      map[string]AgentConfig     `toml:"agents"`
+	BranchPrefix string                     `toml:"branch_prefix"`
+	Credentials  CredentialsConfig          `toml:"credentials"`
+	Servers      map[string]ServerConfig    `toml:"servers"`
+	Agents       map[string]AgentConfig     `toml:"agents"`
 }
 
 type CredentialsConfig struct {

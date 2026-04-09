@@ -40,6 +40,7 @@ export default function Sidebar() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [serverStatuses, setServerStatuses] = useState<Record<string, server.ServerStatus[]>>({});
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -157,6 +158,7 @@ export default function Sidebar() {
 
   const handleDelete = useCallback(async (path: string) => {
     if (!project) return;
+    setDeletingPath(path);
     try {
       const wsTabs = tabs.filter((t) => t.workspacePath === path);
       for (const tab of wsTabs) {
@@ -170,6 +172,8 @@ export default function Sidebar() {
       await refreshWorkspaces();
     } catch (err) {
       console.error('Failed to delete workspace:', err);
+    } finally {
+      setDeletingPath(null);
     }
   }, [project, tabs, refreshWorkspaces]);
 
@@ -320,14 +324,14 @@ export default function Sidebar() {
           <span>Workspaces</span>
           <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span
-              style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: '13px' }}
+              style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size)' }}
               onClick={refreshWorkspaces}
               title="Refresh workspaces"
             >
               ↻
             </span>
             <span
-              style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: '14px' }}
+              style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size)' }}
               onClick={() => setCreating(true)}
               title="New workspace"
             >
@@ -349,15 +353,31 @@ export default function Sidebar() {
                   // Pre-allocate ports so agents/shells know them immediately
                   if (project) AllocatePorts(project.root, ws.path, ws.isMain).catch(() => {});
                 }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  if (!ws.isMain) setConfirmDelete(ws.path);
-                }}
               >
                 <span className={`icon ${ws.hasAgent || wsHasServers ? '' : 'inactive'}`}>
                   {ws.isMain ? '◉' : ws.hasAgent || wsHasServers ? '●' : '○'}
                 </span>
-                <span className="label">{ws.isMain ? 'main' : ws.branch || ws.name}</span>
+                <span className="label">{ws.isMain ? 'main' : (project ? ws.name.replace(project.name + '-', '') : ws.name)}</span>
+                {!ws.isMain && deletingPath === ws.path && (
+                  <span className="ws-delete-spinner" title="Deleting...">⟳</span>
+                )}
+                {!ws.isMain && deletingPath !== ws.path && (
+                  <span
+                    className="ws-delete-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirmDelete === ws.path) {
+                        handleDelete(ws.path);
+                      } else {
+                        setConfirmDelete(ws.path);
+                        setTimeout(() => setConfirmDelete((c) => c === ws.path ? null : c), 4000);
+                      }
+                    }}
+                    title={confirmDelete === ws.path ? 'Click again to confirm' : 'Delete workspace'}
+                  >
+                    {confirmDelete === ws.path ? '✕?' : '✕'}
+                  </span>
+                )}
               </div>
 
               {/* Actions when workspace is selected */}
@@ -440,18 +460,6 @@ export default function Sidebar() {
                 </>
               )}
 
-              {/* Delete confirmation */}
-              {confirmDelete === ws.path && (
-                <div className="sidebar-confirm">
-                  <span style={{ color: 'var(--accent-red)', fontSize: 'var(--font-size-xs)' }}>Delete?</span>
-                  <span className="sidebar-action" style={{ color: 'var(--accent-red)' }} onClick={() => handleDelete(ws.path)}>
-                    yes
-                  </span>
-                  <span className="sidebar-action" onClick={() => setConfirmDelete(null)}>
-                    no
-                  </span>
-                </div>
-              )}
             </div>
           );
         })}

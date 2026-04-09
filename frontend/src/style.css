@@ -37,6 +37,11 @@
   --font-size: calc(13px * var(--zoom));
   --font-size-sm: calc(12px * var(--zoom));
   --font-size-xs: calc(11px * var(--zoom));
+  --font-size-lg: calc(16px * var(--zoom));
+  --font-size-xl: calc(22px * var(--zoom));
+  --icon-size-xs: calc(8px * var(--zoom));
+  --icon-size-sm: calc(10px * var(--zoom));
+  --icon-size: calc(14px * var(--zoom));
 }
 
 * {

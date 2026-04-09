@@ -132,15 +132,26 @@ func (m *Manager) CreateWorkspace(repoRoot, name string) (*Workspace, error) {
 
 	mainPath := getMainWorktreePath(repoRoot)
 
-	cmd := exec.Command("git", "worktree", "add", "-b", name, worktreePath, baseBranch)
+	// Load config once for branch prefix and credential copying
+	var cfg *config.OrionConfig
+	if mainPath != "" {
+		cfg = config.Load(mainPath)
+	}
+
+	// Apply branch prefix from config (e.g. "mckay" → branch "mckay/name")
+	branchName := name
+	if cfg != nil && cfg.BranchPrefix != "" {
+		branchName = cfg.BranchPrefix + "/" + name
+	}
+
+	cmd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath, baseBranch)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 
 	// Copy credential files
-	if mainPath != "" {
-		cfg := config.Load(mainPath)
+	if cfg != nil {
 		copyCredentialFiles(mainPath, worktreePath, cfg.Credentials.Copy)
 	}
 
@@ -157,7 +168,7 @@ func (m *Manager) CreateWorkspace(repoRoot, name string) (*Workspace, error) {
 	return &Workspace{
 		Name:   filepath.Base(worktreePath),
 		Path:   worktreePath,
-		Branch: name,
+		Branch: branchName,
 	}, nil
 }
 

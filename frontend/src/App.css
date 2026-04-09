@@ -45,7 +45,7 @@
   border-radius: 4px;
   cursor: pointer;
   color: var(--text-dim);
-  font-size: 22px;
+  font-size: var(--font-size-xl);
   --wails-draggable: no-drag;
   -webkit-app-region: no-drag;
 }
@@ -89,7 +89,7 @@
   border-radius: 6px;
   cursor: pointer;
   color: var(--text-dim);
-  font-size: 22px;
+  font-size: var(--font-size-xl);
   border-left: 2px solid transparent;
   transition: color 0.1s, background 0.1s;
 }
@@ -192,7 +192,7 @@
 
 .sidebar-item .icon {
   color: var(--accent-green);
-  font-size: 10px;
+  font-size: var(--icon-size-sm);
 }
 
 .sidebar-item .icon.inactive {
@@ -204,6 +204,31 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ws-delete-icon {
+  display: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-size);
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.ws-delete-icon:hover {
+  color: var(--accent-red);
+}
+.sidebar-item:hover .ws-delete-icon {
+  display: inline;
+}
+.ws-delete-spinner {
+  color: var(--text-dim);
+  font-size: var(--font-size);
+  flex-shrink: 0;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Sidebar workspace actions */
@@ -268,7 +293,7 @@
 }
 
 .server-dot {
-  font-size: 8px;
+  font-size: var(--icon-size-xs);
 }
 
 .server-dot.running {
@@ -307,7 +332,7 @@
 }
 
 .file-tree-icon {
-  font-size: 10px;
+  font-size: var(--icon-size-sm);
   flex-shrink: 0;
   width: 12px;
   text-align: center;
@@ -523,7 +548,7 @@
 }
 
 .switcher-icon {
-  font-size: 10px;
+  font-size: var(--icon-size-sm);
   color: var(--accent-green);
 }
 
@@ -706,7 +731,7 @@
 
 /* Tab icon */
 .tab-icon {
-  font-size: 10px;
+  font-size: var(--icon-size-sm);
   color: var(--accent-purple);
 }
 
@@ -1070,7 +1095,7 @@
 
 .tab .close {
   display: none;
-  font-size: 14px;
+  font-size: var(--icon-size);
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
@@ -1094,7 +1119,7 @@
   border-radius: 4px;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 16px;
+  font-size: var(--font-size-lg);
   transition: background 0.1s, color 0.1s;
 }
 
