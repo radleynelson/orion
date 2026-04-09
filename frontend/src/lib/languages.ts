@@ -38,6 +38,12 @@ const languageMap: Record<string, string> = {
   '.dockerfile': 'dockerfile',
   '.graphql': 'graphql',
   '.prisma': 'prisma',
+  '.erb': 'erb',
+  '.haml': 'ruby',
+  '.slim': 'ruby',
+  '.rake': 'ruby',
+  '.gemspec': 'ruby',
+  '.jbuilder': 'ruby',
 };
 
 const specialFiles: Record<string, string> = {
@@ -52,6 +58,14 @@ const specialFiles: Record<string, string> = {
 export function getLanguageFromPath(filePath: string): string {
   const basename = filePath.split('/').pop()?.toLowerCase() || '';
   if (specialFiles[basename]) return specialFiles[basename];
-  const ext = '.' + basename.split('.').pop();
+  // Check compound extensions first (e.g., .html.erb, .json.jbuilder)
+  const parts = basename.split('.');
+  if (parts.length > 2) {
+    const compoundExt = '.' + parts.slice(-2).join('.');
+    if (compoundExt === '.html.erb' || compoundExt === '.text.erb' || compoundExt === '.js.erb') {
+      return 'erb';
+    }
+  }
+  const ext = '.' + parts.pop();
   return languageMap[ext] || 'plaintext';
 }

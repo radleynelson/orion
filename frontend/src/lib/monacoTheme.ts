@@ -234,5 +234,147 @@ export function configureMonacoTheme() {
         ],
       },
     } as any);
+
+    // Register ERB language (HTML with embedded Ruby)
+    monaco.languages.register({ id: 'erb' });
+    monaco.languages.setMonarchTokensProvider('erb', {
+      defaultToken: '',
+      tokenPostfix: '.erb',
+      // ERB is HTML with <% %> and <%= %> Ruby blocks
+      tokenizer: {
+        root: [
+          // ERB output tag <%= ... %>
+          [/<%=/, { token: 'delimiter.erb', next: '@erbOutput' }],
+          // ERB execution tag <% ... %>
+          [/<%/, { token: 'delimiter.erb', next: '@erbCode' }],
+          // ERB comment <%# ... %>
+          [/<%#/, { token: 'comment.erb', next: '@erbComment' }],
+          // HTML comments
+          [/<!--/, 'comment.html', '@htmlComment'],
+          // HTML tags
+          [/<\/?[\w-]+/, { token: 'tag.html', next: '@htmlTag' }],
+          // HTML entities
+          [/&\w+;/, 'string.html'],
+          // Plain text
+          [/[^<&%]+/, ''],
+          [/./, ''],
+        ],
+        erbOutput: [
+          [/%>/, { token: 'delimiter.erb', next: '@pop' }],
+          [/#\{/, 'string.interpolation', '@rubyInterp'],
+          [/"/, 'string.ruby', '@rubyDoubleString'],
+          [/'/, 'string.ruby', '@rubySingleString'],
+          [/:[a-zA-Z_]\w*/, 'symbol.ruby'],
+          [/@{1,2}[a-zA-Z_]\w*/, 'variable.instance.ruby'],
+          [/\b(if|unless|else|elsif|end|do|each|map|select|reject|nil|true|false|self|yield|return)\b/, 'keyword.ruby'],
+          [/\b[A-Z]\w+\b/, 'type.ruby'],
+          [/\.([a-z_]\w*[!?]?)/, ['delimiter', 'method.call.ruby']],
+          [/([a-z_]\w*[!?]?)(\s*\()/, ['method.call.ruby', 'delimiter']],
+          [/[{}()\[\]]/, 'delimiter'],
+          [/[=><!~?&|+\-*\/\^%]+/, 'operator.ruby'],
+          [/\b\d+\b/, 'number.ruby'],
+          [/[a-z_]\w*/, 'identifier.ruby'],
+          [/\s+/, ''],
+        ],
+        erbCode: [
+          [/%>/, { token: 'delimiter.erb', next: '@pop' }],
+          { include: 'erbOutput' },
+        ],
+        erbComment: [
+          [/%>/, { token: 'comment.erb', next: '@pop' }],
+          [/./, 'comment.erb'],
+        ],
+        htmlComment: [
+          [/-->/, 'comment.html', '@pop'],
+          [/./, 'comment.html'],
+        ],
+        htmlTag: [
+          [/\s+/, ''],
+          [/([\w-]+)(\s*=\s*)/, ['attribute.name.html', '']],
+          [/"[^"]*"/, 'attribute.value.html'],
+          [/'[^']*'/, 'attribute.value.html'],
+          [/<%=/, { token: 'delimiter.erb', next: '@erbOutput' }],
+          [/<%/, { token: 'delimiter.erb', next: '@erbCode' }],
+          [/\/?>/, { token: 'tag.html', next: '@pop' }],
+          [/./, ''],
+        ],
+        rubyDoubleString: [
+          [/#\{/, 'string.interpolation', '@rubyInterp'],
+          [/"/, 'string.ruby', '@pop'],
+          [/[^"#]+/, 'string.ruby'],
+          [/./, 'string.ruby'],
+        ],
+        rubySingleString: [
+          [/'/, 'string.ruby', '@pop'],
+          [/[^']+/, 'string.ruby'],
+        ],
+        rubyInterp: [
+          [/\}/, 'string.interpolation', '@pop'],
+          { include: 'erbOutput' },
+        ],
+      },
+    } as any);
+
+    // Add ERB-specific theme rules
+    monaco.editor.defineTheme('orion-dark', {
+      ...monaco.editor.defineTheme as any, // keep existing
+      base: 'vs-dark',
+      inherit: true,
+      rules: [
+        // Existing rules are already defined above, these add ERB-specific ones
+        { token: 'delimiter.erb', foreground: 'ff7b72', fontStyle: 'bold' },
+        { token: 'comment.erb', foreground: '8b949e', fontStyle: 'italic' },
+        { token: 'tag.html', foreground: '7ee787' },
+        { token: 'attribute.name.html', foreground: '79c0ff' },
+        { token: 'attribute.value.html', foreground: 'a5d6ff' },
+        { token: 'comment.html', foreground: '8b949e', fontStyle: 'italic' },
+        { token: 'string.html', foreground: 'a5d6ff' },
+        // Ruby tokens inherited from ruby theme rules above
+        { token: 'keyword.ruby', foreground: 'ff7b72' },
+        { token: 'type.ruby', foreground: '7ee787' },
+        { token: 'method.call.ruby', foreground: 'd2a8ff' },
+        { token: 'method.ruby', foreground: 'd2a8ff' },
+        { token: 'variable.instance.ruby', foreground: 'ffa657' },
+        { token: 'symbol.ruby', foreground: '79c0ff' },
+        { token: 'string.ruby', foreground: 'a5d6ff' },
+        { token: 'string.interpolation', foreground: 'ff7b72' },
+        { token: 'number.ruby', foreground: '79c0ff' },
+        { token: 'operator.ruby', foreground: 'ff7b72' },
+        { token: 'constant.ruby', foreground: '79c0ff', fontStyle: 'bold' },
+        { token: 'identifier.ruby', foreground: 'd4d4d4' },
+        { token: 'keyword', foreground: 'ff7b72' },
+        { token: 'string', foreground: 'a5d6ff' },
+        { token: 'comment', foreground: '8b949e', fontStyle: 'italic' },
+        { token: 'number', foreground: '79c0ff' },
+        { token: 'type', foreground: '7ee787' },
+        { token: 'function', foreground: 'd2a8ff' },
+        { token: 'variable', foreground: 'ffa657' },
+        { token: 'constant', foreground: '79c0ff' },
+        { token: 'operator', foreground: 'ff7b72' },
+        { token: 'tag', foreground: '7ee787' },
+        { token: 'attribute.name', foreground: '79c0ff' },
+        { token: 'attribute.value', foreground: 'a5d6ff' },
+      ],
+      colors: {
+        'editor.background': '#1e1e1e',
+        'editor.foreground': '#d4d4d4',
+        'editor.selectionBackground': 'rgba(108, 182, 255, 0.3)',
+        'editor.lineHighlightBackground': '#252525',
+        'editorGutter.background': '#1e1e1e',
+        'editorLineNumber.foreground': '#5a5a5a',
+        'editorLineNumber.activeForeground': '#b0b0b0',
+        'editorCursor.foreground': '#d4d4d4',
+        'scrollbar.shadow': '#00000000',
+        'scrollbarSlider.background': '#3d3d3d80',
+        'scrollbarSlider.hoverBackground': '#4a4a4a',
+        'scrollbarSlider.activeBackground': '#5a5a5a',
+        'editorWidget.background': '#252525',
+        'editorWidget.border': '#3d3d3d',
+        'diffEditor.insertedTextBackground': '#7ee78720',
+        'diffEditor.removedTextBackground': '#ff7b7220',
+        'diffEditor.insertedLineBackground': '#7ee78710',
+        'diffEditor.removedLineBackground': '#ff7b7210',
+      },
+    });
   });
 }
