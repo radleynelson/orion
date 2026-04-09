@@ -169,3 +169,7 @@ export function StartServers(arg1, arg2, arg3) {
 export function StopServers(arg1) {
   return window['go']['main']['App']['StopServers'](arg1);
 }
+
+export function WatchWorkspace(arg1) {
+  return window['go']['main']['App']['WatchWorkspace'](arg1);
+}

@@ -6,6 +6,8 @@ require github.com/wailsapp/wails/v2 v2.12.0
 
 require github.com/BurntSushi/toml v1.6.0
 
+require github.com/fsnotify/fsnotify v1.9.0
+
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect

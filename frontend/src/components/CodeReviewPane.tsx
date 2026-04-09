@@ -5,7 +5,9 @@ import {
   GetUnifiedDiff,
   DiscardFileChanges,
   DiscardAllChanges,
+  WatchWorkspace,
 } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { git } from '../../wailsjs/go/models';
 import { parseUnifiedDiff, ParsedDiff } from '../lib/diffParser';
 import { getLanguageFromPath } from '../lib/languages';
@@ -13,7 +15,9 @@ import { getLanguageFromPath } from '../lib/languages';
 interface FileEntry {
   file: git.ChangedFile;
   diff: ParsedDiff | null;
+  rawDiff: string;
   collapsed: boolean;
+  viewed: boolean;
 }
 
 export default function CodeReviewPane() {
@@ -31,39 +35,53 @@ export default function CodeReviewPane() {
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmFile, setConfirmFile] = useState<string | null>(null);
   const reqId = useRef(0);
+  // Track raw diffs for viewed files so we can detect when they change
+  const viewedDiffs = useRef<Map<string, string>>(new Map());
 
   const baseArg = codeReviewBase === 'main' ? (project?.mainBranch || 'main') : '';
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (clear?: boolean) => {
     if (!activeWorkspacePath) {
       setEntries([]);
       return;
     }
     const myReq = ++reqId.current;
-    // Clear stale entries from the previous workspace/base immediately so we
-    // never show the wrong diff while the new fetch is in flight.
-    setEntries([]);
+    if (clear) setEntries([]);
     setLoading(true);
     try {
       const files = (await GetChangedFilesAgainst(activeWorkspacePath, baseArg)) || [];
       if (myReq !== reqId.current) return;
 
       // Fetch diffs in parallel
-      const diffs = await Promise.all(
+      const results = await Promise.all(
         files.map(async (f) => {
           try {
             const raw = await GetUnifiedDiff(activeWorkspacePath, baseArg, f.path);
-            return parseUnifiedDiff(raw || '');
+            return { raw: raw || '', parsed: parseUnifiedDiff(raw || '') };
           } catch {
-            return parseUnifiedDiff('');
+            return { raw: '', parsed: parseUnifiedDiff('') };
           }
         })
       );
       if (myReq !== reqId.current) return;
 
-      setEntries(
-        files.map((f, i) => ({ file: f, diff: diffs[i], collapsed: false }))
-      );
+      setEntries((prev) => {
+        const prevByPath = new Map(prev.map((e) => [e.file.path, e]));
+        return files.map((f, i) => {
+          const { raw, parsed } = results[i];
+          const savedDiff = viewedDiffs.current.get(f.path);
+          const wasViewed = savedDiff !== undefined;
+          const diffChanged = wasViewed && savedDiff !== raw;
+          if (diffChanged) {
+            viewedDiffs.current.delete(f.path);
+          }
+          const viewed = wasViewed && !diffChanged;
+          // Preserve user's collapsed state for non-viewed files across refreshes
+          const prevEntry = prevByPath.get(f.path);
+          const collapsed = viewed || (prevEntry ? prevEntry.collapsed : false);
+          return { file: f, diff: parsed, rawDiff: raw, collapsed, viewed };
+        });
+      });
     } catch {
       if (myReq === reqId.current) setEntries([]);
     } finally {
@@ -71,9 +89,27 @@ export default function CodeReviewPane() {
     }
   }, [activeWorkspacePath, baseArg]);
 
+  // Clear viewed state and entries when workspace or base changes
+  const prevContext = useRef({ workspace: activeWorkspacePath, base: baseArg });
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    const changed = prevContext.current.workspace !== activeWorkspacePath ||
+                    prevContext.current.base !== baseArg;
+    prevContext.current = { workspace: activeWorkspacePath, base: baseArg };
+    if (changed) {
+      viewedDiffs.current.clear();
+    }
+    refresh(changed);
+  }, [refresh, activeWorkspacePath, baseArg]);
+
+  // Watch workspace for file changes and auto-refresh
+  useEffect(() => {
+    if (!activeWorkspacePath) return;
+    WatchWorkspace(activeWorkspacePath).catch(() => {});
+    const cancel = EventsOn('git:files-changed', () => {
+      refresh();
+    });
+    return cancel;
+  }, [activeWorkspacePath, refresh]);
 
   const discardFile = async (path: string) => {
     if (!activeWorkspacePath) return;
@@ -116,6 +152,22 @@ export default function CodeReviewPane() {
     );
   };
 
+  const toggleViewed = (path: string) => {
+    setEntries((prev) =>
+      prev.map((e) => {
+        if (e.file.path !== path) return e;
+        const newViewed = !e.viewed;
+        if (newViewed) {
+          viewedDiffs.current.set(path, e.rawDiff);
+          return { ...e, viewed: true, collapsed: true };
+        } else {
+          viewedDiffs.current.delete(path);
+          return { ...e, viewed: false, collapsed: false };
+        }
+      })
+    );
+  };
+
   const statusColor = (status: string) => {
     switch (status) {
       case 'M': return 'var(--accent-orange)';
@@ -149,7 +201,7 @@ export default function CodeReviewPane() {
             {confirmAll ? 'Click again to confirm' : 'Discard all'}
           </button>
         )}
-        <button className="cr-icon-btn" onClick={refresh} title="Refresh">
+        <button className="cr-icon-btn" onClick={() => refresh()} title="Refresh">
           {loading ? '…' : '↻'}
         </button>
         <button
@@ -165,8 +217,8 @@ export default function CodeReviewPane() {
         {entries.length === 0 && !loading && (
           <div className="cr-empty">No changes</div>
         )}
-        {entries.map(({ file, diff, collapsed }) => (
-          <div className="cr-file-card" key={file.path}>
+        {entries.map(({ file, diff, collapsed, viewed }) => (
+          <div className={`cr-file-card ${viewed ? 'cr-file-viewed' : ''}`} key={file.path}>
             <div className="cr-file-header" onClick={() => toggleCollapse(file.path)}>
               <span className="cr-chevron">{collapsed ? '▸' : '▾'}</span>
               <span className="cr-status" style={{ color: statusColor(file.status) }}>
@@ -185,6 +237,25 @@ export default function CodeReviewPane() {
                 }}
                 title="⌘+click to open file"
               >{file.path}</span>
+              <span
+                className="cr-copy-icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(file.path);
+                  const el = e.currentTarget;
+                  el.textContent = '✓';
+                  setTimeout(() => { el.textContent = '⎘'; }, 800);
+                }}
+                title="Copy path"
+              >⎘</span>
+              <span style={{ flex: 1 }} />
+              <span
+                className={`cr-viewed-check ${viewed ? 'checked' : ''}`}
+                onClick={(e) => { e.stopPropagation(); toggleViewed(file.path); }}
+                title={viewed ? 'Mark as unviewed' : 'Mark as viewed'}
+              >
+                {viewed ? '✓ Viewed' : 'Viewed'}
+              </span>
               {codeReviewBase === 'uncommitted' && (
                 <button
                   className="cr-discard-file"
@@ -203,17 +274,6 @@ export default function CodeReviewPane() {
                   <span className="cr-del">−{diff.removed}</span>
                 </span>
               )}
-              <span
-                className="cr-copy-icon"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigator.clipboard.writeText(file.path);
-                  const el = e.currentTarget;
-                  el.textContent = '✓';
-                  setTimeout(() => { el.textContent = '📋'; }, 800);
-                }}
-                title="Copy path"
-              >📋</span>
             </div>
             {!collapsed && diff && diff.hunks.length > 0 && (
               <div className="cr-hunks">

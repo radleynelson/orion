@@ -15,6 +15,7 @@ import (
 	"orion/internal/server"
 	"orion/internal/state"
 	"orion/internal/terminal"
+	"orion/internal/watcher"
 	"orion/internal/workspace"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -28,8 +29,9 @@ type App struct {
 	srvMgr   *server.Manager
 	portReg  *port.Registry
 	appState *state.AppState
-	filesMgr *files.Manager
-	gitMgr   *git.Manager
+	filesMgr   *files.Manager
+	gitMgr     *git.Manager
+	watcherMgr *watcher.Manager
 }
 
 // NewApp creates a new App instance.
@@ -41,8 +43,9 @@ func NewApp() *App {
 		srvMgr:   server.NewManager(portReg),
 		portReg:  portReg,
 		appState: state.NewAppState(),
-		filesMgr: files.NewManager(),
-		gitMgr:   git.NewManager(),
+		filesMgr:   files.NewManager(),
+		gitMgr:     git.NewManager(),
+		watcherMgr: watcher.NewManager(),
 	}
 }
 
@@ -65,6 +68,7 @@ func (a *App) startup(ctx context.Context) {
 	a.srvMgr.SetContext(ctx)
 	a.filesMgr.SetContext(ctx)
 	a.gitMgr.SetContext(ctx)
+	a.watcherMgr.SetContext(ctx)
 
 	// Clear macOS saved application state to prevent stale WKWebView restoration
 	home, _ := os.UserHomeDir()
@@ -102,6 +106,7 @@ func (a *App) domReady(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	// Detach from PTYs but keep tmux sessions alive for recovery on next launch
 	a.termMgr.DetachAll()
+	a.watcherMgr.Stop()
 }
 
 // --- Terminal methods ---
@@ -377,6 +382,12 @@ func (a *App) ListDirectory(dir string, depth int) ([]files.FileEntry, error) {
 
 func (a *App) ReadFileContents(path string) (string, error) {
 	return a.filesMgr.ReadFileContents(path)
+}
+
+// WatchWorkspace starts watching a workspace directory for file changes.
+// Emits "git:files-changed" events to the frontend when changes are detected.
+func (a *App) WatchWorkspace(workspacePath string) error {
+	return a.watcherMgr.Watch(workspacePath)
 }
 
 func (a *App) GetChangedFiles(workspacePath string) ([]git.ChangedFile, error) {

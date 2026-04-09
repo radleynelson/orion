@@ -91,3 +91,5 @@ export function SetClipboard(arg1:string):Promise<void>;
 export function StartServers(arg1:string,arg2:string,arg3:boolean):Promise<Array<server.ServerStatus>>;
 
 export function StopServers(arg1:string):Promise<void>;
+
+export function WatchWorkspace(arg1:string):Promise<void>;

@@ -827,6 +827,29 @@
   margin-bottom: 10px;
   overflow: hidden;
 }
+.cr-file-card.cr-file-viewed {
+  opacity: 0.5;
+}
+.cr-file-card.cr-file-viewed .cr-file-header {
+  border-bottom: none;
+}
+.cr-viewed-check {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-dim);
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+}
+.cr-viewed-check.checked {
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+}
+.cr-viewed-check:hover {
+  background: var(--bg-hover);
+}
 
 .cr-file-header {
   display: flex;
@@ -851,7 +874,6 @@
   text-align: center;
 }
 .cr-file-path {
-  flex: 1;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -863,13 +885,12 @@
 }
 .cr-copy-icon {
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   flex-shrink: 0;
-  margin-left: 4px;
-  opacity: 0.6;
+  color: var(--text-dim);
 }
 .cr-copy-icon:hover {
-  opacity: 1;
+  color: var(--text-primary);
 }
 .cr-counts {
   font-size: var(--font-size-xs);
