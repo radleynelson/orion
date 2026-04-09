@@ -80,8 +80,15 @@ func (m *Manager) GetChangedFilesAgainst(workspacePath string, base string) ([]C
 		return m.GetChangedFiles(workspacePath)
 	}
 
+	// Prefer origin/<base> so we compare against the remote tracking branch,
+	// which stays current even when the local branch ref is stale.
+	remoteBase := "origin/" + base
+	if err := exec.Command("git", "-C", workspacePath, "rev-parse", "--verify", remoteBase).Run(); err != nil {
+		remoteBase = base // fall back to local ref
+	}
+
 	// Find merge base so we only show changes introduced on this branch.
-	mb, err := exec.Command("git", "-C", workspacePath, "merge-base", "HEAD", base).Output()
+	mb, err := exec.Command("git", "-C", workspacePath, "merge-base", "HEAD", remoteBase).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git merge-base failed: %w", err)
 	}
@@ -155,11 +162,15 @@ func (m *Manager) GetUnifiedDiff(workspacePath string, base string, filePath str
 
 	args := []string{"-C", workspacePath, "diff", "--no-color", "--unified=3"}
 	if base != "" {
-		mb, err := exec.Command("git", "-C", workspacePath, "merge-base", "HEAD", base).Output()
+		remoteBase := "origin/" + base
+		if err := exec.Command("git", "-C", workspacePath, "rev-parse", "--verify", remoteBase).Run(); err != nil {
+			remoteBase = base
+		}
+		mb, err := exec.Command("git", "-C", workspacePath, "merge-base", "HEAD", remoteBase).Output()
 		if err == nil {
 			args = append(args, strings.TrimSpace(string(mb)))
 		} else {
-			args = append(args, base)
+			args = append(args, remoteBase)
 		}
 	}
 	args = append(args, "--", relPath)
