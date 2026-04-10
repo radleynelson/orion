@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#2d2d2d">
+  <title>Orion Mobile</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    :root {
+      --bg-primary: #2d2d2d;
+      --bg-secondary: #252525;
+      --bg-surface: #333333;
+      --bg-hover: #3a3a3a;
+      --bg-active: #404040;
+      --bg-terminal: #1e1e1e;
+      --border: #3d3d3d;
+      --border-dim: #333333;
+      --text-primary: #d4d4d4;
+      --text-secondary: #b0b0b0;
+      --text-dim: #808080;
+      --accent-blue: #6cb6ff;
+      --accent-green: #7ee787;
+      --accent-red: #ff7b72;
+      --accent-yellow: #d29922;
+      --accent-purple: #d2a8ff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    /* --- Connect Screen --- */
+    #connect-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 24px;
+      gap: 20px;
+    }
+
+    .logo {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--accent-blue);
+    }
+
+    .logo-sub {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-top: -12px;
+    }
+
+    .connect-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .connect-form input {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: var(--text-primary);
+      font-size: 16px;
+      outline: none;
+      width: 100%;
+    }
+
+    .connect-form input:focus {
+      border-color: var(--accent-blue);
+    }
+
+    .connect-form input::placeholder {
+      color: var(--text-dim);
+    }
+
+    .btn {
+      background: var(--accent-blue);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+    }
+
+    .btn:active { opacity: 0.8; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 400;
+    }
+
+    .error-msg {
+      color: var(--accent-red);
+      font-size: 13px;
+      text-align: center;
+      min-height: 18px;
+    }
+
+    .saved-connections {
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .saved-connections h3 {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .saved-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg-surface);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .saved-item:active { background: var(--bg-hover); }
+
+    .saved-item .remove {
+      color: var(--text-dim);
+      font-size: 18px;
+      padding: 0 4px;
+    }
+
+    /* --- Main Screen --- */
+    #main-screen {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      height: 48px;
+      min-height: 48px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 0 12px;
+      gap: 12px;
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .hamburger {
+      font-size: 22px;
+      cursor: pointer;
+      padding: 4px;
+      color: var(--text-secondary);
+      background: none;
+      border: none;
+    }
+
+    .header-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .connection-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+    }
+
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      align-items: center;
+      height: 36px;
+      min-height: 36px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .tab-bar::-webkit-scrollbar { display: none; }
+
+    .tab {
+      flex-shrink: 0;
+      padding: 0 16px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      color: var(--text-dim);
+      cursor: pointer;
+      border-right: 1px solid var(--border-dim);
+      white-space: nowrap;
+    }
+
+    .tab.active {
+      color: var(--text-primary);
+      background: var(--bg-primary);
+    }
+
+    .tab .tab-close {
+      margin-left: 8px;
+      font-size: 14px;
+      color: var(--text-dim);
+      padding: 2px;
+    }
+
+    /* Terminal area */
+    .terminal-area {
+      flex: 1;
+      background: var(--bg-terminal);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .terminal-area .xterm {
+      height: 100%;
+    }
+
+    /* Mobile scroll handle */
+    .scroll-track {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 24px;
+      height: 100%;
+      z-index: 10;
+      touch-action: none;
+    }
+
+    .scroll-thumb {
+      position: absolute;
+      right: 4px;
+      width: 16px;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      transition: background 0.15s;
+    }
+
+    .scroll-thumb.active {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .scroll-track:hover .scroll-thumb {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+
+    /* Shortcut bar */
+    .shortcut-bar {
+      display: flex;
+      align-items: center;
+      height: 40px;
+      min-height: 40px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      padding: 0 4px;
+      gap: 4px;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .shortcut-btn {
+      flex: 1;
+      height: 32px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-family: monospace;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .shortcut-btn:active { background: var(--bg-active); }
+
+    /* Hamburger menu overlay */
+    .menu-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 100;
+    }
+
+    .menu-overlay.open { display: flex; }
+
+    .menu-backdrop {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+    }
+
+    .menu-panel {
+      position: relative;
+      width: 85%;
+      max-width: 340px;
+      height: 100%;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      padding-top: calc(16px + env(safe-area-inset-top));
+      z-index: 101;
+    }
+
+    .menu-section {
+      margin-bottom: 20px;
+    }
+
+    .menu-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    .menu-select {
+      width: 100%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+
+    .workspace-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .workspace-item {
+      background: var(--bg-surface);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .workspace-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      cursor: pointer;
+    }
+
+    .workspace-header:active { background: var(--bg-hover); }
+
+    .workspace-name {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .workspace-branch {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .workspace-main-badge {
+      font-size: 10px;
+      background: var(--accent-blue);
+      color: #000;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .workspace-sessions {
+      padding: 0 12px 12px;
+      display: none;
+    }
+
+    .workspace-sessions.expanded { display: block; }
+
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .session-item:active { background: var(--bg-hover); }
+
+    .session-icon {
+      font-size: 14px;
+    }
+
+    .workspace-actions {
+      display: flex;
+      gap: 6px;
+      padding: 8px 0 0;
+    }
+
+    .action-btn {
+      flex: 1;
+      padding: 8px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .action-btn:active { background: var(--bg-active); }
+
+    .disconnect-btn {
+      margin-top: auto;
+      padding: 12px;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--accent-red);
+      font-size: 14px;
+      width: 100%;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Connect Screen -->
+<div id="connect-screen">
+  <div class="logo">ORION</div>
+  <div class="logo-sub">Mobile Companion</div>
+
+  <div class="connect-form">
+    <input type="text" id="host-input" placeholder="Host (e.g. 192.168.1.100:9867)" inputmode="url" autocapitalize="off" autocorrect="off">
+    <input type="text" id="token-input" placeholder="Auth token" autocapitalize="off" autocorrect="off">
+    <div class="error-msg" id="connect-error"></div>
+    <button class="btn" id="connect-btn" onclick="connect()">Connect</button>
+  </div>
+
+  <div class="saved-connections" id="saved-connections"></div>
+</div>
+
+<!-- Main Screen -->
+<div id="main-screen">
+  <div class="header">
+    <button class="hamburger" onclick="toggleMenu()">&#9776;</button>
+    <div class="header-title" id="header-title">Orion</div>
+    <div class="connection-dot" id="connection-dot"></div>
+  </div>
+
+  <div class="tab-bar" id="tab-bar"></div>
+
+  <div class="terminal-area" id="terminal-area">
+    <div class="empty-state" id="empty-state">Select a session from the menu</div>
+    <div class="scroll-track" id="scroll-track">
+      <div class="scroll-thumb" id="scroll-thumb"></div>
+    </div>
+  </div>
+
+  <div class="shortcut-bar">
+    <button class="shortcut-btn" onclick="sendKey('\x03')">Ctrl+C</button>
+    <button class="shortcut-btn" onclick="sendKey('\t')">Tab</button>
+    <button class="shortcut-btn" onclick="sendKey('\x1b[A')">&#9650;</button>
+    <button class="shortcut-btn" onclick="sendKey('\x1b[B')">&#9660;</button>
+    <button class="shortcut-btn" onclick="sendKey('\x1b')">Esc</button>
+    <button class="shortcut-btn" onclick="sendKey('\x04')">Ctrl+D</button>
+  </div>
+
+  <!-- Hamburger Menu -->
+  <div class="menu-overlay" id="menu-overlay">
+    <div class="menu-backdrop" onclick="toggleMenu()"></div>
+    <div class="menu-panel">
+      <div class="menu-section">
+        <div class="menu-label">Project</div>
+        <select class="menu-select" id="project-select" onchange="selectProject()">
+          <option value="">Select a project...</option>
+        </select>
+      </div>
+
+      <div class="menu-section">
+        <div class="menu-label">Workspaces</div>
+        <div class="workspace-list" id="workspace-list"></div>
+      </div>
+
+      <button class="disconnect-btn" onclick="disconnect()">Disconnect</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+// --- State ---
+const state = {
+  host: '',
+  token: '',
+  projects: [],
+  selectedProject: null,
+  projectInfo: null,
+  workspaces: [],
+  sessions: [],
+  tabs: [],        // { id, label, tmuxSession, terminalId, ws, terminal, fitAddon }
+  activeTabId: null,
+};
+
+// --- Connect ---
+
+function loadSavedConnections() {
+  const saved = JSON.parse(localStorage.getItem('orion-connections') || '[]');
+  const container = document.getElementById('saved-connections');
+  if (saved.length === 0) { container.innerHTML = ''; return; }
+
+  container.innerHTML = '<h3>Saved Connections</h3>' +
+    saved.map((c, i) => `
+      <div class="saved-item" onclick="useSaved(${i})">
+        <span>${c.host}</span>
+        <span class="remove" onclick="event.stopPropagation(); removeSaved(${i})">&#215;</span>
+      </div>
+    `).join('');
+}
+
+function useSaved(index) {
+  const saved = JSON.parse(localStorage.getItem('orion-connections') || '[]');
+  if (saved[index]) {
+    document.getElementById('host-input').value = saved[index].host;
+    document.getElementById('token-input').value = saved[index].token;
+    connect();
+  }
+}
+
+function removeSaved(index) {
+  const saved = JSON.parse(localStorage.getItem('orion-connections') || '[]');
+  saved.splice(index, 1);
+  localStorage.setItem('orion-connections', JSON.stringify(saved));
+  loadSavedConnections();
+}
+
+function saveConnection(host, token) {
+  const saved = JSON.parse(localStorage.getItem('orion-connections') || '[]');
+  const existing = saved.findIndex(c => c.host === host);
+  if (existing >= 0) saved.splice(existing, 1);
+  saved.unshift({ host, token });
+  if (saved.length > 5) saved.length = 5;
+  localStorage.setItem('orion-connections', JSON.stringify(saved));
+}
+
+async function apiFetch(path, options = {}) {
+  const url = `http://${state.host}${path}`;
+  const headers = { 'Authorization': `Bearer ${state.token}`, ...options.headers };
+  if (options.body && typeof options.body === 'object') {
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(options.body);
+  }
+  const res = await fetch(url, { ...options, headers });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function connect() {
+  const host = document.getElementById('host-input').value.trim();
+  const token = document.getElementById('token-input').value.trim();
+  const errEl = document.getElementById('connect-error');
+
+  if (!host || !token) { errEl.textContent = 'Host and token are required'; return; }
+
+  errEl.textContent = '';
+  document.getElementById('connect-btn').disabled = true;
+
+  state.host = host;
+  state.token = token;
+
+  try {
+    state.projects = await apiFetch('/api/projects');
+    saveConnection(host, token);
+
+    // Populate project dropdown
+    const select = document.getElementById('project-select');
+    select.innerHTML = '<option value="">Select a project...</option>' +
+      state.projects.map(p => {
+        const name = p.split('/').pop();
+        return `<option value="${p}">${name}</option>`;
+      }).join('');
+
+    // Show main screen
+    document.getElementById('connect-screen').style.display = 'none';
+    document.getElementById('main-screen').style.display = 'flex';
+
+    // Auto-select first project
+    if (state.projects.length > 0) {
+      select.value = state.projects[0];
+      selectProject();
+    }
+  } catch (e) {
+    errEl.textContent = 'Connection failed: ' + e.message;
+  } finally {
+    document.getElementById('connect-btn').disabled = false;
+  }
+}
+
+function disconnect() {
+  // Close all terminal connections
+  state.tabs.forEach(tab => {
+    if (tab.ws) tab.ws.close();
+    if (tab.terminal) tab.terminal.dispose();
+  });
+  state.tabs = [];
+  state.activeTabId = null;
+  state.selectedProject = null;
+
+  document.getElementById('main-screen').style.display = 'none';
+  document.getElementById('connect-screen').style.display = 'flex';
+  toggleMenu();
+}
+
+// --- Project & Workspace ---
+
+async function selectProject() {
+  const root = document.getElementById('project-select').value;
+  if (!root) return;
+
+  state.selectedProject = root;
+
+  try {
+    state.projectInfo = await apiFetch(`/api/projects/info?root=${encodeURIComponent(root)}`);
+    document.getElementById('header-title').textContent = state.projectInfo.name;
+
+    state.workspaces = await apiFetch(`/api/workspaces?root=${encodeURIComponent(root)}`);
+
+    // Get sessions
+    const wsPaths = state.workspaces.map(w => w.path).join(',');
+    state.sessions = await apiFetch(
+      `/api/sessions?repo=${encodeURIComponent(state.projectInfo.name)}&workspaces=${encodeURIComponent(wsPaths)}`
+    );
+
+    renderWorkspaces();
+  } catch (e) {
+    console.error('Failed to load project:', e);
+  }
+}
+
+function renderWorkspaces() {
+  const container = document.getElementById('workspace-list');
+  container.innerHTML = state.workspaces.map(ws => {
+    const wsSessions = state.sessions.filter(s => s.workspacePath === ws.path);
+    return `
+      <div class="workspace-item">
+        <div class="workspace-header" onclick="toggleWorkspace(this)">
+          <div>
+            <div class="workspace-name">${ws.name}</div>
+            <div class="workspace-branch">${ws.branch}${wsSessions.length ? ` \u00b7 ${wsSessions.length} session${wsSessions.length > 1 ? 's' : ''}` : ''}</div>
+          </div>
+          ${ws.isMain ? '<span class="workspace-main-badge">MAIN</span>' : ''}
+        </div>
+        <div class="workspace-sessions" data-ws-path="${ws.path}">
+          ${wsSessions.map(s => `
+            <div class="session-item" onclick="openSession('${s.tmuxName}', '${escapeAttr(s.label)}')">
+              <span class="session-icon">${s.type === 'shell' ? '\u25b8' : '\u2726'}</span>
+              <span>${s.label}</span>
+            </div>
+          `).join('')}
+          <div class="workspace-actions">
+            <div class="action-btn" onclick="launchShell('${escapeAttr(ws.path)}')">+ Shell</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function escapeAttr(s) {
+  return s.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+function toggleWorkspace(el) {
+  const sessions = el.nextElementSibling;
+  sessions.classList.toggle('expanded');
+}
+
+async function launchShell(workspacePath) {
+  try {
+    const result = await apiFetch('/api/shell', {
+      method: 'POST',
+      body: { repoRoot: state.selectedProject, workspacePath },
+    });
+    // Refresh sessions
+    await selectProject();
+    openSession(result.tmuxSession, 'Shell');
+  } catch (e) {
+    console.error('Failed to launch shell:', e);
+  }
+}
+
+// --- Terminal Tabs ---
+
+function openSession(tmuxSession, label) {
+  // Check if already open
+  const existing = state.tabs.find(t => t.tmuxSession === tmuxSession);
+  if (existing) {
+    activateTab(existing.id);
+    toggleMenu();
+    return;
+  }
+
+  const id = 'tab-' + Date.now();
+  const tab = { id, label, tmuxSession, terminalId: 'web-' + Date.now(), ws: null, terminal: null, fitAddon: null };
+  state.tabs.push(tab);
+  activateTab(id);
+  toggleMenu();
+  connectTerminal(tab);
+}
+
+function activateTab(tabId) {
+  // Hide current terminal
+  if (state.activeTabId) {
+    const current = state.tabs.find(t => t.id === state.activeTabId);
+    if (current && current.terminal) {
+      current.terminal.element.style.display = 'none';
+    }
+  }
+
+  state.activeTabId = tabId;
+  const tab = state.tabs.find(t => t.id === tabId);
+
+  // Show terminal
+  if (tab && tab.terminal) {
+    tab.terminal.element.style.display = '';
+    tab.fitAddon.fit();
+    tab.terminal.focus();
+  }
+
+  document.getElementById('empty-state').style.display = state.tabs.length ? 'none' : '';
+  renderTabs();
+}
+
+function renderTabs() {
+  const bar = document.getElementById('tab-bar');
+  bar.innerHTML = state.tabs.map(t => `
+    <div class="tab ${t.id === state.activeTabId ? 'active' : ''}" onclick="activateTab('${t.id}')">
+      ${t.label}
+      <span class="tab-close" onclick="event.stopPropagation(); closeTab('${t.id}')">&times;</span>
+    </div>
+  `).join('');
+}
+
+function closeTab(tabId) {
+  const tab = state.tabs.find(t => t.id === tabId);
+  if (!tab) return;
+
+  if (tab.ws) tab.ws.close();
+  if (tab.terminal) tab.terminal.dispose();
+
+  state.tabs = state.tabs.filter(t => t.id !== tabId);
+
+  if (state.activeTabId === tabId) {
+    state.activeTabId = state.tabs.length ? state.tabs[state.tabs.length - 1].id : null;
+    if (state.activeTabId) {
+      const next = state.tabs.find(t => t.id === state.activeTabId);
+      if (next && next.terminal) {
+        next.terminal.element.style.display = '';
+        next.fitAddon.fit();
+        next.terminal.focus();
+      }
+    }
+  }
+
+  document.getElementById('empty-state').style.display = state.tabs.length ? 'none' : '';
+  renderTabs();
+}
+
+// --- Terminal Connection ---
+
+function connectTerminal(tab) {
+  const area = document.getElementById('terminal-area');
+
+  // Create xterm.js instance
+  const terminal = new Terminal({
+    theme: {
+      background: '#1e1e1e',
+      foreground: '#d4d4d4',
+      cursor: '#d4d4d4',
+      selectionBackground: 'rgba(108, 182, 255, 0.3)',
+      black: '#1e1e1e',
+      red: '#ff7b72',
+      green: '#7ee787',
+      yellow: '#d29922',
+      blue: '#6cb6ff',
+      magenta: '#d2a8ff',
+      cyan: '#76e3ea',
+      white: '#d4d4d4',
+      brightBlack: '#808080',
+      brightRed: '#ff9c94',
+      brightGreen: '#a5f0b0',
+      brightYellow: '#e8c547',
+      brightBlue: '#8fceff',
+      brightMagenta: '#e0c0ff',
+      brightCyan: '#9aeff0',
+      brightWhite: '#ffffff',
+    },
+    fontFamily: "'Menlo', 'Monaco', 'Courier New', monospace",
+    fontSize: 14,
+    lineHeight: 1.3,
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    scrollback: 0,
+    macOptionIsMeta: false,
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.open(area);
+  fitAddon.fit();
+
+  tab.terminal = terminal;
+  tab.fitAddon = fitAddon;
+
+  // Connect WebSocket
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${state.host}/ws/terminal/${tab.terminalId}?token=${encodeURIComponent(state.token)}&tmux=${encodeURIComponent(tab.tmuxSession)}`;
+
+  const ws = new WebSocket(wsUrl);
+  tab.ws = ws;
+
+  ws.onopen = () => {
+    // Send initial size
+    ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'output' && msg.data) {
+      const binary = atob(msg.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      terminal.write(bytes);
+    } else if (msg.type === 'exit') {
+      closeTab(tab.id);
+    }
+  };
+
+  ws.onclose = () => {
+    // Reconnect or show disconnected state could go here
+  };
+
+  // Terminal input -> WebSocket
+  terminal.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      const bytes = new TextEncoder().encode(data);
+      const binary = Array.from(bytes, b => String.fromCharCode(b)).join('');
+      const encoded = btoa(binary);
+      ws.send(JSON.stringify({ type: 'input', data: encoded }));
+    }
+  });
+
+  // Resize events
+  terminal.onResize(({ cols, rows }) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    }
+  });
+
+  // Handle container resize
+  const ro = new ResizeObserver(() => {
+    if (tab.id === state.activeTabId) fitAddon.fit();
+  });
+  ro.observe(area);
+
+  // Touch scroll for mobile — convert swipe gestures to scroll events
+  let touchStartY = 0;
+  let lastScrollSend = 0;
+  area.addEventListener('touchstart', (e) => {
+    // Don't capture touches on the scroll track
+    if (e.target.closest('.scroll-track')) return;
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  area.addEventListener('touchmove', (e) => {
+    if (e.target.closest('.scroll-track')) return;
+    const now = Date.now();
+    if (now - lastScrollSend < 80) return;
+    lastScrollSend = now;
+
+    const deltaY = touchStartY - e.touches[0].clientY;
+    touchStartY = e.touches[0].clientY;
+
+    if (Math.abs(deltaY) > 5 && ws.readyState === WebSocket.OPEN) {
+      const direction = deltaY > 0 ? 'down' : 'up';
+      const lines = Math.max(1, Math.floor(Math.abs(deltaY) / 20));
+      ws.send(JSON.stringify({ type: 'scroll', data: direction, cols: lines }));
+    }
+  }, { passive: true });
+
+  // Scroll joystick — position from center determines scroll speed
+  const scrollTrack = document.getElementById('scroll-track');
+  const scrollThumb = document.getElementById('scroll-thumb');
+  let scrollDragging = false;
+  let scrollCenterY = 0; // where the drag started (neutral position)
+  let scrollInterval = null;
+
+  scrollTrack.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    scrollDragging = true;
+    scrollCenterY = e.touches[0].clientY;
+    scrollThumb.classList.add('active');
+
+    // Start continuous scroll loop
+    scrollInterval = setInterval(() => {
+      if (!scrollDragging || ws.readyState !== WebSocket.OPEN) return;
+
+      const thumbTop = parseFloat(scrollThumb.style.top) || 50;
+      const trackRect = scrollTrack.getBoundingClientRect();
+      const trackCenter = trackRect.height / 2;
+      const offset = thumbTop - trackCenter; // pixels from center
+      const deadZone = 40; // bigger dead zone — need to pull further to start
+
+      if (Math.abs(offset) < deadZone) return;
+
+      const direction = offset > 0 ? 'down' : 'up';
+      // Slower ramp: need to pull much further for fast scroll
+      const distance = Math.abs(offset) - deadZone;
+      const maxDistance = trackCenter - deadZone;
+      const ratio = Math.min(1, distance / maxDistance);
+      // Quadratic curve — slow at start, fast only at extremes
+      const speed = Math.max(1, Math.ceil(ratio * ratio * 10));
+
+      ws.send(JSON.stringify({ type: 'scroll', data: direction, cols: speed }));
+    }, 80); // slower tick rate
+  });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!scrollDragging) return;
+    e.preventDefault();
+
+    // Move thumb to follow finger
+    const trackRect = scrollTrack.getBoundingClientRect();
+    const currentY = e.touches[0].clientY;
+    const relY = currentY - trackRect.top;
+    const clamped = Math.max(20, Math.min(trackRect.height - 20, relY));
+    scrollThumb.style.top = clamped + 'px';
+    scrollThumb.style.transform = 'translateY(-50%)';
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => {
+    if (scrollDragging) {
+      scrollDragging = false;
+      scrollThumb.classList.remove('active');
+      // Snap thumb back to center
+      scrollThumb.style.top = '50%';
+      if (scrollInterval) {
+        clearInterval(scrollInterval);
+        scrollInterval = null;
+      }
+    }
+  });
+}
+
+// --- Shortcut Buttons ---
+
+function sendKey(key) {
+  const tab = state.tabs.find(t => t.id === state.activeTabId);
+  if (tab && tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+    const bytes = new TextEncoder().encode(key);
+    const binary = Array.from(bytes, b => String.fromCharCode(b)).join('');
+    const encoded = btoa(binary);
+    tab.ws.send(JSON.stringify({ type: 'input', data: encoded }));
+  }
+  // Refocus terminal
+  if (tab && tab.terminal) tab.terminal.focus();
+}
+
+// --- Menu ---
+
+function toggleMenu() {
+  document.getElementById('menu-overlay').classList.toggle('open');
+}
+
+// --- Init ---
+
+window.addEventListener('load', () => {
+  loadSavedConnections();
+
+  // Check for token in URL (from QR code)
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get('token');
+  if (urlToken) {
+    document.getElementById('token-input').value = urlToken;
+    // Try to derive host from current URL
+    document.getElementById('host-input').value = location.host;
+    // Clean URL
+    history.replaceState(null, '', '/');
+  }
+});
+
+// Handle visual viewport changes (mobile keyboard)
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    const tab = state.tabs.find(t => t.id === state.activeTabId);
+    if (tab && tab.fitAddon) {
+      setTimeout(() => tab.fitAddon.fit(), 100);
+    }
+  });
+}
+
+// Register service worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+
+</body>
+</html>

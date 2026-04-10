@@ -19,11 +19,13 @@ import (
 
 // Terminal represents a single terminal session backed by a PTY.
 type Terminal struct {
-	ID          string
-	pty         *os.File
-	cmd         *exec.Cmd
-	done        chan struct{}
-	tmuxSession string // if attached to a tmux session, track it for cleanup
+	ID             string
+	pty            *os.File
+	cmd            *exec.Cmd
+	done           chan struct{}
+	tmuxSession    string         // if attached to a tmux session, track it for cleanup
+	OutputCallback func([]byte)   // if set, output goes here instead of Wails events
+	isGrouped      bool           // true for grouped tmux sessions (web terminals)
 }
 
 // Manager manages multiple terminal sessions.
@@ -180,6 +182,60 @@ func (m *Manager) CreateAttached(id, tmuxSession string) error {
 	return nil
 }
 
+// CreateGroupedAttached creates a grouped tmux session linked to an existing session.
+// This allows independent window sizing (phone won't shrink the desktop terminal).
+// Output goes to the provided callback instead of Wails events.
+func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]byte)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.terminals[id]; exists {
+		return fmt.Errorf("terminal %s already exists", id)
+	}
+
+	// Create a grouped session linked to the target session
+	groupedName := "orion-web-" + id
+	createCmd := exec.Command("tmux", "new-session", "-d", "-s", groupedName, "-t", tmuxSession)
+	if out, err := createCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux grouped session failed: err=%v out=%q", err, strings.TrimSpace(string(out)))
+	}
+	// window-size latest: whichever device is active determines the terminal size
+	exec.Command("tmux", "set-option", "-g", "window-size", "latest").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "aggressive-resize", "on").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "status", "off").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "mouse", "on").Run()
+
+	// Attach to the grouped session
+	cmd := exec.Command("tmux", "attach-session", "-t", groupedName)
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"LC_ALL=en_US.UTF-8",
+		"LC_CTYPE=en_US.UTF-8",
+	)
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		exec.Command("tmux", "kill-session", "-t", groupedName).Run()
+		return fmt.Errorf("failed to attach to grouped tmux session: %w", err)
+	}
+
+	t := &Terminal{
+		ID:             id,
+		pty:            ptmx,
+		cmd:            cmd,
+		done:           make(chan struct{}),
+		tmuxSession:    groupedName,
+		OutputCallback: onOutput,
+		isGrouped:      true,
+	}
+	m.terminals[id] = t
+
+	go m.readLoop(t)
+
+	return nil
+}
+
 // Write sends input data to a terminal.
 func (m *Manager) Write(id string, data string) error {
 	m.mu.RLock()
@@ -326,15 +382,24 @@ func (m *Manager) readLoop(t *Terminal) {
 			n, err := t.pty.Read(buf)
 			if err != nil {
 				// PTY closed or process exited
-				if m.ctx != nil {
+				if t.OutputCallback != nil {
+					t.OutputCallback(nil) // nil signals exit to web handler
+				} else if m.ctx != nil {
 					runtime.EventsEmit(m.ctx, fmt.Sprintf("terminal:exit:%s", t.ID))
 				}
 				return
 			}
-			if n > 0 && m.ctx != nil {
-				// Base64 encode for safe JSON transport
-				encoded := base64.StdEncoding.EncodeToString(buf[:n])
-				runtime.EventsEmit(m.ctx, eventName, encoded)
+			if n > 0 {
+				if t.OutputCallback != nil {
+					// Send raw bytes to callback (web terminal)
+					out := make([]byte, n)
+					copy(out, buf[:n])
+					t.OutputCallback(out)
+				} else if m.ctx != nil {
+					// Base64 encode for safe JSON transport (Wails)
+					encoded := base64.StdEncoding.EncodeToString(buf[:n])
+					runtime.EventsEmit(m.ctx, eventName, encoded)
+				}
 			}
 		}
 	}
