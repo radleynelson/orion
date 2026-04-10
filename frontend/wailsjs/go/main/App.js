@@ -66,6 +66,14 @@ export function GetLastProject() {
   return window['go']['main']['App']['GetLastProject']();
 }
 
+export function GetMobileToken() {
+  return window['go']['main']['App']['GetMobileToken']();
+}
+
+export function GetMobileURL() {
+  return window['go']['main']['App']['GetMobileURL']();
+}
+
 export function GetProjectInfo(arg1) {
   return window['go']['main']['App']['GetProjectInfo'](arg1);
 }
