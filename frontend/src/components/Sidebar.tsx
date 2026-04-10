@@ -358,7 +358,7 @@ export default function Sidebar() {
                   if (project) AllocatePorts(project.root, ws.path, ws.isMain).catch(() => {});
                 }}
               >
-                <span className={`icon ${ws.hasAgent || wsHasServers ? '' : 'inactive'}`}>
+                <span className={`icon ${wsHasServers ? '' : ws.hasAgent ? 'agent-only' : 'inactive'}`}>
                   {ws.isMain ? '◉' : ws.hasAgent || wsHasServers ? '●' : '○'}
                 </span>
                 <span className="label">{ws.isMain ? 'main' : (project ? ws.name.replace(project.name + '-', '') : ws.name)}</span>

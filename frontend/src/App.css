@@ -198,6 +198,9 @@
 .sidebar-item .icon.inactive {
   color: var(--text-muted);
 }
+.sidebar-item .icon.agent-only {
+  color: var(--accent-yellow, #d29922);
+}
 
 .sidebar-item .label {
   flex: 1;
