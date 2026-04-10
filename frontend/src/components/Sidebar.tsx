@@ -147,14 +147,18 @@ export default function Sidebar() {
   const handleCreate = useCallback(async () => {
     if (!project || !newName.trim()) return;
     try {
-      await CreateWorkspace(project.root, newName.trim());
+      const ws = await CreateWorkspace(project.root, newName.trim());
       setNewName('');
       setCreating(false);
       await refreshWorkspaces();
+      if (ws?.path) {
+        setActiveWorkspace(ws.path);
+        AllocatePorts(project.root, ws.path, false).catch(() => {});
+      }
     } catch (err) {
       console.error('Failed to create workspace:', err);
     }
-  }, [project, newName, refreshWorkspaces]);
+  }, [project, newName, refreshWorkspaces, setActiveWorkspace]);
 
   const handleDelete = useCallback(async (path: string) => {
     if (!project) return;
@@ -468,6 +472,9 @@ export default function Sidebar() {
           <div style={{ padding: '4px 12px' }}>
             <input
               autoFocus
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               className="sidebar-input"
               placeholder="branch-name"
               value={newName}

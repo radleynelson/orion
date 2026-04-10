@@ -56,8 +56,8 @@ export function createTerminal(
     cursorWidth: 2,
     scrollback: 0, // tmux handles scrollback; 0 prevents xterm.js from intercepting wheel events
     allowProposedApi: true,
-    macOptionIsMeta: false, // false so Option+click works for text selection
-    macOptionClickForcesSelection: true,
+    macOptionIsMeta: true, // true so Option+Arrow does word navigation
+    macOptionClickForcesSelection: true, // keeps Option+click text selection working
   });
 
   const fitAddon = new FitAddon();
@@ -83,6 +83,13 @@ export function createTerminal(
 
   fitAddon.fit();
 
+  // Helper to send a raw escape sequence to the PTY
+  const sendSeq = (seq: string) => {
+    const bytes = new TextEncoder().encode(seq);
+    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+    EventsEmit('terminal:input', terminalId, btoa(binary));
+  };
+
   // Handle keyboard shortcuts that the Wails webview doesn't route natively
   terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
@@ -90,11 +97,15 @@ export function createTerminal(
     // Shift+Enter: send distinct escape sequence so Claude Code can
     // differentiate it from Enter (new line vs submit)
     if (e.key === 'Enter' && e.shiftKey) {
-      const seq = '\x1b[13;2u';
-      const bytes = new TextEncoder().encode(seq);
-      const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
-      EventsEmit('terminal:input', terminalId, btoa(binary));
+      sendSeq('\x1b[13;2u');
       return false;
+    }
+
+    // Option+Arrow: word navigation
+    if (e.altKey && !e.metaKey && !e.ctrlKey) {
+      if (e.key === 'ArrowLeft') { sendSeq('\x1bb'); return false; }  // word backward
+      if (e.key === 'ArrowRight') { sendSeq('\x1bf'); return false; } // word forward
+      if (e.key === 'Backspace') { sendSeq('\x17'); return false; }   // delete word backward
     }
 
     return true;
