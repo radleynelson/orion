@@ -252,6 +252,37 @@
       height: 100%;
     }
 
+    /* Mobile scroll handle */
+    .scroll-track {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 24px;
+      height: 100%;
+      z-index: 10;
+      touch-action: none;
+    }
+
+    .scroll-thumb {
+      position: absolute;
+      right: 4px;
+      width: 16px;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      transition: background 0.15s;
+    }
+
+    .scroll-thumb.active {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .scroll-track:hover .scroll-thumb {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
     .empty-state {
       display: flex;
       align-items: center;
@@ -474,6 +505,9 @@
 
   <div class="terminal-area" id="terminal-area">
     <div class="empty-state" id="empty-state">Select a session from the menu</div>
+    <div class="scroll-track" id="scroll-track">
+      <div class="scroll-thumb" id="scroll-thumb"></div>
+    </div>
   </div>
 
   <div class="shortcut-bar">
@@ -887,12 +921,15 @@ function connectTerminal(tab) {
   let touchStartY = 0;
   let lastScrollSend = 0;
   area.addEventListener('touchstart', (e) => {
+    // Don't capture touches on the scroll track
+    if (e.target.closest('.scroll-track')) return;
     touchStartY = e.touches[0].clientY;
   }, { passive: true });
 
   area.addEventListener('touchmove', (e) => {
+    if (e.target.closest('.scroll-track')) return;
     const now = Date.now();
-    if (now - lastScrollSend < 80) return; // throttle
+    if (now - lastScrollSend < 80) return;
     lastScrollSend = now;
 
     const deltaY = touchStartY - e.touches[0].clientY;
@@ -904,6 +941,70 @@ function connectTerminal(tab) {
       ws.send(JSON.stringify({ type: 'scroll', data: direction, cols: lines }));
     }
   }, { passive: true });
+
+  // Scroll joystick — position from center determines scroll speed
+  const scrollTrack = document.getElementById('scroll-track');
+  const scrollThumb = document.getElementById('scroll-thumb');
+  let scrollDragging = false;
+  let scrollCenterY = 0; // where the drag started (neutral position)
+  let scrollInterval = null;
+
+  scrollTrack.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    scrollDragging = true;
+    scrollCenterY = e.touches[0].clientY;
+    scrollThumb.classList.add('active');
+
+    // Start continuous scroll loop
+    scrollInterval = setInterval(() => {
+      if (!scrollDragging || ws.readyState !== WebSocket.OPEN) return;
+
+      const thumbTop = parseFloat(scrollThumb.style.top) || 50;
+      const trackRect = scrollTrack.getBoundingClientRect();
+      const trackCenter = trackRect.height / 2;
+      const offset = thumbTop - trackCenter; // pixels from center
+      const deadZone = 40; // bigger dead zone — need to pull further to start
+
+      if (Math.abs(offset) < deadZone) return;
+
+      const direction = offset > 0 ? 'down' : 'up';
+      // Slower ramp: need to pull much further for fast scroll
+      const distance = Math.abs(offset) - deadZone;
+      const maxDistance = trackCenter - deadZone;
+      const ratio = Math.min(1, distance / maxDistance);
+      // Quadratic curve — slow at start, fast only at extremes
+      const speed = Math.max(1, Math.ceil(ratio * ratio * 10));
+
+      ws.send(JSON.stringify({ type: 'scroll', data: direction, cols: speed }));
+    }, 80); // slower tick rate
+  });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!scrollDragging) return;
+    e.preventDefault();
+
+    // Move thumb to follow finger
+    const trackRect = scrollTrack.getBoundingClientRect();
+    const currentY = e.touches[0].clientY;
+    const relY = currentY - trackRect.top;
+    const clamped = Math.max(20, Math.min(trackRect.height - 20, relY));
+    scrollThumb.style.top = clamped + 'px';
+    scrollThumb.style.transform = 'translateY(-50%)';
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => {
+    if (scrollDragging) {
+      scrollDragging = false;
+      scrollThumb.classList.remove('active');
+      // Snap thumb back to center
+      scrollThumb.style.top = '50%';
+      if (scrollInterval) {
+        clearInterval(scrollInterval);
+        scrollInterval = null;
+      }
+    }
+  });
 }
 
 // --- Shortcut Buttons ---
