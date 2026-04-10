@@ -199,8 +199,11 @@ func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux grouped session failed: err=%v out=%q", err, strings.TrimSpace(string(out)))
 	}
+	// window-size latest: whichever device is active determines the terminal size
+	exec.Command("tmux", "set-option", "-g", "window-size", "latest").Run()
 	exec.Command("tmux", "set-option", "-t", groupedName, "aggressive-resize", "on").Run()
 	exec.Command("tmux", "set-option", "-t", groupedName, "status", "off").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "mouse", "on").Run()
 
 	// Attach to the grouped session
 	cmd := exec.Command("tmux", "attach-session", "-t", groupedName)

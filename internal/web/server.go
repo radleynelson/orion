@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ type AppAPI interface {
 	GetProjectInfo(path string) (*workspace.ProjectInfo, error)
 	ListWorkspaces(repoRoot string) ([]workspace.Workspace, error)
 	RecoverSessions(repoName string, workspacePaths []string) []state.SessionInfo
+	GetSavedTabs() []state.SavedTab
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
 	LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error)
 }
@@ -204,6 +206,24 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		paths = strings.Split(wsParam, ",")
 	}
 	sessions := s.app.RecoverSessions(repo, paths)
+
+	// Enrich with saved tab labels (so phone shows "Claude" instead of "Shell")
+	savedTabs := s.app.GetSavedTabs()
+	tabLabels := make(map[string]string) // tmuxSession -> label
+	tabTypes := make(map[string]string)  // tmuxSession -> tabType
+	for _, t := range savedTabs {
+		tabLabels[t.TmuxSession] = t.Label
+		tabTypes[t.TmuxSession] = t.TabType
+	}
+	for i, sess := range sessions {
+		if label, ok := tabLabels[sess.TmuxName]; ok {
+			sessions[i].Label = label
+		}
+		if tabType, ok := tabTypes[sess.TmuxName]; ok {
+			sessions[i].Type = tabType
+		}
+	}
+
 	writeJSON(w, sessions)
 }
 
@@ -335,11 +355,13 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	// Clean up on disconnect
 	defer s.termMgr.Close(terminalID)
 
+	groupedName := "orion-web-" + terminalID
+	firstResize := true
+
 	// Read messages from the client
 	for {
 		var msg wsMessage
 		if err := conn.ReadJSON(&msg); err != nil {
-			// Client disconnected
 			break
 		}
 
@@ -349,6 +371,30 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		case "resize":
 			if msg.Cols > 0 && msg.Rows > 0 {
 				s.termMgr.Resize(terminalID, msg.Cols, msg.Rows)
+			}
+			// After first resize, force tmux to redraw at the phone's size
+			if firstResize {
+				firstResize = false
+				go func() {
+					time.Sleep(150 * time.Millisecond)
+					// Force tmux to refresh the client at the new size
+					exec.Command("tmux", "refresh-client", "-t", groupedName).Run()
+				}()
+			}
+		case "scroll":
+			// Mobile touch scroll — send mouse wheel events to tmux
+			direction := msg.Data // "up" or "down"
+			lines := msg.Cols    // reuse cols field for line count
+			if lines <= 0 {
+				lines = 3
+			}
+			button := 65 // scroll down
+			if direction == "up" {
+				button = 64
+			}
+			for i := 0; i < lines; i++ {
+				seq := fmt.Sprintf("\x1b[<%d;1;1M", button)
+				s.termMgr.Write(terminalID, base64.StdEncoding.EncodeToString([]byte(seq)))
 			}
 		}
 	}
