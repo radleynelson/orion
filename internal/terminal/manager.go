@@ -109,6 +109,9 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 	exec.Command("tmux", "set-option", "-t", tmuxName, "history-limit", "50000").Run()
 	exec.Command("tmux", "set-option", "-t", tmuxName, "mouse", "on").Run()
 	exec.Command("tmux", "set-option", "-t", tmuxName, "status", "off").Run()
+	exec.Command("tmux", "set-option", "-t", tmuxName, "set-clipboard", "on").Run()
+	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
+	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 
 	// Source .orion/env.sh if it exists
 	envFile := filepath.Join(dir, ".orion", "env.sh")

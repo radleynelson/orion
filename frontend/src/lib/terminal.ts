@@ -55,7 +55,7 @@ export function createTerminal(
     cursorBlink: true,
     cursorStyle: 'bar',
     cursorWidth: 2,
-    scrollback: 0, // tmux handles scrollback; 0 prevents xterm.js from intercepting wheel events
+    scrollback: 0, // tmux handles scrollback
     allowProposedApi: true,
     macOptionIsMeta: true, // true so Option+Arrow does word navigation
     macOptionClickForcesSelection: true, // keeps Option+click text selection working

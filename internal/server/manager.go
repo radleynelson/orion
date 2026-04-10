@@ -345,6 +345,9 @@ func createTmuxSession(name, workDir string) error {
 	exec.Command("tmux", "set-option", "-t", name, "history-limit", "50000").Run()
 	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()
 	exec.Command("tmux", "set-option", "-t", name, "status", "off").Run()
+	exec.Command("tmux", "set-option", "-t", name, "set-clipboard", "on").Run()
+	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
+	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	return nil
 }
 
