@@ -1,8 +1,9 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { EventsOn, EventsEmit } from '../../wailsjs/runtime/runtime';
+import { EventsOn, EventsEmit, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 
 // Warp-inspired dark theme for xterm.js
 const THEME = {
@@ -81,6 +82,11 @@ export function createTerminal(
     console.warn('WebGL addon failed, falling back to canvas renderer');
   }
 
+  // Clickable links — Cmd+click opens in default browser
+  terminal.loadAddon(new WebLinksAddon((e, url) => {
+    if (e.metaKey) BrowserOpenURL(url);
+  }));
+
   fitAddon.fit();
 
   // Helper to send a raw escape sequence to the PTY
@@ -145,40 +151,35 @@ export function createTerminal(
   };
   container.addEventListener('copy', copyHandler);
 
-  // Alternate screen mouse handling for TUI apps (Claude Code, Codex, vim, etc.)
-  // - Wheel events: sent as SGR mouse sequences so the app can scroll
-  // - Click/drag events: blocked from PTY so text selection works without
-  //   the app snapping back to bottom on mousedown
+  // Mouse scroll handling — sends SGR mouse sequences so tmux can scroll
+  // in both alternate screen (TUI apps) and normal buffer (server logs).
   const el = container;
 
   let lastScrollTime = 0;
-  const scrollThrottleMs = 50; // minimum ms between scroll events
+  const scrollThrottleMs = 16; // minimum ms between scroll events (~60fps)
 
   const wheelHandler = (e: WheelEvent) => {
-    const buffer = terminal.buffer.active;
-    if (buffer.type === 'alternate') {
-      e.preventDefault();
-      e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
 
-      // Throttle scroll events to control speed
-      const now = Date.now();
-      if (now - lastScrollTime < scrollThrottleMs) return;
-      lastScrollTime = now;
+    // Throttle scroll events to control speed
+    const now = Date.now();
+    if (now - lastScrollTime < scrollThrottleMs) return;
+    lastScrollTime = now;
 
-      const rect = el.getBoundingClientRect();
-      const cellWidth = rect.width / terminal.cols;
-      const cellHeight = rect.height / terminal.rows;
-      const col = Math.min(terminal.cols, Math.max(1, Math.floor((e.clientX - rect.left) / cellWidth) + 1));
-      const row = Math.min(terminal.rows, Math.max(1, Math.floor((e.clientY - rect.top) / cellHeight) + 1));
+    const rect = el.getBoundingClientRect();
+    const cellWidth = rect.width / terminal.cols;
+    const cellHeight = rect.height / terminal.rows;
+    const col = Math.min(terminal.cols, Math.max(1, Math.floor((e.clientX - rect.left) / cellWidth) + 1));
+    const row = Math.min(terminal.rows, Math.max(1, Math.floor((e.clientY - rect.top) / cellHeight) + 1));
 
-      const button = e.deltaY < 0 ? 64 : 65;
-      const lines = 1; // one line per throttled event
-      for (let i = 0; i < lines; i++) {
-        const seq = `\x1b[<${button};${col};${row}M`;
-        const bytes = new TextEncoder().encode(seq);
-        const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
-        EventsEmit('terminal:input', terminalId, btoa(binary));
-      }
+    const button = e.deltaY < 0 ? 64 : 65;
+    const lines = 1; // lines per throttled event
+    for (let i = 0; i < lines; i++) {
+      const seq = `\x1b[<${button};${col};${row}M`;
+      const bytes = new TextEncoder().encode(seq);
+      const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+      EventsEmit('terminal:input', terminalId, btoa(binary));
     }
   };
   // Use capture phase so we intercept before xterm.js's internal handlers

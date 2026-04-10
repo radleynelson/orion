@@ -425,7 +425,10 @@ export default function Sidebar() {
                   {/* Server port display */}
                   {wsStatuses.length > 0 && (
                     <div className="sidebar-servers">
-                      {wsStatuses.map((srv) => (
+                      {[...wsStatuses].sort((a, b) => {
+                        const order: Record<string, number> = { frontend: 0, backend: 1, sidekiq: 2 };
+                        return (order[a.name] ?? 99) - (order[b.name] ?? 99);
+                      }).map((srv) => (
                         <div key={srv.name} className="sidebar-server">
                           <span className={`server-dot ${srv.running ? 'running' : 'stopped'}`}>●</span>
                           <span className="server-name">{srv.name}</span>

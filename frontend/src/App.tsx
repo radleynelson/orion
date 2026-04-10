@@ -192,7 +192,10 @@ function App() {
   }, []);
 
   const activeTabs = tabs.filter((t) => t.workspacePath === activeWorkspacePath);
-  const activeServerTabs = serverTabs.filter((t) => t.workspacePath === activeWorkspacePath);
+  const serverOrder: Record<string, number> = { frontend: 0, backend: 1, sidekiq: 2 };
+  const activeServerTabs = serverTabs
+    .filter((t) => t.workspacePath === activeWorkspacePath)
+    .sort((a, b) => (serverOrder[a.label?.toLowerCase() ?? ''] ?? 99) - (serverOrder[b.label?.toLowerCase() ?? ''] ?? 99));
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
