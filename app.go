@@ -16,6 +16,7 @@ import (
 	"orion/internal/state"
 	"orion/internal/terminal"
 	"orion/internal/watcher"
+	"orion/internal/web"
 	"orion/internal/workspace"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -32,6 +33,7 @@ type App struct {
 	filesMgr   *files.Manager
 	gitMgr     *git.Manager
 	watcherMgr *watcher.Manager
+	webSrv     *web.Server
 }
 
 // NewApp creates a new App instance.
@@ -74,6 +76,10 @@ func (a *App) startup(ctx context.Context) {
 	home, _ := os.UserHomeDir()
 	os.RemoveAll(filepath.Join(home, "Library", "Saved Application State", "com.wails.Orion.savedState"))
 
+	// Start mobile companion web server
+	a.webSrv = web.NewServer(a, a.termMgr)
+	go a.webSrv.Start(9867)
+
 	wailsRuntime.EventsOn(ctx, "terminal:input", func(optionalData ...interface{}) {
 		if len(optionalData) < 2 {
 			return
@@ -104,6 +110,10 @@ func (a *App) domReady(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Stop mobile companion web server
+	if a.webSrv != nil {
+		a.webSrv.Stop()
+	}
 	// Detach from PTYs but keep tmux sessions alive for recovery on next launch
 	a.termMgr.DetachAll()
 	a.watcherMgr.Stop()
@@ -340,6 +350,22 @@ func (a *App) GetSavedTabs() []state.SavedTab {
 		}
 	}
 	return alive
+}
+
+// --- Mobile companion methods ---
+
+func (a *App) GetMobileURL() string {
+	if a.webSrv != nil {
+		return a.webSrv.GetConnectionURL()
+	}
+	return ""
+}
+
+func (a *App) GetMobileToken() string {
+	if a.webSrv != nil {
+		return a.webSrv.GetToken()
+	}
+	return ""
 }
 
 // --- Agent methods ---

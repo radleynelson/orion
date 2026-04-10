@@ -40,6 +40,10 @@ export function GetFileDiff(arg1:string,arg2:string):Promise<git.FileDiff>;
 
 export function GetLastProject():Promise<string>;
 
+export function GetMobileToken():Promise<string>;
+
+export function GetMobileURL():Promise<string>;
+
 export function GetProjectInfo(arg1:string):Promise<workspace.ProjectInfo>;
 
 export function GetProjectInfoFromCwd():Promise<workspace.ProjectInfo>;

@@ -1,0 +1,16 @@
+{
+  "name": "Orion Mobile",
+  "short_name": "Orion",
+  "description": "Mobile companion for Orion workspace manager",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2d2d2d",
+  "theme_color": "#2d2d2d",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232d2d2d'/%3E%3Ctext x='50' y='62' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='32' fill='%236cb6ff'%3EORION%3C/text%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
