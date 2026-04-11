@@ -58,6 +58,10 @@ type Server struct {
 	port    int
 
 	upgrader websocket.Upgrader
+
+	// Voice mode: connected iOS clients listening for Claude responses
+	voiceClients   []*websocket.Conn
+	voiceClientsMu sync.Mutex
 }
 
 // NewServer creates a new web server instance.
@@ -95,6 +99,10 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/servers/start", s.authMiddleware(s.handleServersStart))
 	mux.HandleFunc("/api/servers/stop", s.authMiddleware(s.handleServersStop))
 	mux.HandleFunc("/api/kill-session", s.authMiddleware(s.handleKillSession))
+
+	// Voice mode routes
+	mux.HandleFunc("/api/voice/response", s.authMiddleware(s.handleVoiceResponse))
+	mux.HandleFunc("/ws/voice", s.handleVoiceWS)
 
 	// WebSocket route
 	mux.HandleFunc("/ws/terminal/", s.handleTerminalWS)
@@ -488,6 +496,96 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 	}
 	exec.Command("tmux", "kill-session", "-t", req.TmuxSession).Run()
 	writeJSON(w, map[string]string{"status": "killed"})
+}
+
+// --- Voice Mode ---
+
+// handleVoiceResponse receives Claude's response text from the Stop hook
+// and broadcasts it to all connected voice WebSocket clients.
+func (s *Server) handleVoiceResponse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Text    string `json:"text"`
+		Session string `json:"session"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Text == "" {
+		http.Error(w, "text required", http.StatusBadRequest)
+		return
+	}
+
+	msg, _ := json.Marshal(map[string]string{
+		"type":    "voice",
+		"text":    req.Text,
+		"session": req.Session,
+	})
+
+	s.voiceClientsMu.Lock()
+	var alive []*websocket.Conn
+	for _, c := range s.voiceClients {
+		if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
+			c.Close()
+		} else {
+			alive = append(alive, c)
+		}
+	}
+	s.voiceClients = alive
+	s.voiceClientsMu.Unlock()
+
+	log.Printf("[Orion Voice] Broadcast to %d client(s): %d chars", len(alive), len(req.Text))
+	writeJSON(w, map[string]string{"status": "ok", "clients": fmt.Sprintf("%d", len(alive))})
+}
+
+// handleVoiceWS upgrades to a WebSocket for streaming voice messages to the iOS app.
+func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
+	// Auth check
+	token := r.URL.Query().Get("token")
+	auth := r.Header.Get("Authorization")
+	if token != s.token && !(strings.HasPrefix(auth, "Bearer ") && strings.TrimPrefix(auth, "Bearer ") == s.token) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[Orion Voice] WebSocket upgrade failed: %v", err)
+		return
+	}
+
+	s.voiceClientsMu.Lock()
+	s.voiceClients = append(s.voiceClients, conn)
+	count := len(s.voiceClients)
+	s.voiceClientsMu.Unlock()
+
+	log.Printf("[Orion Voice] Client connected (%d total)", count)
+
+	// Keep the connection alive by reading (and discarding) client messages.
+	// The client may send control messages like {"type":"ping"} or voice mode toggles.
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+
+	// Remove from voice clients on disconnect
+	s.voiceClientsMu.Lock()
+	for i, c := range s.voiceClients {
+		if c == conn {
+			s.voiceClients = append(s.voiceClients[:i], s.voiceClients[i+1:]...)
+			break
+		}
+	}
+	count = len(s.voiceClients)
+	s.voiceClientsMu.Unlock()
+
+	log.Printf("[Orion Voice] Client disconnected (%d remaining)", count)
 }
 
 // --- WebSocket Terminal Handler ---

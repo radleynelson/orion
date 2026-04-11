@@ -21,6 +21,7 @@
 		CD8CDA4B9576ED470E7C502A /* OrionTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9368DF7C524A5E17889C7431 /* OrionTheme.swift */; };
 		D9EDD58BEE70D34C70574844 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2155A4F7BB9FE1CC4B9D48BF /* KeychainService.swift */; };
 		E4617AFB806910B52E99E07B /* OrionMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2487ED338576B04F9B132B5 /* OrionMobileApp.swift */; };
+		F1A2B3C4D5E6F70891234567 /* VoiceConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F607189ABCDEF0 /* VoiceConnection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +41,7 @@
 		E31AE562E83C275EEDFEA5BB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E97D2259AFF585FE690720B3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F2487ED338576B04F9B132B5 /* OrionMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionMobileApp.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F607189ABCDEF0 /* VoiceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceConnection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +92,7 @@
 				AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */,
 				C3FC0DF96360A36DED8150A9 /* SpeechService.swift */,
 				C6F028C8077632CBF28D5615 /* TerminalConnection.swift */,
+				A1B2C3D4E5F607189ABCDEF0 /* VoiceConnection.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -200,6 +203,7 @@
 				080275BB3E474289DD894969 /* TerminalConnection.swift in Sources */,
 				0964C3CA7EE6A359D4E79F8C /* TerminalContainerView.swift in Sources */,
 				8ECAD5BE17F739E1127DF41D /* TerminalToolbar.swift in Sources */,
+				F1A2B3C4D5E6F70891234567 /* VoiceConnection.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

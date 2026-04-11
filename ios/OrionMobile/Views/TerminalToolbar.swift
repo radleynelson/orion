@@ -13,6 +13,7 @@ struct TerminalToolbar: View {
             Divider().frame(height: 24).background(OrionTheme.border)
             KeyboardButton()
             MicButton()
+            VoiceModeButton()
             SpeakerButton()
         }
         .padding(.horizontal, 4).padding(.bottom, safeAreaBottom).frame(minHeight: 44)
@@ -74,6 +75,21 @@ struct MicButton: View {
                 .foregroundStyle(state.speech.isListening ? OrionTheme.accentRed : OrionTheme.textSecondary)
                 .frame(width: 36, height: 32).background(state.speech.isListening ? OrionTheme.bgActive : OrionTheme.bgSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(state.speech.isListening ? OrionTheme.accentRed : OrionTheme.border, lineWidth: 0.5))
+        }
+    }
+}
+
+struct VoiceModeButton: View {
+    @Environment(AppState.self) private var state
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            state.toggleVoiceMode()
+        } label: {
+            Image(systemName: state.voiceModeEnabled ? "waveform.circle.fill" : "waveform.circle").font(.system(size: 16))
+                .foregroundStyle(state.voiceModeEnabled ? OrionTheme.accentPurple : OrionTheme.textSecondary)
+                .frame(width: 36, height: 32).background(state.voiceModeEnabled ? OrionTheme.bgActive : OrionTheme.bgSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(state.voiceModeEnabled ? OrionTheme.accentPurple : OrionTheme.border, lineWidth: 0.5))
         }
     }
 }

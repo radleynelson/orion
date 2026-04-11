@@ -28,6 +28,8 @@ final class AppState {
     var connections: [String: TerminalConnection] = [:]
     let bonjour = BonjourDiscovery()
     let speech = SpeechService()
+    let voiceConnection = VoiceConnection()
+    var voiceModeEnabled = false
     var showWorkspaces = false
     var showSettings = false
     var connectionError: String?
@@ -42,13 +44,36 @@ final class AppState {
         var saved = KeychainService.loadConnections(); saved.removeAll { $0.host == host }
         saved.insert(SavedConnection(host: host, token: token, name: nil), at: 0)
         if saved.count > 5 { saved = Array(saved.prefix(5)) }; KeychainService.saveConnections(saved)
+        // Connect voice WebSocket (always connected, but only speaks when voice mode is on)
+        connectVoice()
         if let first = projects.first { try await selectProject(first) }
     }
 
     func disconnect() {
+        voiceConnection.disconnect()
         for (_, conn) in connections { conn.disconnect() }
         connections.removeAll(); tabs.removeAll(); activeTabId = nil; client = nil; isConnected = false
         selectedProject = nil; projectInfo = nil; workspaces = []; sessions = []
+    }
+
+    func connectVoice() {
+        voiceConnection.onVoiceText = { [weak self] text, session in
+            guard let self, self.voiceModeEnabled else { return }
+            // TODO: Filter by active session once we reliably get tmux session names from hooks.
+            // For now, read all Claude responses when voice mode is on.
+            let rate = UserDefaults.standard.double(forKey: "ttsRate")
+            self.speech.speakResponse(text, rate: Float(rate > 0 ? rate : 0.52))
+        }
+        voiceConnection.connect(host: host, token: token)
+    }
+
+    func toggleVoiceMode() {
+        voiceModeEnabled.toggle()
+        if !voiceModeEnabled { speech.stopSpeaking() }
+        // Reconnect voice WS if disconnected
+        if voiceModeEnabled && !voiceConnection.isConnected {
+            connectVoice()
+        }
     }
 
     func selectProject(_ root: String) async throws {
