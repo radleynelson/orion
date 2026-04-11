@@ -41,6 +41,9 @@ actor OrionClient {
         let _: [String: String] = try await post("/api/servers/stop", body: ["workspacePath": workspacePath])
     }
 
+    // Config
+    func getConfig() async throws -> AppConfig { try await get("/api/config") }
+
     // Kill a tmux session
     func killSession(tmuxSession: String) async throws {
         let _: [String: String] = try await post("/api/kill-session", body: ["tmuxSession": tmuxSession])

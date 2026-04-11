@@ -44,8 +44,16 @@ final class AppState {
         var saved = KeychainService.loadConnections(); saved.removeAll { $0.host == host }
         saved.insert(SavedConnection(host: host, token: token, name: nil), at: 0)
         if saved.count > 5 { saved = Array(saved.prefix(5)) }; KeychainService.saveConnections(saved)
-        // Connect voice WebSocket (always connected, but only speaks when voice mode is on)
+        // Connect voice WebSocket and fetch config
         connectVoice()
+        do {
+            let config = try await client.getConfig()
+            let key = config.openaiApiKey ?? ""
+            speech.openAIApiKey = key
+            print("[Orion Voice] Fetched OpenAI key: \(key.isEmpty ? "EMPTY" : "\(key.prefix(12))... (\(key.count) chars)")")
+        } catch {
+            print("[Orion Voice] Failed to fetch config: \(error)")
+        }
         if let first = projects.first { try await selectProject(first) }
     }
 

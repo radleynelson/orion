@@ -92,6 +92,10 @@ struct StartServersRequest: Codable {
     let isMain: Bool
 }
 
+struct AppConfig: Codable {
+    let openaiApiKey: String?
+}
+
 // MARK: - WebSocket Message Types
 
 struct WSMessage: Codable {

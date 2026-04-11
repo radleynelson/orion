@@ -102,6 +102,7 @@ func (s *Server) Start(port int) error {
 
 	// Voice mode routes
 	mux.HandleFunc("/api/voice/response", s.authMiddleware(s.handleVoiceResponse))
+	mux.HandleFunc("/api/config", s.authMiddleware(s.handleConfig))
 	mux.HandleFunc("/ws/voice", s.handleVoiceWS)
 
 	// WebSocket route
@@ -496,6 +497,20 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 	}
 	exec.Command("tmux", "kill-session", "-t", req.TmuxSession).Run()
 	writeJSON(w, map[string]string{"status": "killed"})
+}
+
+// --- Config ---
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	home, _ := os.UserHomeDir()
+	apiKey, _ := os.ReadFile(filepath.Join(home, ".orion", "openai-api-key"))
+	writeJSON(w, map[string]string{
+		"openaiApiKey": strings.TrimSpace(string(apiKey)),
+	})
 }
 
 // --- Voice Mode ---
