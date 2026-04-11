@@ -38,6 +38,14 @@ export function DiscardFileChanges(arg1, arg2) {
   return window['go']['main']['App']['DiscardFileChanges'](arg1, arg2);
 }
 
+export function EmitSessionCreated(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['EmitSessionCreated'](arg1, arg2, arg3, arg4);
+}
+
+export function GetAgentNames(arg1) {
+  return window['go']['main']['App']['GetAgentNames'](arg1);
+}
+
 export function GetAgentTypes(arg1) {
   return window['go']['main']['App']['GetAgentTypes'](arg1);
 }

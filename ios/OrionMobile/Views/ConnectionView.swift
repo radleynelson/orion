@@ -5,6 +5,7 @@ struct ConnectionView: View {
     @State private var host = ""
     @State private var token = ""
     @State private var isConnecting = false
+    @State private var didAutoConnect = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,13 +61,35 @@ struct ConnectionView: View {
         }.background(OrionTheme.bgPrimary)
         .onAppear {
             state.bonjour.startBrowsing()
-            if let first = KeychainService.loadConnections().first { host = first.host; token = first.token }
+
+            // Load last connection from UserDefaults (survives simulator rebuilds)
+            let defaults = UserDefaults.standard
+            if let savedHost = defaults.string(forKey: "lastHost"), !savedHost.isEmpty,
+               let savedToken = defaults.string(forKey: "lastToken"), !savedToken.isEmpty {
+                host = savedHost
+                token = savedToken
+                // Auto-connect if we have saved credentials
+                if !didAutoConnect {
+                    didAutoConnect = true
+                    Task { await connectTapped() }
+                }
+            } else if let first = KeychainService.loadConnections().first {
+                host = first.host
+                token = first.token
+            }
         }
     }
 
     private func connectTapped() async {
         isConnecting = true; state.connectionError = nil
-        do { try await state.connect(host: host, token: token) } catch { state.connectionError = error.localizedDescription }
+        do {
+            try await state.connect(host: host, token: token)
+            // Persist to UserDefaults for quick reconnect after rebuild
+            UserDefaults.standard.set(host, forKey: "lastHost")
+            UserDefaults.standard.set(token, forKey: "lastToken")
+        } catch {
+            state.connectionError = error.localizedDescription
+        }
         isConnecting = false
     }
 }

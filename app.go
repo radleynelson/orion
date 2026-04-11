@@ -368,6 +368,24 @@ func (a *App) GetMobileToken() string {
 	return ""
 }
 
+func (a *App) EmitSessionCreated(tmuxSession string, sessionType string, label string, workspacePath string) {
+	wailsRuntime.EventsEmit(a.ctx, "mobile:session-created", map[string]string{
+		"tmuxSession":   tmuxSession,
+		"type":          sessionType,
+		"label":         label,
+		"workspacePath": workspacePath,
+	})
+}
+
+func (a *App) GetAgentNames(repoRoot string) []web.AgentType {
+	cfg := config.Load(repoRoot)
+	var agents []web.AgentType
+	for name := range cfg.Agents {
+		agents = append(agents, web.AgentType{Name: name, Label: capitalize(name)})
+	}
+	return agents
+}
+
 // --- Agent methods ---
 
 func (a *App) GetAgentTypes(repoRoot string) []AgentTypeInfo {

@@ -280,6 +280,25 @@ export namespace state {
 
 }
 
+export namespace web {
+	
+	export class AgentType {
+	    name: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentType(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.label = source["label"];
+	    }
+	}
+
+}
+
 export namespace workspace {
 	
 	export class ProjectInfo {

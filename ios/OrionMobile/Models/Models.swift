@@ -68,6 +68,30 @@ struct DiscoveredHost: Identifiable {
     var address: String { "\(host):\(port)" }
 }
 
+struct ServerStatus: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let port: Int
+    let running: Bool
+    let tmuxSession: String
+}
+
+struct AgentType: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let label: String
+}
+
+struct LaunchAgentResponse: Codable {
+    let tmuxSession: String
+}
+
+struct StartServersRequest: Codable {
+    let repoRoot: String
+    let workspacePath: String
+    let isMain: Bool
+}
+
 // MARK: - WebSocket Message Types
 
 struct WSMessage: Codable {

@@ -19,6 +19,10 @@ final class AppState {
     var projectInfo: ProjectInfo?
     var workspaces: [Workspace] = []
     var sessions: [SessionInfo] = []
+    var agentTypes: [AgentType] = []
+    // Track sessions launched from the phone with their correct types/labels
+    // so refreshSessions doesn't overwrite them with "Shell"
+    var phoneLaunchedSessions: [String: SessionInfo] = [:] // tmuxName -> SessionInfo
     var tabs: [TerminalTab] = []
     var activeTabId: String?
     var connections: [String: TerminalConnection] = [:]
@@ -49,13 +53,29 @@ final class AppState {
 
     func selectProject(_ root: String) async throws {
         guard let client else { return }
-        selectedProject = root; projectInfo = try await client.getProjectInfo(root: root)
-        workspaces = try await client.getWorkspaces(root: root); await refreshSessions()
+        selectedProject = root
+        projectInfo = try await client.getProjectInfo(root: root)
+        let ws = try await client.getWorkspaces(root: root)
+        workspaces = ws
+        // Fetch sessions and agent types
+        if let info = projectInfo {
+            do { sessions = try await client.getSessions(repo: info.name, workspacePaths: ws.map(\.path)) } catch {}
+            do { agentTypes = try await client.getAgentTypes(root: root) } catch {}
+        }
     }
 
     func refreshSessions() async {
-        guard let client, let info = projectInfo else { return }
-        do { sessions = try await client.getSessions(repo: info.name, workspacePaths: workspaces.map(\.path)) } catch {}
+        guard let client, let info = projectInfo, !workspaces.isEmpty else { return }
+        do {
+            var fetched = try await client.getSessions(repo: info.name, workspacePaths: workspaces.map(\.path))
+            // Override with phone-launched session info (correct type/label)
+            for i in fetched.indices {
+                if let better = phoneLaunchedSessions[fetched[i].tmuxName] {
+                    fetched[i] = better
+                }
+            }
+            sessions = fetched
+        } catch {}
     }
 
     func openSession(_ session: SessionInfo) async throws {
@@ -72,8 +92,20 @@ final class AppState {
     func launchShell(workspacePath: String) async throws {
         guard let client, let root = selectedProject else { return }
         let resp = try await client.launchShell(repoRoot: root, workspacePath: workspacePath)
+        let session = SessionInfo(tmuxName: resp.tmuxSession, type: "shell", label: "Shell", workspacePath: workspacePath)
+        phoneLaunchedSessions[resp.tmuxSession] = session
+        try await openSession(session)
         await refreshSessions()
-        if let session = sessions.first(where: { $0.tmuxName == resp.tmuxSession }) { try await openSession(session) }
+    }
+
+    func launchAgent(workspacePath: String, agentType: String) async throws {
+        guard let client, let root = selectedProject else { return }
+        let resp = try await client.launchAgent(repoRoot: root, workspacePath: workspacePath, agentType: agentType)
+        let label = String(agentType.prefix(1)).uppercased() + agentType.dropFirst()
+        let session = SessionInfo(tmuxName: resp.tmuxSession, type: agentType, label: label, workspacePath: workspacePath)
+        phoneLaunchedSessions[resp.tmuxSession] = session
+        try await openSession(session)
+        await refreshSessions()
     }
 
     func closeTab(_ tabId: String) {
@@ -84,4 +116,42 @@ final class AppState {
     }
 
     func activateTab(_ tabId: String) { activeTabId = tabId }
+
+    // MARK: - Kill Session
+
+    func killSession(_ session: SessionInfo) async {
+        guard let client else { return }
+        // Close the tab if it's open
+        if let tab = tabs.first(where: { $0.tmuxSession == session.tmuxName }) {
+            closeTab(tab.id)
+        }
+        // Remove from local state FIRST so the List animation stays in sync
+        sessions.removeAll { $0.tmuxName == session.tmuxName }
+        // Then kill on server and refresh in background
+        try? await client.killSession(tmuxSession: session.tmuxName)
+        // Small delay to let the List animation finish before refreshing
+        try? await Task.sleep(for: .milliseconds(500))
+        await refreshSessions()
+    }
+
+    // MARK: - Server Management
+
+    func getServerStatuses(workspace: Workspace) async -> [ServerStatus] {
+        guard let client, let root = selectedProject else { return [] }
+        do { return try await client.getServerStatuses(root: root, workspace: workspace.path) }
+        catch { return [] }
+    }
+
+    func startServers(workspace: Workspace) async {
+        guard let client, let root = selectedProject else { return }
+        do { let _ = try await client.startServers(repoRoot: root, workspacePath: workspace.path, isMain: workspace.isMain) }
+        catch {}
+        await refreshSessions()
+    }
+
+    func stopServers(workspace: Workspace) async {
+        guard let client else { return }
+        try? await client.stopServers(workspacePath: workspace.path)
+        await refreshSessions()
+    }
 }

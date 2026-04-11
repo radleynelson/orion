@@ -469,9 +469,26 @@ function App() {
       EventsOn('menu:split-down', () => handleSplit('horizontal')),
       EventsOn('menu:next-pane', () => navigatePane('next')),
       EventsOn('menu:prev-pane', () => navigatePane('prev')),
+      EventsOn('mobile:session-created', async (data: any) => {
+        if (!data?.tmuxSession || !data?.workspacePath) return;
+        // Only add if this workspace belongs to the current project
+        const ws = useStore.getState().workspaces;
+        if (!ws.some((w: any) => w.path === data.workspacePath)) return;
+        const termId = generateId('term');
+        try {
+          await CreateAttachedTerminal(termId, data.tmuxSession);
+          addTab({
+            id: generateId('tab'),
+            label: data.label || 'Shell',
+            rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+            tabType: (data.type === 'claude' || data.type === 'codex') ? data.type : 'shell',
+            workspacePath: data.workspacePath,
+          });
+        } catch {}
+      }),
     ];
     return () => cancels.forEach((c) => c());
-  }, [sidebarMode, createNewShell, handleClosePane, handleSplit, navigatePane, setSidebarMode]);
+  }, [sidebarMode, createNewShell, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab]);
 
   const activeWorkspace = workspaces.find((w) => w.path === activeWorkspacePath);
 

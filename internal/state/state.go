@@ -255,6 +255,7 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	prefix := "orion-"
 	srvPrefix := "orion-srv-"
 	shellPrefix := "orion-shell-"
+	webPrefix := "orion-web-"
 
 	var sessions []SessionInfo
 	shellCount := make(map[string]int)
@@ -262,6 +263,11 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	for _, line := range strings.Split(string(out), "\n") {
 		name := strings.TrimSpace(line)
 		if name == "" || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		// Skip web companion grouped sessions — they're transient
+		if strings.HasPrefix(name, webPrefix) {
 			continue
 		}
 

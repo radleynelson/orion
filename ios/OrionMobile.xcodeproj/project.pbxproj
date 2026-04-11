@@ -15,7 +15,6 @@
 		579411367BB4C417DD1B1073 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D2259AFF585FE690720B3 /* ContentView.swift */; };
 		598D0A56763BC63C7B7A7F48 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80981DC85E613EA43D4066F8 /* ConnectionView.swift */; };
 		8ECAD5BE17F739E1127DF41D /* TerminalToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */; };
-		9E108D3744A2A56A760025B2 /* WorkspaceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B40FB2AF2697E1F661F4A5 /* WorkspaceListView.swift */; };
 		A3807A8B4025C19B9E0F0E87 /* BonjourDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3470DFB0C167135034FD1891 /* BonjourDiscovery.swift */; };
 		B7ACA58BF0DC173F35BDA13E /* SpeechService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3FC0DF96360A36DED8150A9 /* SpeechService.swift */; };
 		CC33B76187E0490736BDCA8E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31AE562E83C275EEDFEA5BB /* Models.swift */; };
@@ -27,7 +26,6 @@
 /* Begin PBXFileReference section */
 		0364A1C00D6796B0BA597E20 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		2155A4F7BB9FE1CC4B9D48BF /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
-		25B40FB2AF2697E1F661F4A5 /* WorkspaceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
 		3470DFB0C167135034FD1891 /* BonjourDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonjourDiscovery.swift; sourceTree = "<group>"; };
 		4DFBDC5EF997B2B1ABABC4D4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalToolbar.swift; sourceTree = "<group>"; };
@@ -80,7 +78,6 @@
 				0364A1C00D6796B0BA597E20 /* SettingsView.swift */,
 				BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */,
 				543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */,
-				25B40FB2AF2697E1F661F4A5 /* WorkspaceListView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -203,7 +200,6 @@
 				080275BB3E474289DD894969 /* TerminalConnection.swift in Sources */,
 				0964C3CA7EE6A359D4E79F8C /* TerminalContainerView.swift in Sources */,
 				8ECAD5BE17F739E1127DF41D /* TerminalToolbar.swift in Sources */,
-				9E108D3744A2A56A760025B2 /* WorkspaceListView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

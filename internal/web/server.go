@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"orion/internal/server"
 	"orion/internal/state"
 	"orion/internal/terminal"
 	"orion/internal/workspace"
@@ -27,6 +28,12 @@ import (
 
 // AppAPI defines the methods the web server needs from the main App.
 // This avoids circular imports with the main package.
+// AgentType represents an available agent type from config.
+type AgentType struct {
+	Name    string `json:"name"`
+	Label   string `json:"label"`
+}
+
 type AppAPI interface {
 	GetRecentProjects() []string
 	GetProjectInfo(path string) (*workspace.ProjectInfo, error)
@@ -35,6 +42,11 @@ type AppAPI interface {
 	GetSavedTabs() []state.SavedTab
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
 	LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error)
+	StartServers(repoRoot string, workspacePath string, isMain bool) ([]server.ServerStatus, error)
+	StopServers(workspacePath string) error
+	GetServerStatuses(repoRoot string, workspacePath string) []server.ServerStatus
+	GetAgentNames(repoRoot string) []AgentType
+	EmitSessionCreated(tmuxSession string, sessionType string, label string, workspacePath string)
 }
 
 // Server is the embedded HTTP/WebSocket server for the mobile companion PWA.
@@ -64,6 +76,10 @@ func NewServer(app AppAPI, termMgr *terminal.Manager) *Server {
 // Start begins listening on the given port. Blocks until stopped.
 func (s *Server) Start(port int) error {
 	s.port = port
+
+	// Clean up stale orion-web-* grouped sessions from previous runs
+	s.cleanupStaleWebSessions()
+
 	mux := http.NewServeMux()
 
 	// API routes
@@ -73,6 +89,12 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/sessions", s.authMiddleware(s.handleSessions))
 	mux.HandleFunc("/api/terminal", s.authMiddleware(s.handleTerminal))
 	mux.HandleFunc("/api/shell", s.authMiddleware(s.handleShell))
+	mux.HandleFunc("/api/agents", s.authMiddleware(s.handleAgents))
+	mux.HandleFunc("/api/agent", s.authMiddleware(s.handleLaunchAgent))
+	mux.HandleFunc("/api/servers", s.authMiddleware(s.handleServers))
+	mux.HandleFunc("/api/servers/start", s.authMiddleware(s.handleServersStart))
+	mux.HandleFunc("/api/servers/stop", s.authMiddleware(s.handleServersStop))
+	mux.HandleFunc("/api/kill-session", s.authMiddleware(s.handleKillSession))
 
 	// WebSocket route
 	mux.HandleFunc("/ws/terminal/", s.handleTerminalWS)
@@ -104,10 +126,31 @@ func (s *Server) Start(port int) error {
 
 // Stop gracefully shuts down the web server.
 func (s *Server) Stop() {
+	s.cleanupStaleWebSessions()
 	if s.httpSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		s.httpSrv.Shutdown(ctx)
+	}
+}
+
+// cleanupStaleWebSessions kills any orion-web-* tmux sessions left over from
+// previous phone connections that weren't properly closed.
+func (s *Server) cleanupStaleWebSessions() {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return
+	}
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		name := strings.TrimSpace(line)
+		if strings.HasPrefix(name, "orion-web-") {
+			exec.Command("tmux", "kill-session", "-t", name).Run()
+			count++
+		}
+	}
+	if count > 0 {
+		log.Printf("[Orion Mobile] Cleaned up %d stale web sessions", count)
 	}
 }
 
@@ -205,22 +248,55 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if wsParam != "" {
 		paths = strings.Split(wsParam, ",")
 	}
-	sessions := s.app.RecoverSessions(repo, paths)
-
-	// Enrich with saved tab labels (so phone shows "Claude" instead of "Shell")
+	// Build the session list from saved tabs (primary source — same as desktop)
+	// then supplement with RecoverSessions for any tmux sessions not in saved tabs.
 	savedTabs := s.app.GetSavedTabs()
-	tabLabels := make(map[string]string) // tmuxSession -> label
-	tabTypes := make(map[string]string)  // tmuxSession -> tabType
-	for _, t := range savedTabs {
-		tabLabels[t.TmuxSession] = t.Label
-		tabTypes[t.TmuxSession] = t.TabType
-	}
-	for i, sess := range sessions {
-		if label, ok := tabLabels[sess.TmuxName]; ok {
-			sessions[i].Label = label
+
+	// Get list of live tmux sessions for validation
+	liveSessions := make(map[string]bool)
+	if out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			name := strings.TrimSpace(line)
+			if name != "" {
+				liveSessions[name] = true
+			}
 		}
-		if tabType, ok := tabTypes[sess.TmuxName]; ok {
-			sessions[i].Type = tabType
+	}
+
+	// Build workspace path set for filtering
+	pathSet := make(map[string]bool)
+	for _, p := range paths {
+		pathSet[p] = true
+	}
+
+	// Primary: saved tabs that are still alive in tmux and match requested workspaces
+	var sessions []state.SessionInfo
+	seen := make(map[string]bool)
+	for _, t := range savedTabs {
+		if !liveSessions[t.TmuxSession] {
+			continue // tmux session is gone
+		}
+		if len(pathSet) > 0 && !pathSet[t.WorkspacePath] {
+			continue // not in the requested workspace set
+		}
+		if strings.HasPrefix(t.TmuxSession, "orion-web-") {
+			continue // skip phone companion sessions
+		}
+		sessions = append(sessions, state.SessionInfo{
+			TmuxName:      t.TmuxSession,
+			Type:          t.TabType,
+			Label:         t.Label,
+			WorkspacePath: t.WorkspacePath,
+		})
+		seen[t.TmuxSession] = true
+	}
+
+	// Supplement: pick up any sessions that RecoverSessions finds but saved tabs missed
+	recovered := s.app.RecoverSessions(repo, paths)
+	for _, sess := range recovered {
+		if !seen[sess.TmuxName] {
+			sessions = append(sessions, sess)
+			seen[sess.TmuxName] = true
 		}
 	}
 
@@ -290,7 +366,128 @@ func (s *Server) handleShell(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.app.EmitSessionCreated(tmuxSession, "shell", "Shell", req.WorkspacePath)
 	writeJSON(w, map[string]string{"tmuxSession": tmuxSession})
+}
+
+func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root := r.URL.Query().Get("root")
+	if root == "" {
+		http.Error(w, "root parameter required", http.StatusBadRequest)
+		return
+	}
+	agents := s.app.GetAgentNames(root)
+	if agents == nil {
+		agents = []AgentType{}
+	}
+	writeJSON(w, agents)
+}
+
+func (s *Server) handleLaunchAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		RepoRoot      string `json:"repoRoot"`
+		WorkspacePath string `json:"workspacePath"`
+		AgentType     string `json:"agentType"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	tmuxSession, err := s.app.LaunchAgent(req.RepoRoot, req.WorkspacePath, req.AgentType)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	label := strings.ToUpper(req.AgentType[:1]) + req.AgentType[1:]
+	s.app.EmitSessionCreated(tmuxSession, req.AgentType, label, req.WorkspacePath)
+	writeJSON(w, map[string]string{"tmuxSession": tmuxSession})
+}
+
+func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root := r.URL.Query().Get("root")
+	wsPath := r.URL.Query().Get("workspace")
+	if root == "" || wsPath == "" {
+		http.Error(w, "root and workspace required", http.StatusBadRequest)
+		return
+	}
+	statuses := s.app.GetServerStatuses(root, wsPath)
+	if statuses == nil {
+		statuses = []server.ServerStatus{}
+	}
+	writeJSON(w, statuses)
+}
+
+func (s *Server) handleServersStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		RepoRoot      string `json:"repoRoot"`
+		WorkspacePath string `json:"workspacePath"`
+		IsMain        bool   `json:"isMain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	statuses, err := s.app.StartServers(req.RepoRoot, req.WorkspacePath, req.IsMain)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, statuses)
+}
+
+func (s *Server) handleServersStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		WorkspacePath string `json:"workspacePath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := s.app.StopServers(req.WorkspacePath); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		TmuxSession string `json:"tmuxSession"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.TmuxSession == "" {
+		http.Error(w, "tmuxSession required", http.StatusBadRequest)
+		return
+	}
+	exec.Command("tmux", "kill-session", "-t", req.TmuxSession).Run()
+	writeJSON(w, map[string]string{"status": "killed"})
 }
 
 // --- WebSocket Terminal Handler ---

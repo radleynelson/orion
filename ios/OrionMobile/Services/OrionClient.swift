@@ -24,6 +24,30 @@ actor OrionClient {
     func createTerminal(tmuxSession: String) async throws -> CreateTerminalResponse { try await post("/api/terminal", body: ["tmuxSession": tmuxSession]) }
     func launchShell(repoRoot: String, workspacePath: String) async throws -> LaunchShellResponse { try await post("/api/shell", body: ["repoRoot": repoRoot, "workspacePath": workspacePath]) }
 
+    // Agents
+    func getAgentTypes(root: String) async throws -> [AgentType] { try await get("/api/agents", query: ["root": root]) }
+    func launchAgent(repoRoot: String, workspacePath: String, agentType: String) async throws -> LaunchAgentResponse {
+        try await post("/api/agent", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "agentType": agentType])
+    }
+
+    // Server management
+    func getServerStatuses(root: String, workspace: String) async throws -> [ServerStatus] {
+        try await get("/api/servers", query: ["root": root, "workspace": workspace])
+    }
+    func startServers(repoRoot: String, workspacePath: String, isMain: Bool) async throws -> [ServerStatus] {
+        try await postJSON("/api/servers/start", body: StartServersRequest(repoRoot: repoRoot, workspacePath: workspacePath, isMain: isMain))
+    }
+    func stopServers(workspacePath: String) async throws {
+        let _: [String: String] = try await post("/api/servers/stop", body: ["workspacePath": workspacePath])
+    }
+
+    // Kill a tmux session
+    func killSession(tmuxSession: String) async throws {
+        let _: [String: String] = try await post("/api/kill-session", body: ["tmuxSession": tmuxSession])
+    }
+
+    // MARK: - HTTP Helpers
+
     private func get<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         var components = URLComponents(string: "\(baseURL)\(path)")!
         if !query.isEmpty { components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
@@ -35,6 +59,17 @@ actor OrionClient {
     }
 
     private func post<T: Decodable>(_ path: String, body: [String: String]) async throws -> T {
+        var request = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        let (data, response) = try await session.data(for: request)
+        try checkResponse(response, data: data)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func postJSON<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
         var request = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
