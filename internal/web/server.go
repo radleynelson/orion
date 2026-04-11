@@ -382,19 +382,24 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				}()
 			}
 		case "scroll":
-			// Mobile touch scroll — send mouse wheel events to tmux
-			direction := msg.Data // "up" or "down"
-			lines := msg.Cols    // reuse cols field for line count
+			direction := msg.Data
+			lines := msg.Cols
 			if lines <= 0 {
 				lines = 3
 			}
-			button := 65 // scroll down
-			if direction == "up" {
-				button = 64
+			scrollCmd := "scroll-up"
+			if direction == "down" {
+				scrollCmd = "scroll-down"
 			}
+			args := []string{"copy-mode", "-t", groupedName}
 			for i := 0; i < lines; i++ {
-				seq := fmt.Sprintf("\x1b[<%d;1;1M", button)
-				s.termMgr.Write(terminalID, base64.StdEncoding.EncodeToString([]byte(seq)))
+				args = append(args, ";", "send-keys", "-t", groupedName, "-X", scrollCmd)
+			}
+			out, err := exec.Command("tmux", args...).CombinedOutput()
+			if err != nil {
+				log.Printf("[Orion Mobile] scroll failed: target=%s dir=%s err=%v out=%q", groupedName, direction, err, string(out))
+			} else {
+				log.Printf("[Orion Mobile] scroll OK: target=%s dir=%s lines=%d", groupedName, direction, lines)
 			}
 		}
 	}

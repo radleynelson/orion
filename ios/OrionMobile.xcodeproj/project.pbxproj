@@ -1,0 +1,421 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		080275BB3E474289DD894969 /* TerminalConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6F028C8077632CBF28D5615 /* TerminalConnection.swift */; };
+		0964C3CA7EE6A359D4E79F8C /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */; };
+		152C7A3D8DBCB4251FBA099F /* OrionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */; };
+		473D7058EFC3BA1D5EC8451F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0364A1C00D6796B0BA597E20 /* SettingsView.swift */; };
+		490C11D894018FDE86E78AA0 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 58E31209EBFB34F093F8A4FB /* SwiftTerm */; };
+		579411367BB4C417DD1B1073 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D2259AFF585FE690720B3 /* ContentView.swift */; };
+		598D0A56763BC63C7B7A7F48 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80981DC85E613EA43D4066F8 /* ConnectionView.swift */; };
+		8ECAD5BE17F739E1127DF41D /* TerminalToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */; };
+		9E108D3744A2A56A760025B2 /* WorkspaceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B40FB2AF2697E1F661F4A5 /* WorkspaceListView.swift */; };
+		A3807A8B4025C19B9E0F0E87 /* BonjourDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3470DFB0C167135034FD1891 /* BonjourDiscovery.swift */; };
+		B7ACA58BF0DC173F35BDA13E /* SpeechService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3FC0DF96360A36DED8150A9 /* SpeechService.swift */; };
+		CC33B76187E0490736BDCA8E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31AE562E83C275EEDFEA5BB /* Models.swift */; };
+		CD8CDA4B9576ED470E7C502A /* OrionTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9368DF7C524A5E17889C7431 /* OrionTheme.swift */; };
+		D9EDD58BEE70D34C70574844 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2155A4F7BB9FE1CC4B9D48BF /* KeychainService.swift */; };
+		E4617AFB806910B52E99E07B /* OrionMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2487ED338576B04F9B132B5 /* OrionMobileApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0364A1C00D6796B0BA597E20 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		2155A4F7BB9FE1CC4B9D48BF /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		25B40FB2AF2697E1F661F4A5 /* WorkspaceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceListView.swift; sourceTree = "<group>"; };
+		3470DFB0C167135034FD1891 /* BonjourDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonjourDiscovery.swift; sourceTree = "<group>"; };
+		4DFBDC5EF997B2B1ABABC4D4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalToolbar.swift; sourceTree = "<group>"; };
+		565A11DC54CC3C62D081A120 /* OrionMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OrionMobile.entitlements; sourceTree = "<group>"; };
+		80981DC85E613EA43D4066F8 /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
+		9368DF7C524A5E17889C7431 /* OrionTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionTheme.swift; sourceTree = "<group>"; };
+		AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionClient.swift; sourceTree = "<group>"; };
+		BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalContainerView.swift; sourceTree = "<group>"; };
+		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C3FC0DF96360A36DED8150A9 /* SpeechService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechService.swift; sourceTree = "<group>"; };
+		C6F028C8077632CBF28D5615 /* TerminalConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalConnection.swift; sourceTree = "<group>"; };
+		E31AE562E83C275EEDFEA5BB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		E97D2259AFF585FE690720B3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		F2487ED338576B04F9B132B5 /* OrionMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionMobileApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		09585C1FE99CDB04BC0E4249 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				490C11D894018FDE86E78AA0 /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		08131D1C346893535344516B /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				E31AE562E83C275EEDFEA5BB /* Models.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		0ADE4FE410D07BB81C3ED161 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				9368DF7C524A5E17889C7431 /* OrionTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		417B094A337C411A2813D322 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				80981DC85E613EA43D4066F8 /* ConnectionView.swift */,
+				E97D2259AFF585FE690720B3 /* ContentView.swift */,
+				0364A1C00D6796B0BA597E20 /* SettingsView.swift */,
+				BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */,
+				543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */,
+				25B40FB2AF2697E1F661F4A5 /* WorkspaceListView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		4B4D2ED2C213E3BE054D93EE /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				3470DFB0C167135034FD1891 /* BonjourDiscovery.swift */,
+				2155A4F7BB9FE1CC4B9D48BF /* KeychainService.swift */,
+				AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */,
+				C3FC0DF96360A36DED8150A9 /* SpeechService.swift */,
+				C6F028C8077632CBF28D5615 /* TerminalConnection.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		6909A44B8F5E750678A9B807 /* OrionMobile */ = {
+			isa = PBXGroup;
+			children = (
+				4DFBDC5EF997B2B1ABABC4D4 /* Info.plist */,
+				565A11DC54CC3C62D081A120 /* OrionMobile.entitlements */,
+				F2487ED338576B04F9B132B5 /* OrionMobileApp.swift */,
+				08131D1C346893535344516B /* Models */,
+				4B4D2ED2C213E3BE054D93EE /* Services */,
+				0ADE4FE410D07BB81C3ED161 /* Theme */,
+				417B094A337C411A2813D322 /* Views */,
+			);
+			path = OrionMobile;
+			sourceTree = "<group>";
+		};
+		AC45B5684BA626348E22CB97 = {
+			isa = PBXGroup;
+			children = (
+				6909A44B8F5E750678A9B807 /* OrionMobile */,
+				C48D8857385EAAAFB701F6DC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C48D8857385EAAAFB701F6DC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5AC0A9D632FDF1BA9D5A314A /* OrionMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AFC1396B7E9014E3550A89EB /* Build configuration list for PBXNativeTarget "OrionMobile" */;
+			buildPhases = (
+				972EF23FE9A4A83989E58192 /* Sources */,
+				09585C1FE99CDB04BC0E4249 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OrionMobile;
+			packageProductDependencies = (
+				58E31209EBFB34F093F8A4FB /* SwiftTerm */,
+			);
+			productName = OrionMobile;
+			productReference = C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AD2F943D9F5FDE791764BF62 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					5AC0A9D632FDF1BA9D5A314A = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = 24C2CD80D2BC7E758147CE13 /* Build configuration list for PBXProject "OrionMobile" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = AC45B5684BA626348E22CB97;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				84688CEA13852E13AEDD9C00 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C48D8857385EAAAFB701F6DC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5AC0A9D632FDF1BA9D5A314A /* OrionMobile */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		972EF23FE9A4A83989E58192 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A3807A8B4025C19B9E0F0E87 /* BonjourDiscovery.swift in Sources */,
+				598D0A56763BC63C7B7A7F48 /* ConnectionView.swift in Sources */,
+				579411367BB4C417DD1B1073 /* ContentView.swift in Sources */,
+				D9EDD58BEE70D34C70574844 /* KeychainService.swift in Sources */,
+				CC33B76187E0490736BDCA8E /* Models.swift in Sources */,
+				152C7A3D8DBCB4251FBA099F /* OrionClient.swift in Sources */,
+				E4617AFB806910B52E99E07B /* OrionMobileApp.swift in Sources */,
+				CD8CDA4B9576ED470E7C502A /* OrionTheme.swift in Sources */,
+				473D7058EFC3BA1D5EC8451F /* SettingsView.swift in Sources */,
+				B7ACA58BF0DC173F35BDA13E /* SpeechService.swift in Sources */,
+				080275BB3E474289DD894969 /* TerminalConnection.swift in Sources */,
+				0964C3CA7EE6A359D4E79F8C /* TerminalContainerView.swift in Sources */,
+				8ECAD5BE17F739E1127DF41D /* TerminalToolbar.swift in Sources */,
+				9E108D3744A2A56A760025B2 /* WorkspaceListView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		66F557A31F58A76ED4669A84 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A93C6278B890B5709FA1473E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = OrionMobile/OrionMobile.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = OrionMobile/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.orion.mobile;
+				SDKROOT = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		CDB4EC4AC42C9F1C34D694D7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = OrionMobile/OrionMobile.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = OrionMobile/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.orion.mobile;
+				SDKROOT = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D9066422B1025C69665E53CB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		24C2CD80D2BC7E758147CE13 /* Build configuration list for PBXProject "OrionMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				66F557A31F58A76ED4669A84 /* Debug */,
+				D9066422B1025C69665E53CB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AFC1396B7E9014E3550A89EB /* Build configuration list for PBXNativeTarget "OrionMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CDB4EC4AC42C9F1C34D694D7 /* Debug */,
+				A93C6278B890B5709FA1473E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		84688CEA13852E13AEDD9C00 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		58E31209EBFB34F093F8A4FB /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 84688CEA13852E13AEDD9C00 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = AD2F943D9F5FDE791764BF62 /* Project object */;
+}
