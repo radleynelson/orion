@@ -89,6 +89,7 @@ struct ScrollJoystick: View {
 
 extension Notification.Name {
     static let orionToggleKeyboard = Notification.Name("orionToggleKeyboard")
+    static let orionRefocusTerminal = Notification.Name("orionRefocusTerminal")
 }
 
 struct SwiftTermView: UIViewRepresentable {
@@ -163,6 +164,7 @@ struct SwiftTermView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(keyboardDidHide), name: UIResponder.keyboardDidHideNotification, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(toggleKeyboard), name: .orionToggleKeyboard, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(refocusTerminal), name: .orionRefocusTerminal, object: nil)
         }
 
         @objc private func keyboardWillShow(_ n: Notification) { if !keyboardEnabled { DispatchQueue.main.async { self.terminalView?.resignFirstResponder() } } }
@@ -170,7 +172,16 @@ struct SwiftTermView: UIViewRepresentable {
         @objc private func toggleKeyboard() {
             guard let tv = terminalView else { return }
             if tv.isFirstResponder && keyboardEnabled { keyboardEnabled = false; tv.resignFirstResponder() }
-            else { keyboardEnabled = true; tv.becomeFirstResponder() }
+            else {
+                keyboardEnabled = true; tv.becomeFirstResponder()
+                // Exit tmux copy mode so keyboard input goes to the shell/Claude, not tmux's command line
+                connection?.exitCopyMode()
+            }
+        }
+        /// Reclaim first responder for the terminal after dictation or other interruptions
+        @objc private func refocusTerminal() {
+            guard let tv = terminalView, !tv.isFirstResponder, keyboardEnabled else { return }
+            DispatchQueue.main.async { tv.becomeFirstResponder() }
         }
 
         @objc func handleScroll(_ gesture: UIPanGestureRecognizer) {
@@ -196,7 +207,7 @@ struct SwiftTermView: UIViewRepresentable {
 
         deinit { NotificationCenter.default.removeObserver(self) }
 
-        func send(source: TerminalView, data: ArraySlice<UInt8>) { guard !isScrolling else { return }; connection?.sendInput(Array(data)) }
+        func send(source: TerminalView, data: ArraySlice<UInt8>) { guard !isScrolling else { return }; connection?.exitCopyMode(); connection?.sendInput(Array(data)) }
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { connection?.sendResize(cols: newCols, rows: newRows) }
         func setTerminalTitle(source: TerminalView, title: String) {}
         func scrolled(source: TerminalView, position: Double) {}

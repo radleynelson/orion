@@ -5,6 +5,8 @@ final class TerminalConnection {
     let terminalId: String
     let tmuxSession: String
     private(set) var isConnected = false
+    /// Set to true after scrolling (tmux copy mode). Cleared when exitCopyMode() is called.
+    var inCopyMode = false
     var onOutput: (([UInt8]) -> Void)?
     var onExit: (() -> Void)?
 
@@ -46,7 +48,14 @@ final class TerminalConnection {
         guard isConnected else { pendingResize = (cols, rows); return }
         send(WSMessage(type: "resize", cols: cols, rows: rows))
     }
-    func sendScroll(direction: String, lines: Int) { send(WSMessage(type: "scroll", data: direction, cols: lines)) }
+    func sendScroll(direction: String, lines: Int) { inCopyMode = true; send(WSMessage(type: "scroll", data: direction, cols: lines)) }
+
+    /// Exit tmux copy mode and scroll to bottom. Safe to call when not in copy mode.
+    func exitCopyMode() {
+        guard inCopyMode else { return }
+        inCopyMode = false
+        sendInput([0x1B]) // Escape exits tmux copy mode and scrolls to bottom
+    }
 
     private func send(_ message: WSMessage) {
         guard let data = try? JSONEncoder().encode(message), let string = String(data: data, encoding: .utf8) else { return }
