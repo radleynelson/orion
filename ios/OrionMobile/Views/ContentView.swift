@@ -11,6 +11,14 @@ struct MainView: View {
         VStack(spacing: 0) {
             HeaderBar()
             if !state.tabs.isEmpty { TabStrip() }
+            if state.isReconnecting {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).tint(OrionTheme.accentYellow)
+                    Text("Reconnecting...").font(.caption).foregroundStyle(OrionTheme.accentYellow)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 4)
+                .background(OrionTheme.accentYellow.opacity(0.1))
+            }
             ZStack {
                 OrionTheme.bgTerminal.ignoresSafeArea()
                 if let tab = state.activeTab, let connection = state.connections[tab.terminalId] {

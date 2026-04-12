@@ -34,13 +34,22 @@ struct LaunchShellResponse: Codable {
     let tmuxSession: String
 }
 
+// MARK: - Connection State
+
+enum ConnectionState: Equatable {
+    case disconnected
+    case connected
+    case reconnecting
+    case failed
+}
+
 // MARK: - App Models
 
 struct TerminalTab: Identifiable {
     let id: String
     let label: String
     let tmuxSession: String
-    let terminalId: String
+    var terminalId: String
     let workspacePath: String
 
     init(label: String, tmuxSession: String, terminalId: String, workspacePath: String) {

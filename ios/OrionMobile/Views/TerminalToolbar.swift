@@ -121,10 +121,13 @@ struct SpeakerButton: View {
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             if state.speech.isSpeaking { state.speech.stopSpeaking(); return }
-            if let text = UIPasteboard.general.string, !text.isEmpty { state.speech.speak(text) }
+            if let text = state.lastVoiceText, !text.isEmpty {
+                let rate = UserDefaults.standard.double(forKey: "ttsRate")
+                state.speech.speakResponse(text, rate: Float(rate > 0 ? rate : 0.52))
+            }
         } label: {
             Image(systemName: state.speech.isSpeaking ? "speaker.wave.3.fill" : "speaker.wave.2").font(.system(size: 14))
-                .foregroundStyle(state.speech.isSpeaking ? OrionTheme.accentBlue : OrionTheme.textSecondary)
+                .foregroundStyle(state.speech.isSpeaking ? OrionTheme.accentBlue : state.lastVoiceText != nil ? OrionTheme.textSecondary : OrionTheme.textDim)
                 .frame(width: 36, height: 32).background(state.speech.isSpeaking ? OrionTheme.bgActive : OrionTheme.bgSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(state.speech.isSpeaking ? OrionTheme.accentBlue : OrionTheme.border, lineWidth: 0.5))
         }

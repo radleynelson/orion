@@ -3,8 +3,16 @@ import SwiftUI
 @main
 struct OrionMobileApp: App {
     @State private var appState = AppState()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
-        WindowGroup { ContentView().environment(appState).preferredColorScheme(.dark) }
+        WindowGroup {
+            ContentView()
+                .environment(appState)
+                .preferredColorScheme(.dark)
+                .onChange(of: scenePhase) { _, newPhase in
+                    appState.handleScenePhaseChange(newPhase)
+                }
+        }
     }
 }
 
@@ -30,11 +38,18 @@ final class AppState {
     let speech = SpeechService()
     let voiceConnection = VoiceConnection()
     var voiceModeEnabled = false
+    var lastVoiceText: String?
     var showWorkspaces = false
     var showSettings = false
     var connectionError: String?
+    var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
 
     var activeTab: TerminalTab? { tabs.first { $0.id == activeTabId } }
+
+    var isReconnecting: Bool {
+        connections.values.contains { $0.connectionState == .reconnecting } ||
+        voiceConnection.connectionState == .reconnecting
+    }
 
     func connect(host: String, token: String) async throws {
         let client = OrionClient(host: host, token: token)
@@ -66,9 +81,11 @@ final class AppState {
 
     func connectVoice() {
         voiceConnection.onVoiceText = { [weak self] text, session in
-            guard let self, self.voiceModeEnabled else { return }
-            // TODO: Filter by active session once we reliably get tmux session names from hooks.
-            // For now, read all Claude responses when voice mode is on.
+            guard let self else { return }
+            // Always store the last response for on-demand playback
+            self.lastVoiceText = text
+            // Only auto-speak if voice mode is on
+            guard self.voiceModeEnabled else { return }
             let rate = UserDefaults.standard.double(forKey: "ttsRate")
             self.speech.speakResponse(text, rate: Float(rate > 0 ? rate : 0.52))
         }
@@ -186,5 +203,57 @@ final class AppState {
         guard let client else { return }
         try? await client.stopServers(workspacePath: workspace.path)
         await refreshSessions()
+    }
+
+    // MARK: - Scene Phase / Background
+
+    func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            reconnectDeadConnections()
+            // End background task if one was active
+            if backgroundTaskId != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTaskId)
+                backgroundTaskId = .invalid
+            }
+        case .background:
+            if voiceModeEnabled {
+                backgroundTaskId = UIApplication.shared.beginBackgroundTask { [weak self] in
+                    guard let self else { return }
+                    if self.backgroundTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(self.backgroundTaskId)
+                        self.backgroundTaskId = .invalid
+                    }
+                }
+            }
+        case .inactive:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func reconnectDeadConnections() {
+        guard isConnected, !host.isEmpty, !token.isEmpty else { return }
+
+        // Reconnect terminal connections that have dropped
+        for (key, connection) in connections {
+            if !connection.isConnected && connection.connectionState == .disconnected {
+                connection.connect(host: host, token: token)
+            }
+            // Update dictionary key if terminalId changed during a previous reconnect
+            if connection.terminalId != key {
+                connections.removeValue(forKey: key)
+                connections[connection.terminalId] = connection
+                if let idx = tabs.firstIndex(where: { $0.terminalId == key }) {
+                    tabs[idx].terminalId = connection.terminalId
+                }
+            }
+        }
+
+        // Reconnect voice WebSocket if voice mode is on and it's disconnected
+        if voiceModeEnabled && !voiceConnection.isConnected && voiceConnection.connectionState == .disconnected {
+            connectVoice()
+        }
     }
 }

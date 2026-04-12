@@ -32,7 +32,9 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Orion uses speech recognition to convert your voice into terminal commands.</string>
 	<key>UIBackgroundModes</key>
-	<array/>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

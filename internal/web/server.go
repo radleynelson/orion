@@ -62,6 +62,10 @@ type Server struct {
 	// Voice mode: connected iOS clients listening for Claude responses
 	voiceClients   []*websocket.Conn
 	voiceClientsMu sync.Mutex
+
+	// Track active web terminal connections for zombie cleanup
+	activeWebTerminals   map[string]bool
+	activeWebTerminalsMu sync.Mutex
 }
 
 // NewServer creates a new web server instance.
@@ -74,6 +78,7 @@ func NewServer(app AppAPI, termMgr *terminal.Manager) *Server {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+		activeWebTerminals: make(map[string]bool),
 	}
 }
 
@@ -120,6 +125,9 @@ func (s *Server) Start(port int) error {
 		Handler: mux,
 	}
 
+	// Start periodic zombie web session cleanup (every 5 minutes)
+	go s.zombieCleanupLoop()
+
 	// Print connection info
 	log.Printf("[Orion Mobile] Listening on port %d", port)
 	log.Printf("[Orion Mobile] Token: %s", s.token)
@@ -160,6 +168,32 @@ func (s *Server) cleanupStaleWebSessions() {
 	}
 	if count > 0 {
 		log.Printf("[Orion Mobile] Cleaned up %d stale web sessions", count)
+	}
+}
+
+// zombieCleanupLoop periodically checks for orion-web-* tmux sessions that are
+// no longer associated with an active WebSocket connection and kills them.
+func (s *Server) zombieCleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+		if err != nil {
+			continue
+		}
+		s.activeWebTerminalsMu.Lock()
+		count := 0
+		for _, line := range strings.Split(string(out), "\n") {
+			name := strings.TrimSpace(line)
+			if strings.HasPrefix(name, "orion-web-") && !s.activeWebTerminals[name] {
+				exec.Command("tmux", "kill-session", "-t", name).Run()
+				count++
+			}
+		}
+		s.activeWebTerminalsMu.Unlock()
+		if count > 0 {
+			log.Printf("[Orion Mobile] Zombie cleanup: killed %d stale web sessions", count)
+		}
 	}
 }
 
@@ -573,6 +607,30 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// WebSocket heartbeat: set initial read deadline and pong handler
+	conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+		return nil
+	})
+
+	// Send ping frames every 15 seconds
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			}
+		}
+	}()
+
 	s.voiceClientsMu.Lock()
 	s.voiceClients = append(s.voiceClients, conn)
 	count := len(s.voiceClients)
@@ -583,11 +641,23 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 	// Keep the connection alive by reading (and discarding) client messages.
 	// The client may send control messages like {"type":"ping"} or voice mode toggles.
 	for {
-		_, _, err := conn.ReadMessage()
+		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			break
 		}
+		// Reset read deadline on every received message
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+
+		// Handle application-level ping from iOS client
+		var parsed struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(msg, &parsed) == nil && parsed.Type == "ping" {
+			conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"pong"}`))
+		}
 	}
+
+	close(pingDone)
 
 	// Remove from voice clients on disconnect
 	s.voiceClientsMu.Lock()
@@ -638,6 +708,31 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// WebSocket heartbeat: set initial read deadline and pong handler
+	conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+		return nil
+	})
+
+	// Send ping frames every 15 seconds
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			}
+		}
+	}()
+	defer close(pingDone)
+
 	var wsMu sync.Mutex
 	writeWS := func(msg wsMessage) {
 		wsMu.Lock()
@@ -662,10 +757,20 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clean up on disconnect
-	defer s.termMgr.Close(terminalID)
-
+	// Track active web terminal for zombie cleanup
 	groupedName := "orion-web-" + terminalID
+	s.activeWebTerminalsMu.Lock()
+	s.activeWebTerminals[groupedName] = true
+	s.activeWebTerminalsMu.Unlock()
+
+	// Clean up on disconnect
+	defer func() {
+		s.termMgr.Close(terminalID)
+		s.activeWebTerminalsMu.Lock()
+		delete(s.activeWebTerminals, groupedName)
+		s.activeWebTerminalsMu.Unlock()
+	}()
+
 	firstResize := true
 
 	// Read messages from the client
@@ -675,9 +780,14 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
+		// Reset read deadline on every received message
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+
 		switch msg.Type {
 		case "input":
 			s.termMgr.Write(terminalID, msg.Data)
+		case "ping":
+			writeWS(wsMessage{Type: "pong"})
 		case "resize":
 			if msg.Cols > 0 && msg.Rows > 0 {
 				s.termMgr.Resize(terminalID, msg.Cols, msg.Rows)

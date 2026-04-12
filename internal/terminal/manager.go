@@ -198,6 +198,8 @@ func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]
 
 	// Create a grouped session linked to the target session
 	groupedName := "orion-web-" + id
+	// Kill any pre-existing session with the same name (no-op if none exists)
+	exec.Command("tmux", "kill-session", "-t", groupedName).Run()
 	createCmd := exec.Command("tmux", "new-session", "-d", "-s", groupedName, "-t", tmuxSession)
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux grouped session failed: err=%v out=%q", err, strings.TrimSpace(string(out)))
