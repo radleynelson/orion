@@ -47,6 +47,7 @@ function App() {
     rotateSplit,
     detachPane,
     mergeTabInto,
+    reorderTab,
     renameTab,
     focusedPaneId,
     getAllTerminalIds,
@@ -198,6 +199,7 @@ function App() {
     .sort((a, b) => (serverOrder[a.label?.toLowerCase() ?? ''] ?? 99) - (serverOrder[b.label?.toLowerCase() ?? ''] ?? 99));
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  const [dragMerge, setDragMerge] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
@@ -556,7 +558,7 @@ function App() {
             {activeTabs.map((tab) => (
               <div
                 key={tab.id}
-                className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? 'tab-drop-target' : ''}`}
+                className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? (dragMerge ? 'tab-drop-target' : 'tab-reorder-target') : ''}`}
                 onClick={() => setActiveTab(tab.id)}
                 onContextMenu={(e) => {
                   if (tab.tabType === 'editor') {
@@ -586,14 +588,20 @@ function App() {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                   setDragOverTabId(tab.id);
+                  setDragMerge(e.altKey);
                 }}
-                onDragLeave={() => setDragOverTabId(null)}
+                onDragLeave={() => { setDragOverTabId(null); setDragMerge(false); }}
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOverTabId(null);
+                  setDragMerge(false);
                   const sourceTabId = e.dataTransfer.getData('text/plain');
                   if (sourceTabId && sourceTabId !== tab.id) {
-                    mergeTabInto(sourceTabId, tab.id);
+                    if (e.altKey) {
+                      mergeTabInto(sourceTabId, tab.id);
+                    } else {
+                      reorderTab(sourceTabId, tab.id);
+                    }
                   }
                 }}
               >
@@ -839,7 +847,7 @@ function App() {
         <div className="status-right">
           {paneCount > 1 && <span>{paneCount} panes</span>}
           <span>{activeTabs.length} tab{activeTabs.length !== 1 ? 's' : ''}</span>
-          <span style={{ color: 'var(--text-muted)' }}>⌘D split  ⌘[] panes  drag tabs to merge</span>
+          <span style={{ color: 'var(--text-muted)' }}>⌘D split  ⌘[] panes  drag to reorder  ⌥drag to merge</span>
         </div>
       </div>
     </div>

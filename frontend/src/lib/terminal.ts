@@ -1,7 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { EventsOn, EventsEmit, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 
@@ -82,10 +81,84 @@ export function createTerminal(
     console.warn('WebGL addon failed, falling back to canvas renderer');
   }
 
-  // Clickable links — Cmd+click opens in default browser
-  terminal.loadAddon(new WebLinksAddon((e, url) => {
-    if (e.metaKey) BrowserOpenURL(url);
-  }));
+  // Clickable links — Cmd+click opens in default browser.
+  // We use a custom link provider instead of WebLinksAddon so that URLs
+  // wrapping across terminal lines are fully clickable (WebLinksAddon
+  // only matches within a single line).
+  terminal.registerLinkProvider({
+    provideLinks(rowNumber: number, callback: (links: Array<{range: {start: {x: number, y: number}, end: {x: number, y: number}}, text: string, activate: (e: MouseEvent, text: string) => void}> | undefined) => void) {
+      // Gather the line at rowNumber and any continuation lines that follow
+      // (a continuation line is one where the previous line used the full
+      // terminal width, suggesting the text wrapped).
+      const lines: Array<{text: string, row: number}> = [];
+      let row = rowNumber;
+      // Walk backwards to find where a wrapped sequence starts.
+      // isWrapped on a line means "this line is a continuation of the line above",
+      // so we check the CURRENT row's flag to decide whether to include the row above.
+      while (row > 1) {
+        const currentLine = terminal.buffer.active.getLine(row - 1);
+        if (!currentLine || !currentLine.isWrapped) break;
+        row--;
+      }
+      // Collect forward: start line + any continuation lines
+      const startRow = row;
+      const firstLine = terminal.buffer.active.getLine(startRow - 1);
+      if (firstLine) {
+        lines.push({ text: firstLine.translateToString(), row: startRow });
+      }
+      row = startRow + 1;
+      while (row <= terminal.buffer.active.length) {
+        const nextLine = terminal.buffer.active.getLine(row - 1);
+        if (!nextLine || !nextLine.isWrapped) break;
+        lines.push({ text: nextLine.translateToString(), row });
+        row++;
+      }
+
+      const fullText = lines.map(l => l.text).join('');
+      // Match URLs in the joined text
+      const urlRegex = /https?:\/\/[^\s<>'")\]},;]+/g;
+      let match: RegExpExecArray | null;
+      const links: Array<{range: {start: {x: number, y: number}, end: {x: number, y: number}}, text: string, activate: (e: MouseEvent, text: string) => void}> = [];
+
+      while ((match = urlRegex.exec(fullText)) !== null) {
+        const urlStart = match.index;
+        const urlEnd = urlStart + match[0].length;
+
+        // Map character offsets back to row/col positions
+        let charsSoFar = 0;
+        let startX = 1, startY = startRow, endX = 1, endY = startRow;
+        for (const line of lines) {
+          const lineLen = line.text.length;
+          if (charsSoFar + lineLen > urlStart && startX === 1 && startY === startRow && charsSoFar <= urlStart) {
+            startX = urlStart - charsSoFar + 1;
+            startY = line.row;
+          }
+          if (charsSoFar + lineLen >= urlEnd) {
+            endX = urlEnd - charsSoFar;
+            endY = line.row;
+            break;
+          }
+          charsSoFar += lineLen;
+        }
+
+        // Only return links that intersect the requested row
+        if (startY <= rowNumber && endY >= rowNumber) {
+          links.push({
+            range: {
+              start: { x: startX, y: startY },
+              end: { x: endX, y: endY },
+            },
+            text: match[0],
+            activate: (e: MouseEvent, url: string) => {
+              if (e.metaKey) BrowserOpenURL(url);
+            },
+          });
+        }
+      }
+
+      callback(links.length > 0 ? links : undefined);
+    },
+  });
 
   fitAddon.fit();
 

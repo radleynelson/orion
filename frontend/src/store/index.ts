@@ -49,6 +49,7 @@ interface OrionState {
   tabs: Tab[];
   activeTabId: string | null;
   focusedPaneId: string | null;
+  lastActiveTabPerWorkspace: Record<string, string>;
   addTab: (tab: Tab) => void;
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -62,6 +63,7 @@ interface OrionState {
 
   // Merge & rearrange
   mergeTabInto: (sourceTabId: string, targetTabId: string) => void;
+  reorderTab: (sourceTabId: string, targetTabId: string) => void;
   swapPane: (direction: 'next' | 'prev') => void;
   rotateSplit: () => void;
   renameTab: (tabId: string, newLabel: string) => void;
@@ -82,10 +84,10 @@ interface OrionState {
   setCodeReviewBase: (b: 'uncommitted' | 'main') => void;
   setCodeReviewWidth: (w: number) => void;
 
-  // Per-workspace active state (any server running). Drives sidebar sort
-  // and Cmd+Up/Down cycle order so they stay in sync.
-  workspaceActive: Record<string, boolean>;
-  setWorkspaceActive: (path: string, active: boolean) => void;
+  // Per-workspace activity tier (0=servers running, 1=agent only, 2=inactive).
+  // Drives sidebar sort and Cmd+Up/Down cycle order so they stay in sync.
+  workspaceActive: Record<string, number>;
+  setWorkspaceActive: (path: string, tier: number) => void;
 
   // File/editor operations
   openFile: (filePath: string, language: string, line?: number) => void;
@@ -119,13 +121,13 @@ interface OrionState {
 // Used by both the Sidebar render and the Cmd+Up/Down cycle so order stays consistent.
 export function sortWorkspaces<T extends { path: string; isMain: boolean; branch?: string; name: string }>(
   list: T[],
-  active: Record<string, boolean>,
+  active: Record<string, number>,
 ): T[] {
   return [...list].sort((a, b) => {
     if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
-    const aA = !!active[a.path];
-    const bA = !!active[b.path];
-    if (aA !== bA) return aA ? -1 : 1;
+    const aT = active[a.path] ?? 2;
+    const bT = active[b.path] ?? 2;
+    if (aT !== bT) return aT - bT;
     return (a.branch || a.name).localeCompare(b.branch || b.name);
   });
 }
@@ -242,12 +244,29 @@ export const useStore = create<OrionState>((set, get) => ({
   activeWorkspacePath: null,
   setWorkspaces: (ws) => set({ workspaces: ws }),
   setActiveWorkspace: (path) => {
-    set({ activeWorkspacePath: path });
-    const tabs = get().tabs.filter((t) => t.workspacePath === path);
-    if (tabs.length > 0) {
-      set({ activeTabId: tabs[0].id });
-      const leaves = collectLeaves(tabs[0].rootPane);
-      if (leaves.length > 0) set({ focusedPaneId: leaves[0].id });
+    // Save the current workspace's active tab before switching
+    const state = get();
+    if (state.activeWorkspacePath && state.activeTabId) {
+      const currentTab = state.tabs.find((t) => t.id === state.activeTabId);
+      if (currentTab && currentTab.workspacePath === state.activeWorkspacePath) {
+        set((s) => ({
+          activeWorkspacePath: path,
+          lastActiveTabPerWorkspace: { ...s.lastActiveTabPerWorkspace, [state.activeWorkspacePath!]: state.activeTabId! },
+        }));
+      } else {
+        set({ activeWorkspacePath: path });
+      }
+    } else {
+      set({ activeWorkspacePath: path });
+    }
+
+    const wsTabs = get().tabs.filter((t) => t.workspacePath === path);
+    if (wsTabs.length > 0) {
+      const lastId = get().lastActiveTabPerWorkspace[path];
+      const restored = lastId && wsTabs.find((t) => t.id === lastId);
+      const tab = restored || wsTabs[0];
+      const leaves = collectLeaves(tab.rootPane);
+      set({ activeTabId: tab.id, focusedPaneId: leaves.length > 0 ? leaves[0].id : null });
     } else {
       set({ activeTabId: null, focusedPaneId: null });
     }
@@ -261,6 +280,7 @@ export const useStore = create<OrionState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   focusedPaneId: null,
+  lastActiveTabPerWorkspace: {},
 
   addTab: (tab) => {
     const leaves = collectLeaves(tab.rootPane);
@@ -268,6 +288,7 @@ export const useStore = create<OrionState>((set, get) => ({
       tabs: [...state.tabs, tab],
       activeTabId: tab.id,
       focusedPaneId: leaves.length > 0 ? leaves[0].id : null,
+      lastActiveTabPerWorkspace: { ...state.lastActiveTabPerWorkspace, [tab.workspacePath]: tab.id },
     }));
   },
 
@@ -303,7 +324,11 @@ export const useStore = create<OrionState>((set, get) => ({
     const tab = get().tabs.find((t) => t.id === id);
     if (tab) {
       const leaves = collectLeaves(tab.rootPane);
-      set({ activeTabId: id, focusedPaneId: leaves.length > 0 ? leaves[0].id : null });
+      set((state) => ({
+        activeTabId: id,
+        focusedPaneId: leaves.length > 0 ? leaves[0].id : null,
+        lastActiveTabPerWorkspace: { ...state.lastActiveTabPerWorkspace, [tab.workspacePath]: id },
+      }));
     }
   },
 
@@ -439,6 +464,18 @@ export const useStore = create<OrionState>((set, get) => ({
 
     set({ focusedPaneId: leaves[nextIdx].id });
     return leaves[nextIdx].terminalId || null;
+  },
+
+  reorderTab: (sourceTabId, targetTabId) => {
+    set((state) => {
+      const tabs = [...state.tabs];
+      const srcIdx = tabs.findIndex((t) => t.id === sourceTabId);
+      const tgtIdx = tabs.findIndex((t) => t.id === targetTabId);
+      if (srcIdx === -1 || tgtIdx === -1 || srcIdx === tgtIdx) return state;
+      const [moved] = tabs.splice(srcIdx, 1);
+      tabs.splice(tgtIdx, 0, moved);
+      return { tabs };
+    });
   },
 
   mergeTabInto: (sourceTabId, targetTabId) => {
@@ -591,10 +628,10 @@ export const useStore = create<OrionState>((set, get) => ({
   setSearchInFileQuery: (q) => set({ searchInFileQuery: q }),
 
   workspaceActive: {},
-  setWorkspaceActive: (path, active) =>
+  setWorkspaceActive: (path, tier) =>
     set((state) => {
-      if (!!state.workspaceActive[path] === active) return state;
-      return { workspaceActive: { ...state.workspaceActive, [path]: active } };
+      if (state.workspaceActive[path] === tier) return state;
+      return { workspaceActive: { ...state.workspaceActive, [path]: tier } };
     }),
 
   // File/editor operations

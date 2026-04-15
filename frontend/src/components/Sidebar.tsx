@@ -91,11 +91,13 @@ export default function Sidebar() {
           for (const [path, statuses] of results) next[path] = statuses;
           return next;
         });
-        // Publish active flags so the cycle order in App.tsx matches the sidebar sort
+        // Publish activity tier so the cycle order in App.tsx matches the sidebar sort
+        // 0 = servers running (green), 1 = agent only (yellow), 2 = inactive (grey)
         for (const [path, statuses] of results) {
           const ws = workspaces.find((w) => w.path === path);
-          const active = statuses.some((s) => s.running) || !!ws?.hasAgent;
-          setWorkspaceActive(path, active);
+          const hasServers = statuses.some((s) => s.running);
+          const tier = hasServers ? 0 : ws?.hasAgent ? 1 : 2;
+          setWorkspaceActive(path, tier);
         }
       } catch {}
     };

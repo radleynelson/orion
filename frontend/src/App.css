@@ -1084,6 +1084,10 @@
   background: var(--bg-hover);
 }
 
+.tab.tab-reorder-target {
+  border-left: 2px solid var(--accent-blue);
+}
+
 .tab-rename-input {
   background: var(--bg-primary);
   border: 1px solid var(--accent-blue);
