@@ -19,26 +19,24 @@ xcodegen generate
 
 ## Simulator
 
-The simulator build works out of the box. The bundle identifier is fixed to `com.orion.mobile.simulator` for simulator builds, so no signing setup is required.
+The simulator build works out of the box with the committed bundle identifier:
+
+```text
+com.radnelson.orionmobile
+```
 
 ## Physical iPhone
 
-For device builds, the bundle identifier is derived from the selected development team:
-
-```text
-com.orion.mobile.$(DEVELOPMENT_TEAM)
-```
-
-That means a new developer only needs to:
+For device builds, select a development team in Xcode:
 
 1. Open `OrionMobile` in Xcode.
 2. Select the `OrionMobile` target.
 3. Go to **Signing & Capabilities**.
 4. Pick a development team.
 
-Once a team is selected, Xcode can register a unique device bundle identifier without changing tracked repo files.
+The committed bundle identifier is hardcoded to `com.radnelson.orionmobile`. If another developer needs to install the app on their own phone and that identifier is not available to their team, they should change the bundle identifier locally before building to device.
 
 ## Notes
 
 - If Xcode package resolution gets confused after pulling, run **File > Packages > Reset Package Caches** once, then reopen the project.
-- Saved mobile connections are stored in the keychain under the app's runtime bundle identifier, so simulator and device builds keep separate saved connections.
+- Saved mobile connections are stored in the keychain under the app's runtime bundle identifier.
