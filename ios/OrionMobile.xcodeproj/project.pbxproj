@@ -32,13 +32,14 @@
 		4DFBDC5EF997B2B1ABABC4D4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		543F94481A94EE094C2B6B00 /* TerminalToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalToolbar.swift; sourceTree = "<group>"; };
 		565A11DC54CC3C62D081A120 /* OrionMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OrionMobile.entitlements; sourceTree = "<group>"; };
+		6204E9A6570E52C3BCF68116 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = Vendor/SwiftTerm; sourceTree = SOURCE_ROOT; };
 		7E7C4F32A2A00E9DB11B4E06 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		80981DC85E613EA43D4066F8 /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
 		9368DF7C524A5E17889C7431 /* OrionTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionTheme.swift; sourceTree = "<group>"; };
 		AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionClient.swift; sourceTree = "<group>"; };
 		BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalContainerView.swift; sourceTree = "<group>"; };
 		C0EE7499ED7C3529C6E48804 /* VoiceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceConnection.swift; sourceTree = "<group>"; };
-		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3FC0DF96360A36DED8150A9 /* SpeechService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechService.swift; sourceTree = "<group>"; };
 		C6F028C8077632CBF28D5615 /* TerminalConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalConnection.swift; sourceTree = "<group>"; };
 		E31AE562E83C275EEDFEA5BB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -118,6 +119,7 @@
 			isa = PBXGroup;
 			children = (
 				6909A44B8F5E750678A9B807 /* OrionMobile */,
+				F66E7BB935E5C8C8345B4EBC /* Packages */,
 				C48D8857385EAAAFB701F6DC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -128,6 +130,14 @@
 				C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F66E7BB935E5C8C8345B4EBC /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				6204E9A6570E52C3BCF68116 /* SwiftTerm */,
+			);
+			name = Packages;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -161,6 +171,11 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					5AC0A9D632FDF1BA9D5A314A = {
+						ProvisioningStyle = Automatic;
+					};
+				};
 			};
 			buildConfigurationList = 24C2CD80D2BC7E758147CE13 /* Build configuration list for PBXProject "OrionMobile" */;
 			developmentRegion = en;
@@ -290,15 +305,17 @@
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = OrionMobile/OrionMobile.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = H3F48PM4MA;
 				INFOPLIST_FILE = OrionMobile/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.radnelson.orionmobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.orion.OrionMobile;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = "com.orion.mobile.$(DEVELOPMENT_TEAM)";
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]" = com.orion.mobile.simulator;
 				SDKROOT = iphoneos;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 5.9;
@@ -313,15 +330,17 @@
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = OrionMobile/OrionMobile.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = H3F48PM4MA;
 				INFOPLIST_FILE = OrionMobile/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.radnelson.orionmobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.orion.OrionMobile;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = "com.orion.mobile.$(DEVELOPMENT_TEAM)";
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]" = com.orion.mobile.simulator;
 				SDKROOT = iphoneos;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 5.9;
