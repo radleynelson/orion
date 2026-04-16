@@ -28,7 +28,14 @@ struct SettingsView: View {
                     LabeledContent("Host", value: state.host)
                     LabeledContent("Status", value: state.isConnected ? "Connected" : "Disconnected")
                     if let info = state.projectInfo { LabeledContent("Project", value: info.name) }
-                    Button("Disconnect", role: .destructive) { state.disconnect(); state.showSettings = false }
+                    Button("Disconnect", role: .destructive) {
+                        state.showSettings = false
+                        // Defer disconnect slightly so the sheet dismissal finishes first
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(200))
+                            state.disconnect()
+                        }
+                    }
                 }
                 Section("Terminal") {
                     VStack(alignment: .leading) { Text("Font Size: \(Int(fontSize))pt"); Slider(value: $fontSize, in: 10...24, step: 1).tint(OrionTheme.accentBlue) }
@@ -61,6 +68,10 @@ struct SettingsView: View {
                             Text("Speech Rate")
                             Slider(value: $ttsRate, in: 0.3...0.7, step: 0.02) { Text("Rate") } minimumValueLabel: { Text("Slow").font(.caption2) } maximumValueLabel: { Text("Fast").font(.caption2) }.tint(OrionTheme.accentBlue)
                         }
+                    }
+
+                    if let err = state.speech.lastTTSError {
+                        Label(err, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(OrionTheme.accentRed)
                     }
 
                     HStack {

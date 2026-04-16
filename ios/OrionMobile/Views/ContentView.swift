@@ -19,10 +19,37 @@ struct MainView: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 4)
                 .background(OrionTheme.accentYellow.opacity(0.1))
             }
+            if let error = state.transientError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption)
+                    Text(error).font(.caption).lineLimit(2)
+                }
+                .foregroundStyle(OrionTheme.accentRed)
+                .frame(maxWidth: .infinity).padding(.vertical, 6).padding(.horizontal, 12)
+                .background(OrionTheme.accentRed.opacity(0.15))
+            }
             ZStack {
                 OrionTheme.bgTerminal.ignoresSafeArea()
-                if let tab = state.activeTab, let connection = state.connections[tab.terminalId] {
+                if let tab = state.activeTab, let connection = state.connections[tab.tmuxSession] {
                     TerminalContainerView(connection: connection)
+                    if connection.connectionState == .failed {
+                        VStack(spacing: 10) {
+                            Image(systemName: "wifi.exclamationmark")
+                                .font(.system(size: 26))
+                                .foregroundStyle(OrionTheme.accentYellow)
+                            Text("Connection lost")
+                                .font(.headline)
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            Button("Reconnect") {
+                                connection.connect(host: state.host, token: state.token)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(OrionTheme.accentBlue)
+                        }
+                        .padding(16)
+                        .background(OrionTheme.bgSecondary.opacity(0.94))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "terminal").font(.system(size: 40)).foregroundStyle(OrionTheme.textDim)
@@ -144,7 +171,10 @@ struct WorkspaceSection: View {
             // Sessions — native swipe-to-delete
             ForEach(sessions) { session in
                 Button {
-                    Task { try? await state.openSession(session) }
+                    Task {
+                        do { try await state.openSession(session) }
+                        catch { state.showTransientError("Failed to open session: \(error.localizedDescription)") }
+                    }
                     state.showWorkspaces = false
                 } label: {
                     HStack(spacing: 8) {

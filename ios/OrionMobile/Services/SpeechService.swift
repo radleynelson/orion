@@ -9,6 +9,8 @@ final class SpeechService: NSObject {
     var dictatedText = ""
     var onDictationResult: ((String) -> Void)?
     var openAIApiKey = ""
+    /// Last TTS error shown to the user. Cleared when TTS is next invoked.
+    var lastTTSError: String?
 
     private let synthesizer = AVSpeechSynthesizer()
     private var recognizer: SFSpeechRecognizer?
@@ -157,10 +159,19 @@ final class SpeechService: NSObject {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard !Task.isCancelled else { return }
-            guard let http = response as? HTTPURLResponse else { return }
+            guard let http = response as? HTTPURLResponse else {
+                await MainActor.run { self.lastTTSError = "No HTTP response from OpenAI"; self.isSpeaking = false }
+                return
+            }
             print("[Orion TTS] OpenAI response: HTTP \(http.statusCode), \(data.count) bytes")
             guard http.statusCode == 200 else {
-                if let errorText = String(data: data, encoding: .utf8) { print("[Orion TTS] OpenAI error: \(errorText)") }
+                let errorText = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
+                print("[Orion TTS] OpenAI error: \(errorText)")
+                let shortError: String
+                if http.statusCode == 401 { shortError = "Invalid OpenAI API key" }
+                else if http.statusCode == 429 { shortError = "OpenAI quota exceeded" }
+                else { shortError = "OpenAI error (\(http.statusCode))" }
+                await MainActor.run { self.lastTTSError = shortError; self.isSpeaking = false }
                 return
             }
 
@@ -168,7 +179,7 @@ final class SpeechService: NSObject {
             try AVAudioSession.sharedInstance().setActive(true)
 
             let player = try AVAudioPlayer(data: data)
-            await MainActor.run { self.audioPlayer = player }
+            await MainActor.run { self.audioPlayer = player; self.lastTTSError = nil }
             player.delegate = self
             player.play()
 
@@ -176,7 +187,9 @@ final class SpeechService: NSObject {
             while player.isPlaying && !Task.isCancelled {
                 try await Task.sleep(for: .milliseconds(100))
             }
-        } catch {}
+        } catch {
+            await MainActor.run { self.lastTTSError = "TTS failed: \(error.localizedDescription)"; self.isSpeaking = false }
+        }
     }
 
     private func chunkText(_ text: String, maxLength: Int) -> [String] {

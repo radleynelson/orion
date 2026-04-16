@@ -23,9 +23,9 @@ type Terminal struct {
 	pty            *os.File
 	cmd            *exec.Cmd
 	done           chan struct{}
-	tmuxSession    string         // if attached to a tmux session, track it for cleanup
-	OutputCallback func([]byte)   // if set, output goes here instead of Wails events
-	isGrouped      bool           // true for grouped tmux sessions (web terminals)
+	tmuxSession    string       // if attached to a tmux session, track it for cleanup
+	OutputCallback func([]byte) // if set, output goes here instead of Wails events
+	isGrouped      bool         // true for grouped tmux sessions (web terminals)
 }
 
 // Manager manages multiple terminal sessions.
@@ -204,11 +204,25 @@ func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux grouped session failed: err=%v out=%q", err, strings.TrimSpace(string(out)))
 	}
-	// window-size latest: whichever device is active determines the terminal size
-	exec.Command("tmux", "set-option", "-g", "window-size", "latest").Run()
-	exec.Command("tmux", "set-option", "-t", groupedName, "aggressive-resize", "on").Run()
+	// Avoid changing global sizing rules for every tmux client on the machine.
+	// `aggressive-resize` is explicitly poor for interactive shells and was a
+	// major source of redraw churn for the mobile client.
+	exec.Command("tmux", "set-option", "-t", groupedName, "aggressive-resize", "off").Run()
 	exec.Command("tmux", "set-option", "-t", groupedName, "status", "off").Run()
-	exec.Command("tmux", "set-option", "-t", groupedName, "mouse", "on").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "mouse", "off").Run()
+	// Disable terminal features that SwiftTerm may not handle gracefully.
+	// These are the sequences most likely to show up as garbage on the iOS client.
+	exec.Command("tmux", "set-option", "-t", groupedName, "focus-events", "off").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "set-clipboard", "off").Run()
+	exec.Command("tmux", "set-option", "-t", groupedName, "set-titles", "off").Run()
+	// Tell tmux this client doesn't support some advanced xterm features
+	// (XT = xterm title setting, which also enables XTWINOPS query responses).
+	exec.Command("tmux", "set-option", "-ga", "terminal-overrides", ",xterm-256color:XT@").Run()
+	if onOutput != nil {
+		if history, err := capturePaneHistory(groupedName, 2000); err == nil && len(history) > 0 {
+			onOutput(history)
+		}
+	}
 
 	// Attach to the grouped session
 	cmd := exec.Command("tmux", "attach-session", "-t", groupedName)
@@ -239,6 +253,31 @@ func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]
 	go m.readLoop(t)
 
 	return nil
+}
+
+func capturePaneHistory(target string, lines int) ([]byte, error) {
+	if lines <= 0 {
+		lines = 2000
+	}
+	args := []string{
+		"capture-pane",
+		"-p",
+		"-e",
+		"-N",
+		"-S", fmt.Sprintf("-%d", lines),
+		"-t", target,
+	}
+	out, err := exec.Command("tmux", args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("tmux capture-pane failed: err=%v out=%q", err, strings.TrimSpace(string(out)))
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	if out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	return out, nil
 }
 
 // Write sends input data to a terminal.
@@ -376,8 +415,14 @@ func (m *Manager) List() []string {
 }
 
 func (m *Manager) readLoop(t *Terminal) {
-	buf := make([]byte, 4096)
+	// 32KB read buffer — larger reduces the chance of splitting escape
+	// sequences across reads, and the OS buffering helps coalesce PTY writes.
+	buf := make([]byte, 32768)
 	eventName := fmt.Sprintf("terminal:output:%s", t.ID)
+	// Partial buffer: holds trailing bytes that look like an incomplete
+	// escape sequence. They get prepended to the next read so SwiftTerm
+	// never sees a broken sequence split across WebSocket messages.
+	var partial []byte
 
 	for {
 		select {
@@ -395,19 +440,91 @@ func (m *Manager) readLoop(t *Terminal) {
 				return
 			}
 			if n > 0 {
+				// Combine any held partial bytes with the new read
+				combined := buf[:n]
+				if len(partial) > 0 {
+					combined = append(partial, combined...)
+					partial = nil
+				}
+
+				// Find the safe split point — everything before is complete
+				// sequences; everything after is a partial trailing escape sequence
+				// that must be held.
+				splitAt := safeSplitPoint(combined)
+				toSend := combined[:splitAt]
+				if splitAt < len(combined) {
+					// Copy because `combined` overlaps with `buf` which will be reused
+					partial = make([]byte, len(combined)-splitAt)
+					copy(partial, combined[splitAt:])
+				}
+
+				if len(toSend) == 0 {
+					continue
+				}
+
 				if t.OutputCallback != nil {
-					// Send raw bytes to callback (web terminal)
-					out := make([]byte, n)
-					copy(out, buf[:n])
+					out := make([]byte, len(toSend))
+					copy(out, toSend)
 					t.OutputCallback(out)
 				} else if m.ctx != nil {
-					// Base64 encode for safe JSON transport (Wails)
-					encoded := base64.StdEncoding.EncodeToString(buf[:n])
+					encoded := base64.StdEncoding.EncodeToString(toSend)
 					runtime.EventsEmit(m.ctx, eventName, encoded)
 				}
 			}
 		}
 	}
+}
+
+// safeSplitPoint returns the byte offset up to which the data can be sent
+// without cutting a terminal escape sequence in half. Any bytes at or after
+// the returned offset form an incomplete escape sequence and should be held
+// until more data arrives.
+func safeSplitPoint(data []byte) int {
+	n := len(data)
+	// Scan backwards looking for the last ESC byte (0x1B)
+	for i := n - 1; i >= 0; i-- {
+		if data[i] != 0x1B {
+			continue
+		}
+		// Found ESC at position i. Is the sequence starting here complete?
+		remaining := data[i+1:]
+		if len(remaining) == 0 {
+			// Lone ESC — incomplete
+			return i
+		}
+		switch remaining[0] {
+		case '[': // CSI — terminated by a byte in 0x40-0x7E
+			for j := 1; j < len(remaining); j++ {
+				b := remaining[j]
+				if b >= 0x40 && b <= 0x7E {
+					return n // complete
+				}
+			}
+			return i // incomplete
+		case ']': // OSC — terminated by BEL (0x07) or ESC \
+			for j := 1; j < len(remaining); j++ {
+				if remaining[j] == 0x07 {
+					return n
+				}
+				if remaining[j] == 0x1B && j+1 < len(remaining) && remaining[j+1] == '\\' {
+					return n
+				}
+			}
+			return i
+		case 'P', '_', '^', 'X': // DCS, APC, PM, SOS — terminated by ESC \
+			for j := 1; j < len(remaining); j++ {
+				if remaining[j] == 0x1B && j+1 < len(remaining) && remaining[j+1] == '\\' {
+					return n
+				}
+			}
+			return i
+		default:
+			// Single-byte escape (e.g., ESC 7, ESC 8, ESC =) — complete with 1 byte
+			return n
+		}
+	}
+	// No ESC found — all bytes are safe to send
+	return n
 }
 
 // appendOrionEnv reads .orion/env.sh from a workspace dir and appends

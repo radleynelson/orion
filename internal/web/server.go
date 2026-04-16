@@ -821,6 +821,13 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("[Orion Mobile] scroll OK: target=%s dir=%s lines=%d", groupedName, direction, lines)
 			}
+		case "cancel-copy-mode":
+			// Use tmux's official cancel command — bypasses the PTY entirely
+			// so it works regardless of any sub-mode (search, goto-line, etc.)
+			out, err := exec.Command("tmux", "send-keys", "-t", groupedName, "-X", "cancel").CombinedOutput()
+			if err != nil {
+				log.Printf("[Orion Mobile] cancel-copy-mode failed: target=%s err=%v out=%q", groupedName, err, string(out))
+			}
 		}
 	}
 }

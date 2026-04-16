@@ -37,7 +37,7 @@ struct TerminalToolbar: View {
     }
 
     private func sendKey(_ key: String) {
-        guard let tab = state.activeTab, let connection = state.connections[tab.terminalId] else { return }
+        guard let tab = state.activeTab, let connection = state.connections[tab.tmuxSession] else { return }
         connection.exitCopyMode()
         connection.sendInput([UInt8](key.utf8)); UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
@@ -69,7 +69,9 @@ struct KeyboardButton: View {
                 .foregroundStyle(isShowingKeyboard ? OrionTheme.accentBlue : OrionTheme.textSecondary)
                 .frame(width: 36, height: 32).background(isShowingKeyboard ? OrionTheme.bgActive : OrionTheme.bgSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(isShowingKeyboard ? OrionTheme.accentBlue : OrionTheme.border, lineWidth: 0.5))
-        }.onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in isShowingKeyboard = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in isShowingKeyboard = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in isShowingKeyboard = false }
     }
 }
 
@@ -80,15 +82,12 @@ struct MicButton: View {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             if state.speech.isListening { state.speech.stopDictation(); return }
             if !state.speech.isAuthorized { state.speech.requestAuthorization(); return }
-            // Exit copy mode now so terminal is ready for input
-            if let tab = state.activeTab, let conn = state.connections[tab.terminalId] {
-                conn.exitCopyMode()
-            }
+            // Enable keyboard flag so input flows through after dictation
+            NotificationCenter.default.post(name: .orionEnableKeyboard, object: nil)
             state.speech.onDictationResult = { text in
-                guard let tab = state.activeTab, let conn = state.connections[tab.terminalId] else { return }
+                guard let tab = state.activeTab, let conn = state.connections[tab.tmuxSession] else { return }
                 conn.exitCopyMode()
                 conn.sendInput([UInt8](text.utf8))
-                NotificationCenter.default.post(name: .orionRefocusTerminal, object: nil)
             }
             state.speech.startDictation()
         } label: {

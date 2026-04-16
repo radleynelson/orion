@@ -4,100 +4,163 @@ import SwiftTerm
 struct TerminalContainerView: View {
     let connection: TerminalConnection
     var body: some View {
-        ZStack(alignment: .trailing) {
-            SwiftTermView(connection: connection)
-                .ignoresSafeArea(.keyboard)
-            ScrollJoystick(connection: connection)
-        }
-    }
-}
-
-// MARK: - Scroll Joystick (matches PWA's right-edge scroll handle)
-
-struct ScrollJoystick: View {
-    let connection: TerminalConnection
-    @State private var isDragging = false
-    @State private var thumbOffset: CGFloat = 0 // offset from center
-    @State private var scrollTimer: Timer?
-
-    private let trackWidth: CGFloat = 28
-    private let thumbHeight: CGFloat = 50
-    private let deadZone: CGFloat = 30
-
-    var body: some View {
-        GeometryReader { geo in
-            let centerY = geo.size.height / 2
-            ZStack {
-                // Track (invisible but tappable)
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: trackWidth)
-                    .contentShape(Rectangle())
-
-                // Thumb
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isDragging ? Color.white.opacity(0.35) : Color.white.opacity(0.15))
-                    .frame(width: 14, height: thumbHeight)
-                    .offset(y: thumbOffset)
-            }
-            .frame(width: trackWidth, height: geo.size.height)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !isDragging {
-                            isDragging = true
-                            startScrollLoop(trackHeight: geo.size.height)
-                        }
-                        // Offset from center
-                        let dragY = value.location.y - centerY
-                        let maxOffset = (geo.size.height / 2) - 20
-                        thumbOffset = max(-maxOffset, min(maxOffset, dragY))
-                    }
-                    .onEnded { _ in
-                        isDragging = false
-                        thumbOffset = 0
-                        stopScrollLoop()
-                    }
-            )
-        }
-        .frame(width: trackWidth)
-    }
-
-    private func startScrollLoop(trackHeight: CGFloat) {
-        scrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { _ in
-            guard isDragging else { return }
-
-            let offset = thumbOffset
-            guard abs(offset) > deadZone else { return }
-
-            let direction = offset > 0 ? "down" : "up"
-            let distance = abs(offset) - deadZone
-            let maxDistance = (trackHeight / 2) - deadZone
-            let ratio = min(1, distance / maxDistance)
-            // Quadratic curve — slow at start, fast only at extremes
-            let speed = max(1, Int(ratio * ratio * 8))
-
-            connection.sendScroll(direction: direction, lines: speed)
-        }
-    }
-
-    private func stopScrollLoop() {
-        scrollTimer?.invalidate()
-        scrollTimer = nil
+        SwiftTermView(connection: connection)
+            .ignoresSafeArea(.keyboard)
     }
 }
 
 extension Notification.Name {
     static let orionToggleKeyboard = Notification.Name("orionToggleKeyboard")
-    static let orionRefocusTerminal = Notification.Name("orionRefocusTerminal")
+    static let orionEnableKeyboard = Notification.Name("orionEnableKeyboard")
+}
+
+final class OrionTerminalView: TerminalView {
+    private let followThreshold: CGFloat = 24
+    private let maxDeferredChunks = 512
+    var userDetachedFromBottom = false
+    private var suppressScrollSync = false
+    private var deferredOutput: [[UInt8]] = []
+
+    func configureForRemoteSession() {
+        changeScrollback(5000)
+        showsVerticalScrollIndicator = true
+        indicatorStyle = .white
+        keyboardDismissMode = .none
+        isScrollEnabled = false
+        bounces = false
+        delaysContentTouches = true
+        canCancelContentTouches = true
+        isDirectionalLockEnabled = true
+    }
+
+    func noteUserScroll() {
+        let wasDetached = userDetachedFromBottom
+        userDetachedFromBottom = !isNearBottom
+        if wasDetached && !userDetachedFromBottom {
+            flushDeferredOutputIfNeeded()
+        }
+    }
+
+    func beginDetachedScroll() {
+        userDetachedFromBottom = true
+    }
+
+    func resumeLiveFollow() {
+        userDetachedFromBottom = false
+        applyViewportPosition(1)
+        flushDeferredOutputIfNeeded()
+    }
+
+    func feedRemoteOutput(_ bytes: [UInt8]) {
+        if shouldDeferRemoteOutput {
+            deferRemoteOutput(bytes)
+            return
+        }
+
+        flushDeferredOutputIfNeeded()
+        feedVisibleOutput(bytes)
+    }
+
+    private func feedVisibleOutput(_ bytes: [UInt8]) {
+        let preserveOffset = userDetachedFromBottom || isTracking || isDragging || isDecelerating
+        let previousOffset = contentOffset
+        let previousMaxOffset = max(0, contentSize.height - bounds.height)
+        let previousPosition = previousMaxOffset > 0 ? Double(previousOffset.y / previousMaxOffset) : 1
+        feed(byteArray: ArraySlice(bytes))
+        guard preserveOffset else { return }
+        DispatchQueue.main.async {
+            if self.canScroll, previousMaxOffset > 0 {
+                self.applyViewportPosition(previousPosition)
+            } else {
+                let maxOffset = max(0, self.contentSize.height - self.bounds.height)
+                let y = min(max(0, previousOffset.y), maxOffset)
+                self.performProgrammaticScroll {
+                    self.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+                }
+            }
+        }
+    }
+
+    private var shouldDeferRemoteOutput: Bool {
+        userDetachedFromBottom || isTracking || isDragging || isDecelerating
+    }
+
+    private func deferRemoteOutput(_ bytes: [UInt8]) {
+        deferredOutput.append(bytes)
+        if deferredOutput.count > maxDeferredChunks {
+            deferredOutput.removeFirst(deferredOutput.count - maxDeferredChunks)
+        }
+    }
+
+    private func flushDeferredOutputIfNeeded() {
+        guard !shouldDeferRemoteOutput else { return }
+        guard !deferredOutput.isEmpty else { return }
+
+        let pending = deferredOutput
+        deferredOutput.removeAll(keepingCapacity: true)
+        for chunk in pending {
+            feedVisibleOutput(chunk)
+        }
+    }
+
+    private func applyViewportPosition(_ position: Double) {
+        let clamped = min(max(position, 0), 1)
+        if canScroll {
+            performProgrammaticScroll {
+                scroll(toPosition: clamped)
+            }
+            noteUserScroll()
+            return
+        }
+
+        let maxOffset = max(0, contentSize.height - bounds.height)
+        let y = maxOffset * clamped
+        performProgrammaticScroll {
+            setContentOffset(CGPoint(x: 0, y: y), animated: false)
+        }
+        noteUserScroll()
+    }
+
+    private func performProgrammaticScroll(_ update: () -> Void) {
+        guard !suppressScrollSync else {
+            update()
+            return
+        }
+        suppressScrollSync = true
+        update()
+        DispatchQueue.main.async {
+            self.suppressScrollSync = false
+        }
+    }
+
+    private var isNearBottom: Bool {
+        let maxOffset = max(0, contentSize.height - bounds.height)
+        return maxOffset - contentOffset.y <= followThreshold
+    }
+
+    func syncBufferToViewport() {
+        guard !suppressScrollSync else { return }
+        guard canScroll else { return }
+        let maxOffset = max(0, contentSize.height - bounds.height)
+        guard maxOffset > 0 else {
+            noteUserScroll()
+            return
+        }
+        let position = min(max(Double(contentOffset.y / maxOffset), 0), 1)
+        performProgrammaticScroll {
+            scroll(toPosition: position)
+        }
+        noteUserScroll()
+    }
 }
 
 struct SwiftTermView: UIViewRepresentable {
     let connection: TerminalConnection
 
-    func makeUIView(context: Context) -> TerminalView {
-        let tv = TerminalView(frame: .zero)
+    func makeUIView(context: Context) -> OrionTerminalView {
+        let tv = OrionTerminalView(frame: .zero)
         tv.terminalDelegate = context.coordinator
+        tv.delegate = context.coordinator
         context.coordinator.terminalView = tv
         context.coordinator.connection = connection
 
@@ -119,8 +182,9 @@ struct SwiftTermView: UIViewRepresentable {
         tv.autocorrectionType = .no     // prevent iOS predictive text injection ("Ankerstar" bug)
         tv.autocapitalizationType = .none
         tv.smartInsertDeleteType = .no
+        tv.configureForRemoteSession()
 
-        connection.onOutput = { [weak tv] bytes in tv?.feed(byteArray: ArraySlice(bytes)) }
+        connection.onOutput = { [weak tv] bytes in tv?.feedRemoteOutput(bytes) }
 
         // Hide SwiftTerm's built-in input accessory bar
         DispatchQueue.main.async {
@@ -129,85 +193,60 @@ struct SwiftTermView: UIViewRepresentable {
             }
         }
 
-        context.coordinator.setupKeyboardSuppression()
-
-        // Scroll gesture — sends to tmux, not SwiftTerm's local buffer
-        let panGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleScroll(_:)))
+        context.coordinator.setupObservers()
+        let panGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        panGesture.cancelsTouchesInView = false
         panGesture.delegate = context.coordinator
         tv.addGestureRecognizer(panGesture)
-
-        // Make SwiftTerm's gestures yield to our pan
-        for gesture in tv.gestureRecognizers ?? [] where gesture !== panGesture {
-            gesture.require(toFail: panGesture)
-        }
 
         return tv
     }
 
-    func updateUIView(_ uiView: TerminalView, context: Context) {
+    func updateUIView(_ uiView: OrionTerminalView, context: Context) {
         if context.coordinator.connection !== connection {
             context.coordinator.connection = connection; context.coordinator.terminalView = uiView
-            connection.onOutput = { [weak uiView] bytes in uiView?.feed(byteArray: ArraySlice(bytes)) }
+            connection.onOutput = { [weak uiView] bytes in uiView?.feedRemoteOutput(bytes) }
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    class Coordinator: NSObject, TerminalViewDelegate, UIGestureRecognizerDelegate {
-        weak var terminalView: TerminalView?
+    class Coordinator: NSObject, TerminalViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+        weak var terminalView: OrionTerminalView?
         var connection: TerminalConnection?
-        var keyboardEnabled = false
-        var isScrolling = false
-        private var lastScrollTime: TimeInterval = 0
+        private var lastPanTranslationY: CGFloat = 0
+        private var localScrollRemainder: CGFloat = 0
+        private var remoteScrollRemainder: CGFloat = 0
+        private let remoteScrollStep: CGFloat = 28
 
-        func setupKeyboardSuppression() {
-            NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
-            NotificationCenter.default.addObserver(self, selector: #selector(keyboardDidHide), name: UIResponder.keyboardDidHideNotification, object: nil)
+        func setupObservers() {
             NotificationCenter.default.addObserver(self, selector: #selector(toggleKeyboard), name: .orionToggleKeyboard, object: nil)
-            NotificationCenter.default.addObserver(self, selector: #selector(refocusTerminal), name: .orionRefocusTerminal, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(enableKeyboard), name: .orionEnableKeyboard, object: nil)
         }
 
-        @objc private func keyboardWillShow(_ n: Notification) { if !keyboardEnabled { DispatchQueue.main.async { self.terminalView?.resignFirstResponder() } } }
-        @objc private func keyboardDidHide(_ n: Notification) { keyboardEnabled = false }
+        @objc private func enableKeyboard() {
+            guard let tv = terminalView else { return }
+            tv.resumeLiveFollow()
+            DispatchQueue.main.async { _ = tv.becomeFirstResponder() }
+        }
+
         @objc private func toggleKeyboard() {
             guard let tv = terminalView else { return }
-            if tv.isFirstResponder && keyboardEnabled { keyboardEnabled = false; tv.resignFirstResponder() }
-            else {
-                keyboardEnabled = true; tv.becomeFirstResponder()
-                // Exit tmux copy mode so keyboard input goes to the shell/Claude, not tmux's command line
-                connection?.exitCopyMode()
+            if tv.isFirstResponder {
+                _ = tv.resignFirstResponder()
+            } else {
+                tv.resumeLiveFollow()
+                _ = tv.becomeFirstResponder()
             }
         }
-        /// Reclaim first responder for the terminal after dictation or other interruptions
-        @objc private func refocusTerminal() {
-            guard let tv = terminalView, !tv.isFirstResponder, keyboardEnabled else { return }
-            DispatchQueue.main.async { tv.becomeFirstResponder() }
-        }
-
-        @objc func handleScroll(_ gesture: UIPanGestureRecognizer) {
-            switch gesture.state {
-            case .began: isScrolling = true
-            case .ended, .cancelled, .failed: isScrolling = false; return
-            default: break
-            }
-            guard let connection else { return }
-            let now = CACurrentMediaTime()
-            guard now - lastScrollTime > 0.06 else { return }
-            lastScrollTime = now
-            let translation = gesture.translation(in: gesture.view)
-            gesture.setTranslation(.zero, in: gesture.view)
-            let deltaY = translation.y
-            guard abs(deltaY) > 3 else { return }
-            let direction = deltaY > 0 ? "up" : "down"
-            let lines = max(1, Int(abs(deltaY) / 16))
-            connection.sendScroll(direction: direction, lines: lines)
-        }
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 
         deinit { NotificationCenter.default.removeObserver(self) }
 
-        func send(source: TerminalView, data: ArraySlice<UInt8>) { guard !isScrolling else { return }; connection?.exitCopyMode(); connection?.sendInput(Array(data)) }
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            (source as? OrionTerminalView)?.resumeLiveFollow()
+            connection?.exitCopyMode()
+            connection?.sendInput(Array(data))
+        }
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { connection?.sendResize(cols: newCols, rows: newRows) }
         func setTerminalTitle(source: TerminalView, title: String) {}
         func scrolled(source: TerminalView, position: Double) {}
@@ -217,6 +256,78 @@ struct SwiftTermView: UIViewRepresentable {
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { if let url = URL(string: link) { UIApplication.shared.open(url) } }
         func bell(source: TerminalView) { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
         func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+
+        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard let tv = terminalView, let connection else { return }
+
+            switch gesture.state {
+            case .began:
+                lastPanTranslationY = gesture.translation(in: tv).y
+                localScrollRemainder = 0
+                remoteScrollRemainder = 0
+            case .changed:
+                let translationY = gesture.translation(in: tv).y
+                let deltaY = translationY - lastPanTranslationY
+                lastPanTranslationY = translationY
+                guard abs(deltaY) > 0 else { return }
+
+                if tv.canScroll {
+                    tv.beginDetachedScroll()
+                    localScrollRemainder += deltaY
+                    let lineStep = max(tv.font.lineHeight, 8)
+                    let lines = Int(abs(localScrollRemainder) / lineStep)
+                    guard lines > 0 else { return }
+
+                    if localScrollRemainder > 0 {
+                        tv.scrollUp(lines: min(lines, 12))
+                    } else {
+                        tv.scrollDown(lines: min(lines, 12))
+                    }
+
+                    let consumed = CGFloat(lines) * lineStep * (localScrollRemainder > 0 ? 1 : -1)
+                    localScrollRemainder -= consumed
+                    return
+                }
+
+                remoteScrollRemainder += deltaY
+                let lines = Int(abs(remoteScrollRemainder) / remoteScrollStep)
+                guard lines > 0 else { return }
+
+                let direction = remoteScrollRemainder > 0 ? "up" : "down"
+                connection.sendScroll(direction: direction, lines: min(lines, 8))
+                let consumed = CGFloat(lines) * remoteScrollStep * (remoteScrollRemainder > 0 ? 1 : -1)
+                remoteScrollRemainder -= consumed
+            case .ended, .cancelled, .failed:
+                lastPanTranslationY = 0
+                localScrollRemainder = 0
+                remoteScrollRemainder = 0
+                tv.noteUserScroll()
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard let tv = scrollView as? OrionTerminalView else { return }
+            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+            tv.syncBufferToViewport()
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            guard let tv = scrollView as? OrionTerminalView else { return }
+            if !decelerate {
+                tv.syncBufferToViewport()
+            }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            guard let tv = scrollView as? OrionTerminalView else { return }
+            tv.syncBufferToViewport()
+        }
     }
 }
 

@@ -62,13 +62,12 @@ struct ConnectionView: View {
         .onAppear {
             state.bonjour.startBrowsing()
 
-            // Load last connection from UserDefaults (survives simulator rebuilds)
+            // Load last host from UserDefaults; token lives in Keychain only
             let defaults = UserDefaults.standard
             if let savedHost = defaults.string(forKey: "lastHost"), !savedHost.isEmpty,
-               let savedToken = defaults.string(forKey: "lastToken"), !savedToken.isEmpty {
+               let savedToken = KeychainService.getToken(for: savedHost), !savedToken.isEmpty {
                 host = savedHost
                 token = savedToken
-                // Auto-connect if we have saved credentials
                 if !didAutoConnect {
                     didAutoConnect = true
                     Task { await connectTapped() }
@@ -84,9 +83,8 @@ struct ConnectionView: View {
         isConnecting = true; state.connectionError = nil
         do {
             try await state.connect(host: host, token: token)
-            // Persist to UserDefaults for quick reconnect after rebuild
+            // Persist host only; token is stored in Keychain by state.connect()
             UserDefaults.standard.set(host, forKey: "lastHost")
-            UserDefaults.standard.set(token, forKey: "lastToken")
         } catch {
             state.connectionError = error.localizedDescription
         }

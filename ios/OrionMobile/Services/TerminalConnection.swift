@@ -8,8 +8,11 @@ final class TerminalConnection {
     private(set) var connectionState = ConnectionState.disconnected
     /// Set to true after scrolling (tmux copy mode). Cleared when exitCopyMode() is called.
     var inCopyMode = false
-    var onOutput: (([UInt8]) -> Void)?
+    var onOutput: (([UInt8]) -> Void)? {
+        didSet { flushBufferedOutput() }
+    }
     var onExit: (() -> Void)?
+    var onPermanentFailure: (() -> Void)?
 
     private var host: String?
     private var token: String?
@@ -18,6 +21,9 @@ final class TerminalConnection {
     private var pendingResize: (cols: Int, rows: Int)?
     private var reconnectTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
+    private var bufferedOutput: [[UInt8]] = []
+    private var shouldReconnect = false
+    private var connectionGeneration = 0
 
     init(terminalId: String, tmuxSession: String) {
         self.terminalId = terminalId
@@ -29,15 +35,17 @@ final class TerminalConnection {
     func connect(host: String, token: String) {
         self.host = host
         self.token = token
+        shouldReconnect = true
+        connectionGeneration += 1
         // Clean up old WebSocket if any
         pingTask?.cancel(); pingTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil); webSocket = nil
         session?.invalidateAndCancel(); session = nil
         inCopyMode = false
-        connectWebSocket(host: host, token: token)
+        connectWebSocket(host: host, token: token, generation: connectionGeneration)
     }
 
-    private func connectWebSocket(host: String, token: String) {
+    private func connectWebSocket(host: String, token: String, generation: Int) {
         let encoded = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
         let encodedTmux = tmuxSession.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? tmuxSession
         guard let url = URL(string: "ws://\(host)/ws/terminal/\(terminalId)?token=\(encoded)&tmux=\(encodedTmux)") else {
@@ -52,12 +60,14 @@ final class TerminalConnection {
         webSocket?.resume()
         isConnected = true
         connectionState = .connected
-        receiveLoop()
+        receiveLoop(generation: generation)
         startPing()
         if let resize = pendingResize { sendResize(cols: resize.cols, rows: resize.rows); pendingResize = nil }
     }
 
     func disconnect() {
+        shouldReconnect = false
+        connectionGeneration += 1
         cancelReconnect()
         pingTask?.cancel()
         pingTask = nil
@@ -77,14 +87,11 @@ final class TerminalConnection {
     func sendScroll(direction: String, lines: Int) { inCopyMode = true; send(WSMessage(type: "scroll", data: direction, cols: lines)) }
 
     /// Exit tmux copy mode and scroll to bottom. Only fires when we know we're in copy mode.
+    /// Uses tmux's official cancel command via the backend (bypasses the PTY for reliability).
     func exitCopyMode() {
         guard inCopyMode else { return }
         inCopyMode = false
-        // Send Escape first (cancels any copy-mode sub-prompt like goto-line),
-        // then q to exit copy mode entirely. At a normal prompt this never fires
-        // because inCopyMode is only true after scrolling.
-        sendInput([0x1B])
-        sendInput([UInt8]("q".utf8))
+        send(WSMessage(type: "cancel-copy-mode"))
     }
 
     private func send(_ message: WSMessage) {
@@ -92,14 +99,19 @@ final class TerminalConnection {
         webSocket?.send(.string(string)) { _ in }
     }
 
-    private func receiveLoop() {
+    private func receiveLoop(generation: Int) {
         webSocket?.receive { [weak self] result in
             guard let self else { return }
+            guard generation == self.connectionGeneration else { return }
             switch result {
-            case .success(let message): self.handleMessage(message); self.receiveLoop()
+            case .success(let message):
+                self.handleMessage(message)
+                self.receiveLoop(generation: generation)
             case .failure:
                 DispatchQueue.main.async {
+                    guard generation == self.connectionGeneration else { return }
                     self.isConnected = false
+                    guard self.shouldReconnect else { return }
                     self.attemptReconnect()
                 }
             }
@@ -112,10 +124,16 @@ final class TerminalConnection {
         switch msg.type {
         case "output":
             if let b64 = msg.data, let decoded = Data(base64Encoded: b64) {
-                DispatchQueue.main.async { self.onOutput?([UInt8](decoded)) }
+                let bytes = [UInt8](decoded)
+                DispatchQueue.main.async { self.deliverOutput(bytes) }
             }
         case "exit":
-            DispatchQueue.main.async { self.isConnected = false; self.connectionState = .disconnected; self.onExit?() }
+            DispatchQueue.main.async {
+                self.shouldReconnect = false
+                self.isConnected = false
+                self.connectionState = .disconnected
+                self.onExit?()
+            }
         case "pong":
             break // Ignore pong responses
         default: break
@@ -127,7 +145,7 @@ final class TerminalConnection {
     private func attemptReconnect() {
         guard let host, let token else {
             connectionState = .failed
-            onExit?()
+            onPermanentFailure?()
             return
         }
 
@@ -139,8 +157,10 @@ final class TerminalConnection {
             while attempt < maxAttempts {
                 guard let self, !Task.isCancelled else { return }
                 attempt += 1
-                let delay = UInt64(pow(2.0, Double(attempt - 1))) // 1, 2, 4, 8, 16 seconds
-                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                // Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s × (0.5–1.5)
+                let baseDelay = pow(2.0, Double(attempt - 1))
+                let jittered = baseDelay * Double.random(in: 0.5...1.5)
+                try? await Task.sleep(nanoseconds: UInt64(jittered * 1_000_000_000))
                 guard !Task.isCancelled else { return }
 
                 do {
@@ -157,6 +177,8 @@ final class TerminalConnection {
 
                     // Disconnect old WebSocket
                     await MainActor.run {
+                        self.connectionGeneration += 1
+                        let generation = self.connectionGeneration
                         self.webSocket?.cancel(with: .normalClosure, reason: nil)
                         self.webSocket = nil
                         self.session?.invalidateAndCancel()
@@ -164,7 +186,7 @@ final class TerminalConnection {
 
                         // Update terminal ID and reconnect
                         self.terminalId = resp.terminalId
-                        self.connectWebSocket(host: host, token: token)
+                        self.connectWebSocket(host: host, token: token, generation: generation)
                     }
                     return // Success
                 } catch {
@@ -176,7 +198,7 @@ final class TerminalConnection {
             guard let self, !Task.isCancelled else { return }
             await MainActor.run {
                 self.connectionState = .failed
-                self.onExit?()
+                self.onPermanentFailure?()
             }
         }
     }
@@ -184,6 +206,26 @@ final class TerminalConnection {
     private func cancelReconnect() {
         reconnectTask?.cancel()
         reconnectTask = nil
+    }
+
+    private func deliverOutput(_ bytes: [UInt8]) {
+        if let onOutput {
+            onOutput(bytes)
+            return
+        }
+        bufferedOutput.append(bytes)
+        if bufferedOutput.count > 256 {
+            bufferedOutput.removeFirst(bufferedOutput.count - 256)
+        }
+    }
+
+    private func flushBufferedOutput() {
+        guard let onOutput, !bufferedOutput.isEmpty else { return }
+        let pending = bufferedOutput
+        bufferedOutput.removeAll(keepingCapacity: true)
+        for chunk in pending {
+            onOutput(chunk)
+        }
     }
 
     // MARK: - Client Ping

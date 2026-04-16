@@ -53,7 +53,7 @@ struct TerminalTab: Identifiable {
     let workspacePath: String
 
     init(label: String, tmuxSession: String, terminalId: String, workspacePath: String) {
-        self.id = "tab-\(Int(Date().timeIntervalSince1970 * 1000))"
+        self.id = "tab-\(UUID().uuidString)"
         self.label = label
         self.tmuxSession = tmuxSession
         self.terminalId = terminalId

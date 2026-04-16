@@ -42,6 +42,9 @@ final class AppState {
     var showWorkspaces = false
     var showSettings = false
     var connectionError: String?
+    /// Transient error message shown as a toast at the top of the main view.
+    /// Cleared automatically after 4 seconds.
+    var transientError: String?
     var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
 
     var activeTab: TerminalTab? { tabs.first { $0.id == activeTabId } }
@@ -65,7 +68,7 @@ final class AppState {
             let config = try await client.getConfig()
             let key = config.openaiApiKey ?? ""
             speech.openAIApiKey = key
-            print("[Orion Voice] Fetched OpenAI key: \(key.isEmpty ? "EMPTY" : "\(key.prefix(12))... (\(key.count) chars)")")
+            print("[Orion Voice] OpenAI key: \(key.isEmpty ? "missing" : "loaded (\(key.count) chars)")")
         } catch {
             print("[Orion Voice] Failed to fetch config: \(error)")
         }
@@ -135,7 +138,11 @@ final class AppState {
         let tab = TerminalTab(label: session.label, tmuxSession: session.tmuxName, terminalId: resp.terminalId, workspacePath: session.workspacePath)
         let connection = TerminalConnection(terminalId: resp.terminalId, tmuxSession: session.tmuxName)
         connection.onExit = { [weak self] in self?.closeTab(tab.id) }
-        connections[resp.terminalId] = connection; tabs.append(tab); activeTabId = tab.id
+        connection.onPermanentFailure = { [weak self] in
+            self?.showTransientError("\(session.label) disconnected. Tap Reconnect to resume.")
+        }
+        // Key by tmuxSession (stable across reconnects) instead of terminalId (changes on reconnect)
+        connections[session.tmuxName] = connection; tabs.append(tab); activeTabId = tab.id
         connection.connect(host: host, token: token)
     }
 
@@ -158,9 +165,17 @@ final class AppState {
         await refreshSessions()
     }
 
+    func showTransientError(_ message: String) {
+        transientError = message
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            if transientError == message { transientError = nil }
+        }
+    }
+
     func closeTab(_ tabId: String) {
         guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
-        connections[tab.terminalId]?.disconnect(); connections.removeValue(forKey: tab.terminalId)
+        connections[tab.tmuxSession]?.disconnect(); connections.removeValue(forKey: tab.tmuxSession)
         tabs.removeAll { $0.id == tabId }
         if activeTabId == tabId { activeTabId = tabs.last?.id }
     }
@@ -236,19 +251,13 @@ final class AppState {
     func reconnectDeadConnections() {
         guard isConnected, !host.isEmpty, !token.isEmpty else { return }
 
-        // Reconnect terminal connections that have dropped
-        for (key, connection) in connections {
-            if !connection.isConnected && connection.connectionState == .disconnected {
-                connection.connect(host: host, token: token)
-            }
-            // Update dictionary key if terminalId changed during a previous reconnect
-            if connection.terminalId != key {
-                connections.removeValue(forKey: key)
-                connections[connection.terminalId] = connection
-                if let idx = tabs.firstIndex(where: { $0.terminalId == key }) {
-                    tabs[idx].terminalId = connection.terminalId
-                }
-            }
+        // Reconnect terminal connections that have dropped. Keys are tmuxSession
+        // (stable across reconnects), so no dictionary mutation needed here.
+        let deadConnections = connections.values.filter {
+            !$0.isConnected && $0.connectionState != .reconnecting
+        }
+        for connection in deadConnections {
+            connection.connect(host: host, token: token)
         }
 
         // Reconnect voice WebSocket if voice mode is on and it's disconnected

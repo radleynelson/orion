@@ -94,8 +94,10 @@ final class VoiceConnection {
 
             for attempt in 1...maxAttempts {
                 guard self != nil, !Task.isCancelled else { return }
-                let delay = UInt64(pow(2.0, Double(attempt - 1))) // 1, 2, 4, 8, 16 seconds
-                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                // Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s × (0.5–1.5)
+                let baseDelay = pow(2.0, Double(attempt - 1))
+                let jittered = baseDelay * Double.random(in: 0.5...1.5)
+                try? await Task.sleep(nanoseconds: UInt64(jittered * 1_000_000_000))
                 guard let self, !Task.isCancelled else { return }
 
                 // Just reconnect the WebSocket (no new ID needed for voice)

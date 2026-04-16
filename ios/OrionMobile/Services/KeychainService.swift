@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum KeychainService {
-    private static let service = "com.orion.mobile"
+    private static let service = Bundle.main.bundleIdentifier ?? "com.radnelson.orionmobile"
 
     static func saveToken(_ token: String, for host: String) { save(key: "token-\(host)", value: token) }
     static func getToken(for host: String) -> String? { load(key: "token-\(host)") }
