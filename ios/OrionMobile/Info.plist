@@ -27,6 +27,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Orion connects to your Mac on the local network to manage coding workspaces.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Orion lets you attach images to chat messages.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Orion uses the microphone to dictate terminal commands by voice.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

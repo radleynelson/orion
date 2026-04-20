@@ -4,9 +4,11 @@ import { workspace } from '../../wailsjs/go/models';
 // --- Pane tree types ---
 
 export interface PaneLeaf {
-  type: 'terminal' | 'editor';
+  type: 'terminal' | 'editor' | 'chat';
   id: string;
   terminalId?: string;  // for terminal
+  chatSessionId?: string; // for agent chat
+  chatKind?: 'codex' | 'claude';
   filePath?: string;    // for editor & diff
   language?: string;    // Monaco language id
   line?: number;        // line to scroll to on open
@@ -27,7 +29,7 @@ export interface Tab {
   id: string;
   label: string;
   rootPane: Pane;
-  tabType: 'shell' | 'claude' | 'codex' | 'server' | 'mixed' | 'editor';
+  tabType: 'shell' | 'claude' | 'codex' | 'codex-chat' | 'claude-chat' | 'server' | 'mixed' | 'editor';
   workspacePath: string;
 }
 
@@ -165,7 +167,7 @@ export function generateId(prefix: string): string {
 // --- Pane tree helpers ---
 
 function isLeaf(pane: Pane): pane is PaneLeaf {
-  return pane.type === 'terminal' || pane.type === 'editor';
+  return pane.type === 'terminal' || pane.type === 'editor' || pane.type === 'chat';
 }
 
 function isSplit(pane: Pane): pane is PaneSplit {

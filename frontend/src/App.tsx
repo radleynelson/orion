@@ -7,13 +7,17 @@ import FileExplorer from './components/FileExplorer';
 import GlobalSearch from './components/GlobalSearch';
 import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
-import { useStore, generateId, Tab, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
+import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import {
+  ConvertChatToTerminal,
+  AttachClaudeChat,
   CreateTerminalInDir,
   CreateAttachedTerminal,
   CloseTerminal,
+  DetachTerminal,
+  LaunchCodexChat,
   SaveTabs,
   GetLastProject,
   GetProjectInfo,
@@ -25,6 +29,8 @@ import {
   GetTmuxSession,
   RecoverSessions,
   RevealInFinder,
+  StopClaudeChat,
+  StopCodexChat,
 } from '../wailsjs/go/main/App';
 
 function App() {
@@ -113,8 +119,20 @@ function App() {
       const savedTabs = (await GetSavedTabs()) || [];
       const restoredSessions = new Set<string>();
       for (const saved of savedTabs) {
-        const termId = generateId('term');
         try {
+          if (saved.tabType === 'claude-chat') {
+            const session = await AttachClaudeChat(saved.tmuxSession, saved.workspacePath);
+            addTab({
+              id: generateId('tab'),
+              label: saved.label,
+              rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'claude' } as PaneLeaf,
+              tabType: 'claude-chat',
+              workspacePath: saved.workspacePath,
+            });
+            restoredSessions.add(saved.tmuxSession);
+            continue;
+          }
+          const termId = generateId('term');
           await CreateAttachedTerminal(termId, saved.tmuxSession);
           addTab({
             id: generateId('tab'),
@@ -140,7 +158,7 @@ function App() {
               id: generateId('tab'),
               label: sess.label,
               rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-              tabType: (sess.type === 'server' ? 'server' : 'shell') as 'shell' | 'claude' | 'codex' | 'server',
+              tabType: (sess.type === 'server' || sess.type === 'claude' || sess.type === 'codex' ? sess.type : 'shell') as 'shell' | 'claude' | 'codex' | 'server',
               workspacePath: sess.workspacePath,
             };
             if (sess.type === 'server') {
@@ -272,6 +290,14 @@ function App() {
     }
   }, [focusedPaneId, closePane]);
 
+  const getChatSessions = useCallback((pane: Pane, fallbackKind: 'codex' | 'claude' = 'codex'): { id: string; kind: 'codex' | 'claude' }[] => {
+    if (pane.type === 'chat' && pane.chatSessionId) {
+      return [{ id: pane.chatSessionId, kind: pane.chatKind || fallbackKind }];
+    }
+    if (!('children' in pane)) return [];
+    return pane.children.flatMap((child) => getChatSessions(child, fallbackKind));
+  }, []);
+
   const handleCloseTab = useCallback(async (tabId: string) => {
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
@@ -281,8 +307,82 @@ function App() {
         await CloseTerminal(termId);
       } catch {}
     }
+    const fallbackKind = tab.tabType === 'claude-chat' ? 'claude' : 'codex';
+    for (const session of getChatSessions(tab.rootPane, fallbackKind)) {
+      try {
+        if (session.kind === 'claude') {
+          await StopClaudeChat(session.id);
+        } else {
+          await StopCodexChat(session.id);
+        }
+      } catch {}
+    }
     removeTab(tabId);
-  }, [tabs, removeTab, getAllTerminalIds]);
+  }, [tabs, removeTab, getAllTerminalIds, getChatSessions]);
+
+  const handleConvertTab = useCallback(async (tabId: string) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || !project) return;
+
+    if (tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat') {
+      const fallbackKind = tab.tabType === 'claude-chat' ? 'claude' : 'codex';
+      const chat = getChatSessions(tab.rootPane, fallbackKind)[0];
+      if (!chat) return;
+      try {
+        const tmuxSession = await ConvertChatToTerminal(project.root, tab.workspacePath, chat.id, chat.kind);
+        const termId = generateId('term');
+        await CreateAttachedTerminal(termId, tmuxSession);
+        addTab({
+          id: generateId('tab'),
+          label: chat.kind === 'claude' ? 'Claude' : 'Codex',
+          rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+          tabType: chat.kind,
+          workspacePath: tab.workspacePath,
+        });
+        removeTab(tab.id);
+      } catch (err) {
+        console.error('Failed to convert chat to terminal:', err);
+      }
+      return;
+    }
+
+    if (tab.tabType === 'claude' || tab.tabType === 'codex') {
+      const kind = tab.tabType;
+      try {
+        if (kind === 'claude') {
+          const termId = getAllTerminalIds(tab)[0];
+          if (!termId) return;
+          const tmuxSession = await GetTmuxSession(termId);
+          if (!tmuxSession) return;
+          const session = await AttachClaudeChat(tmuxSession, tab.workspacePath);
+          await DetachTerminal(termId);
+          addTab({
+            id: generateId('tab'),
+            label: session?.label ? `${session.label} Chat` : 'Claude Chat',
+            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'claude' } as PaneLeaf,
+            tabType: 'claude-chat',
+            workspacePath: tab.workspacePath,
+          });
+          removeTab(tab.id);
+          return;
+        }
+        const session = await LaunchCodexChat(project.root, tab.workspacePath);
+        for (const termId of getAllTerminalIds(tab)) {
+          try { await CloseTerminal(termId); } catch {}
+        }
+        addTab({
+          id: generateId('tab'),
+          label: session?.label || 'Codex Chat',
+          rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'codex' } as PaneLeaf,
+          tabType: 'codex-chat',
+          workspacePath: tab.workspacePath,
+        });
+        removeTab(tab.id);
+      } catch (err) {
+        console.error('Failed to convert terminal to chat:', err);
+      }
+    }
+  }, [tabs, project, getChatSessions, addTab, removeTab, getAllTerminalIds]);
 
   // Persist tabs to disk whenever they change (for recovery on restart)
   useEffect(() => {
@@ -290,6 +390,19 @@ function App() {
     (async () => {
       const savedTabs = [];
       for (const tab of tabs) {
+        if (tab.tabType === 'codex-chat') continue;
+        if (tab.tabType === 'claude-chat') {
+          const chat = getChatSessions(tab.rootPane, 'claude')[0];
+          if (chat?.id) {
+            savedTabs.push({
+              label: tab.label,
+              tabType: tab.tabType,
+              tmuxSession: chat.id,
+              workspacePath: tab.workspacePath,
+            });
+          }
+          continue;
+        }
         // Get all terminal IDs and their tmux sessions
         const termIds = getAllTerminalIds(tab);
         for (const termId of termIds) {
@@ -308,7 +421,7 @@ function App() {
         await SaveTabs(savedTabs);
       }
     })();
-  }, [tabs]);
+  }, [tabs, getAllTerminalIds, getChatSessions]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -474,6 +587,17 @@ function App() {
         // Only add if this workspace belongs to the current project
         const ws = useStore.getState().workspaces;
         if (!ws.some((w: any) => w.path === data.workspacePath)) return;
+        if (data.type === 'codex-chat' || data.type === 'claude-chat') {
+          const chatKind = data.type === 'claude-chat' ? 'claude' : 'codex';
+          addTab({
+            id: generateId('tab'),
+            label: data.label || (chatKind === 'claude' ? 'Claude Chat' : 'Codex Chat'),
+            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: data.tmuxSession, chatKind } as PaneLeaf,
+            tabType: data.type as 'codex-chat' | 'claude-chat',
+            workspacePath: data.workspacePath,
+          });
+          return;
+        }
         const termId = generateId('term');
         try {
           await CreateAttachedTerminal(termId, data.tmuxSession);
@@ -599,6 +723,8 @@ function App() {
               >
                 <span className="tab-icon">
                   {tab.tabType === 'claude' ? '◆' :
+                   tab.tabType === 'claude-chat' ? '◆' :
+                   tab.tabType === 'codex-chat' ? '◈' :
                    tab.tabType === 'codex' ? '◇' :
                    tab.tabType === 'server' ? '▸' :
                    tab.tabType === 'editor' ? '◈' : '›'}
@@ -632,6 +758,18 @@ function App() {
                     }}
                   >
                     {tab.label}
+                  </span>
+                )}
+                {(tab.tabType === 'claude' || tab.tabType === 'codex' || tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat') && (
+                  <span
+                    className="convert"
+                    title={tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat' ? 'Convert to terminal' : 'Convert to chat'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleConvertTab(tab.id);
+                    }}
+                  >
+                    ↔
                   </span>
                 )}
                 <span

@@ -358,6 +358,26 @@ func (m *Manager) Close(id string) error {
 	return nil
 }
 
+// Detach closes Orion's PTY attachment without killing the underlying tmux
+// session. This is used when switching a tmux-backed session to another view.
+func (m *Manager) Detach(id string) error {
+	m.mu.Lock()
+	t, ok := m.terminals[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("terminal %s not found", id)
+	}
+	delete(m.terminals, id)
+	m.mu.Unlock()
+
+	close(t.done)
+	t.pty.Close()
+	t.cmd.Process.Signal(syscall.SIGHUP)
+	t.cmd.Wait()
+
+	return nil
+}
+
 // DetachAll detaches from all terminal PTYs without killing tmux sessions.
 // Used on app shutdown so sessions survive for recovery on next launch.
 func (m *Manager) DetachAll() {

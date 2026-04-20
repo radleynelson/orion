@@ -62,6 +62,18 @@ struct ConnectionView: View {
         .onAppear {
             state.bonjour.startBrowsing()
 
+            let env = ProcessInfo.processInfo.environment
+            if let envHost = env["ORION_MOBILE_HOST"], !envHost.isEmpty,
+               let envToken = env["ORION_MOBILE_TOKEN"], !envToken.isEmpty {
+                host = envHost
+                token = envToken
+                if !didAutoConnect {
+                    didAutoConnect = true
+                    Task { await connectTapped() }
+                }
+                return
+            }
+
             // Load last host from UserDefaults; token lives in Keychain only
             let defaults = UserDefaults.standard
             if let savedHost = defaults.string(forKey: "lastHost"), !savedHost.isEmpty,

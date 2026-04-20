@@ -1,12 +1,136 @@
+export namespace claudechat {
+
+	export class Message {
+	    id: string;
+	    sessionId: string;
+	    threadId?: string;
+	    type: string;
+	    subtype?: string;
+	    role?: string;
+	    text?: string;
+	    status?: string;
+	    toolUseId?: string;
+	    toolName?: string;
+	    details?: string;
+	    planPath?: string;
+	    createdAt: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Message(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sessionId = source["sessionId"];
+	        this.threadId = source["threadId"];
+	        this.type = source["type"];
+	        this.subtype = source["subtype"];
+	        this.role = source["role"];
+	        this.text = source["text"];
+	        this.status = source["status"];
+	        this.toolUseId = source["toolUseId"];
+	        this.toolName = source["toolName"];
+	        this.details = source["details"];
+	        this.planPath = source["planPath"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SessionInfo {
+	    id: string;
+	    type: string;
+	    label: string;
+	    workspacePath: string;
+	    status: string;
+	    threadId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.label = source["label"];
+	        this.workspacePath = source["workspacePath"];
+	        this.status = source["status"];
+	        this.threadId = source["threadId"];
+	    }
+	}
+
+}
+
+export namespace codexchat {
+
+	export class Message {
+	    id: string;
+	    sessionId: string;
+	    threadId?: string;
+	    type: string;
+	    subtype?: string;
+	    role?: string;
+	    text?: string;
+	    status?: string;
+	    toolUseId?: string;
+	    toolName?: string;
+	    details?: string;
+	    createdAt: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Message(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sessionId = source["sessionId"];
+	        this.threadId = source["threadId"];
+	        this.type = source["type"];
+	        this.subtype = source["subtype"];
+	        this.role = source["role"];
+	        this.text = source["text"];
+	        this.status = source["status"];
+	        this.toolUseId = source["toolUseId"];
+	        this.toolName = source["toolName"];
+	        this.details = source["details"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SessionInfo {
+	    id: string;
+	    type: string;
+	    label: string;
+	    workspacePath: string;
+	    status: string;
+	    threadId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.label = source["label"];
+	        this.workspacePath = source["workspacePath"];
+	        this.status = source["status"];
+	        this.threadId = source["threadId"];
+	    }
+	}
+
+}
+
 export namespace config {
-	
+
 	export class AgentConfig {
 	    Command: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AgentConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Command = source["Command"];
@@ -14,11 +138,11 @@ export namespace config {
 	}
 	export class CredentialsConfig {
 	    Copy: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CredentialsConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Copy = source["Copy"];
@@ -30,11 +154,11 @@ export namespace config {
 	    DefaultPort: number;
 	    PortEnv: string;
 	    Env: Record<string, string>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ServerConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Command = source["Command"];
@@ -49,11 +173,11 @@ export namespace config {
 	    Credentials: CredentialsConfig;
 	    Servers: Record<string, ServerConfig>;
 	    Agents: Record<string, AgentConfig>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new OrionConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.BranchPrefix = source["BranchPrefix"];
@@ -61,7 +185,7 @@ export namespace config {
 	        this.Servers = this.convertValues(source["Servers"], ServerConfig, true);
 	        this.Agents = this.convertValues(source["Agents"], AgentConfig, true);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -84,18 +208,18 @@ export namespace config {
 }
 
 export namespace files {
-	
+
 	export class FileEntry {
 	    name: string;
 	    path: string;
 	    isDir: boolean;
 	    size: number;
 	    children?: FileEntry[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FileEntry(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -104,7 +228,7 @@ export namespace files {
 	        this.size = source["size"];
 	        this.children = this.convertValues(source["children"], FileEntry);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -127,11 +251,11 @@ export namespace files {
 	    file: string;
 	    line: number;
 	    content: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GrepResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.file = source["file"];
@@ -143,11 +267,11 @@ export namespace files {
 	    name: string;
 	    path: string;
 	    isDir: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SearchResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -159,16 +283,16 @@ export namespace files {
 }
 
 export namespace git {
-	
+
 	export class ChangedFile {
 	    path: string;
 	    status: string;
 	    statusText: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ChangedFile(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -180,11 +304,11 @@ export namespace git {
 	    originalContent: string;
 	    modifiedContent: string;
 	    language: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FileDiff(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.originalContent = source["originalContent"];
@@ -196,16 +320,16 @@ export namespace git {
 }
 
 export namespace main {
-	
+
 	export class AgentTypeInfo {
 	    name: string;
 	    command: string;
 	    label: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AgentTypeInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -217,17 +341,17 @@ export namespace main {
 }
 
 export namespace server {
-	
+
 	export class ServerStatus {
 	    name: string;
 	    port: number;
 	    running: boolean;
 	    tmuxSession: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ServerStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -240,17 +364,17 @@ export namespace server {
 }
 
 export namespace state {
-	
+
 	export class SavedTab {
 	    label: string;
 	    tabType: string;
 	    tmuxSession: string;
 	    workspacePath: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SavedTab(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.label = source["label"];
@@ -264,11 +388,11 @@ export namespace state {
 	    type: string;
 	    label: string;
 	    workspacePath: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tmuxName = source["tmuxName"];
@@ -281,15 +405,15 @@ export namespace state {
 }
 
 export namespace web {
-	
+
 	export class AgentType {
 	    name: string;
 	    label: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AgentType(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -300,16 +424,16 @@ export namespace web {
 }
 
 export namespace workspace {
-	
+
 	export class ProjectInfo {
 	    name: string;
 	    root: string;
 	    mainBranch: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProjectInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -323,11 +447,11 @@ export namespace workspace {
 	    branch: string;
 	    isMain: boolean;
 	    hasAgent: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -339,4 +463,3 @@ export namespace workspace {
 	}
 
 }
-

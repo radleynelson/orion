@@ -23,11 +23,22 @@ actor OrionClient {
     }
     func createTerminal(tmuxSession: String) async throws -> CreateTerminalResponse { try await post("/api/terminal", body: ["tmuxSession": tmuxSession]) }
     func launchShell(repoRoot: String, workspacePath: String) async throws -> LaunchShellResponse { try await post("/api/shell", body: ["repoRoot": repoRoot, "workspacePath": workspacePath]) }
+    func convertChatToTerminal(repoRoot: String, workspacePath: String, sessionId: String, chatKind: String) async throws -> LaunchAgentResponse {
+        try await post("/api/convert-chat-to-terminal", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "sessionId": sessionId, "chatKind": chatKind])
+    }
 
     // Agents
     func getAgentTypes(root: String) async throws -> [AgentType] { try await get("/api/agents", query: ["root": root]) }
     func launchAgent(repoRoot: String, workspacePath: String, agentType: String) async throws -> LaunchAgentResponse {
         try await post("/api/agent", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "agentType": agentType])
+    }
+
+    func launchCodexChat(repoRoot: String, workspacePath: String) async throws -> LaunchCodexChatResponse {
+        try await post("/api/codex-chat", body: ["repoRoot": repoRoot, "workspacePath": workspacePath])
+    }
+
+    func launchClaudeChat(repoRoot: String, workspacePath: String) async throws -> LaunchClaudeChatResponse {
+        try await post("/api/claude-chat", body: ["repoRoot": repoRoot, "workspacePath": workspacePath])
     }
 
     // Server management

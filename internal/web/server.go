@@ -20,6 +20,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"orion/internal/chatattachments"
+	"orion/internal/claudechat"
+	"orion/internal/codexchat"
 	"orion/internal/server"
 	"orion/internal/state"
 	"orion/internal/terminal"
@@ -30,8 +33,8 @@ import (
 // This avoids circular imports with the main package.
 // AgentType represents an available agent type from config.
 type AgentType struct {
-	Name    string `json:"name"`
-	Label   string `json:"label"`
+	Name  string `json:"name"`
+	Label string `json:"label"`
 }
 
 type AppAPI interface {
@@ -42,6 +45,10 @@ type AppAPI interface {
 	GetSavedTabs() []state.SavedTab
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
 	LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error)
+	ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error)
+	LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error)
+	ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo
+	ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 	StartServers(repoRoot string, workspacePath string, isMain bool) ([]server.ServerStatus, error)
 	StopServers(workspacePath string) error
 	GetServerStatuses(repoRoot string, workspacePath string) []server.ServerStatus
@@ -51,11 +58,13 @@ type AppAPI interface {
 
 // Server is the embedded HTTP/WebSocket server for the mobile companion PWA.
 type Server struct {
-	app     AppAPI
-	termMgr *terminal.Manager
-	httpSrv *http.Server
-	token   string
-	port    int
+	app       AppAPI
+	termMgr   *terminal.Manager
+	codexMgr  *codexchat.Manager
+	claudeMgr *claudechat.Manager
+	httpSrv   *http.Server
+	token     string
+	port      int
 
 	upgrader websocket.Upgrader
 
@@ -69,12 +78,14 @@ type Server struct {
 }
 
 // NewServer creates a new web server instance.
-func NewServer(app AppAPI, termMgr *terminal.Manager) *Server {
+func NewServer(app AppAPI, termMgr *terminal.Manager, codexMgr *codexchat.Manager, claudeMgr *claudechat.Manager) *Server {
 	token := loadOrCreateToken()
 	return &Server{
-		app:     app,
-		termMgr: termMgr,
-		token:   token,
+		app:       app,
+		termMgr:   termMgr,
+		codexMgr:  codexMgr,
+		claudeMgr: claudeMgr,
+		token:     token,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -98,6 +109,13 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/sessions", s.authMiddleware(s.handleSessions))
 	mux.HandleFunc("/api/terminal", s.authMiddleware(s.handleTerminal))
 	mux.HandleFunc("/api/shell", s.authMiddleware(s.handleShell))
+	mux.HandleFunc("/api/convert-chat-to-terminal", s.authMiddleware(s.handleConvertChatToTerminal))
+	mux.HandleFunc("/api/claude-chat", s.authMiddleware(s.handleClaudeChat))
+	mux.HandleFunc("/api/claude-chat/message", s.authMiddleware(s.handleClaudeChatMessage))
+	mux.HandleFunc("/api/claude-chat/answer", s.authMiddleware(s.handleClaudeChatAnswer))
+	mux.HandleFunc("/api/codex-chat", s.authMiddleware(s.handleCodexChat))
+	mux.HandleFunc("/api/codex-chat/message", s.authMiddleware(s.handleCodexChatMessage))
+	mux.HandleFunc("/api/codex-chat/answer", s.authMiddleware(s.handleCodexChatAnswer))
 	mux.HandleFunc("/api/agents", s.authMiddleware(s.handleAgents))
 	mux.HandleFunc("/api/agent", s.authMiddleware(s.handleLaunchAgent))
 	mux.HandleFunc("/api/servers", s.authMiddleware(s.handleServers))
@@ -112,6 +130,8 @@ func (s *Server) Start(port int) error {
 
 	// WebSocket route
 	mux.HandleFunc("/ws/terminal/", s.handleTerminalWS)
+	mux.HandleFunc("/ws/claude-chat/", s.handleClaudeChatWS)
+	mux.HandleFunc("/ws/codex-chat/", s.handleCodexChatWS)
 
 	// Static PWA files
 	staticContent, err := fs.Sub(staticFS, "static")
@@ -343,6 +363,24 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	upsertSession := func(sess state.SessionInfo) {
+		for i := range sessions {
+			if sessions[i].TmuxName == sess.TmuxName {
+				sessions[i] = sess
+				seen[sess.TmuxName] = true
+				return
+			}
+		}
+		sessions = append(sessions, sess)
+		seen[sess.TmuxName] = true
+	}
+	for _, sess := range s.app.ListCodexChatSessions(paths) {
+		upsertSession(sess)
+	}
+	for _, sess := range s.app.ListClaudeChatSessions(paths) {
+		upsertSession(sess)
+	}
+
 	writeJSON(w, sessions)
 }
 
@@ -411,6 +449,224 @@ func (s *Server) handleShell(w http.ResponseWriter, r *http.Request) {
 	}
 	s.app.EmitSessionCreated(tmuxSession, "shell", "Shell", req.WorkspacePath)
 	writeJSON(w, map[string]string{"tmuxSession": tmuxSession})
+}
+
+func (s *Server) handleConvertChatToTerminal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		RepoRoot      string `json:"repoRoot"`
+		WorkspacePath string `json:"workspacePath"`
+		SessionID     string `json:"sessionId"`
+		ChatKind      string `json:"chatKind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.RepoRoot == "" || req.WorkspacePath == "" || req.SessionID == "" || req.ChatKind == "" {
+		http.Error(w, "repoRoot, workspacePath, sessionId, and chatKind required", http.StatusBadRequest)
+		return
+	}
+	tmuxSession, err := s.app.ConvertChatToTerminal(req.RepoRoot, req.WorkspacePath, req.SessionID, req.ChatKind)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	label := "Codex"
+	if req.ChatKind == "claude" {
+		label = "Claude"
+	}
+	s.app.EmitSessionCreated(tmuxSession, req.ChatKind, label, req.WorkspacePath)
+	writeJSON(w, map[string]string{"tmuxSession": tmuxSession})
+}
+
+func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		wsParam := r.URL.Query().Get("workspaces")
+		var paths []string
+		if wsParam != "" {
+			paths = strings.Split(wsParam, ",")
+		}
+		writeJSON(w, s.claudeMgr.List(paths))
+	case http.MethodPost:
+		var req struct {
+			RepoRoot      string `json:"repoRoot"`
+			WorkspacePath string `json:"workspacePath"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.WorkspacePath == "" {
+			http.Error(w, "workspacePath required", http.StatusBadRequest)
+			return
+		}
+		if req.RepoRoot == "" {
+			http.Error(w, "repoRoot required", http.StatusBadRequest)
+			return
+		}
+		info, err := s.app.LaunchClaudeChat(req.RepoRoot, req.WorkspacePath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.app.EmitSessionCreated(info.ID, info.Type, info.Label, info.WorkspacePath)
+		writeJSON(w, info)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleClaudeChatMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		SessionID   string                  `json:"sessionId"`
+		Text        string                  `json:"text"`
+		Attachments []chatattachments.Input `json:"attachments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	session, ok := s.claudeMgr.Get(req.SessionID)
+	if !ok {
+		http.Error(w, "claude chat session not found", http.StatusNotFound)
+		return
+	}
+	attachments, err := chatattachments.Resolve(req.SessionID, req.Attachments)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := session.Send(req.Text, attachments); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "sent"})
+}
+
+func (s *Server) handleClaudeChatAnswer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		SessionID string `json:"sessionId"`
+		ToolUseID string `json:"toolUseId"`
+		Result    string `json:"result"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	session, ok := s.claudeMgr.Get(req.SessionID)
+	if !ok {
+		http.Error(w, "claude chat session not found", http.StatusNotFound)
+		return
+	}
+	if err := session.Answer(req.ToolUseID, req.Result); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "answered"})
+}
+
+func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		wsParam := r.URL.Query().Get("workspaces")
+		var paths []string
+		if wsParam != "" {
+			paths = strings.Split(wsParam, ",")
+		}
+		writeJSON(w, s.codexMgr.List(paths))
+	case http.MethodPost:
+		var req struct {
+			RepoRoot      string `json:"repoRoot"`
+			WorkspacePath string `json:"workspacePath"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.WorkspacePath == "" {
+			http.Error(w, "workspacePath required", http.StatusBadRequest)
+			return
+		}
+		info, err := s.codexMgr.Start(req.WorkspacePath, "Codex Chat")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.app.EmitSessionCreated(info.ID, codexchat.SessionType, info.Label, info.WorkspacePath)
+		writeJSON(w, info)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCodexChatMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		SessionID   string                  `json:"sessionId"`
+		Text        string                  `json:"text"`
+		Attachments []chatattachments.Input `json:"attachments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	session, ok := s.codexMgr.Get(req.SessionID)
+	if !ok {
+		http.Error(w, "codex chat session not found", http.StatusNotFound)
+		return
+	}
+	attachments, err := chatattachments.Resolve(req.SessionID, req.Attachments)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := session.Send(req.Text, attachments); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "sent"})
+}
+
+func (s *Server) handleCodexChatAnswer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		SessionID string `json:"sessionId"`
+		ToolUseID string `json:"toolUseId"`
+		Result    string `json:"result"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	session, ok := s.codexMgr.Get(req.SessionID)
+	if !ok {
+		http.Error(w, "codex chat session not found", http.StatusNotFound)
+		return
+	}
+	if err := session.Answer(req.ToolUseID, req.Result); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "answered"})
 }
 
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
@@ -529,6 +785,19 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tmuxSession required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := s.claudeMgr.Get(req.TmuxSession); ok {
+		_ = s.claudeMgr.Stop(req.TmuxSession)
+		writeJSON(w, map[string]string{"status": "killed"})
+		return
+	}
+	if strings.HasPrefix(req.TmuxSession, codexchat.SessionType+"-") {
+		if err := s.codexMgr.Stop(req.TmuxSession); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "killed"})
+		return
+	}
 	exec.Command("tmux", "kill-session", "-t", req.TmuxSession).Run()
 	writeJSON(w, map[string]string{"status": "killed"})
 }
@@ -567,6 +836,9 @@ func (s *Server) handleVoiceResponse(w http.ResponseWriter, r *http.Request) {
 	if req.Text == "" {
 		http.Error(w, "text required", http.StatusBadRequest)
 		return
+	}
+	if req.Session != "" {
+		s.claudeMgr.SyncTmux(req.Session)
 	}
 
 	msg, _ := json.Marshal(map[string]string{
@@ -739,11 +1011,24 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		defer wsMu.Unlock()
 		conn.WriteJSON(msg)
 	}
+	closeWS := func(code int, text string) {
+		wsMu.Lock()
+		defer wsMu.Unlock()
+		deadline := time.Now().Add(2 * time.Second)
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), deadline)
+		_ = conn.Close()
+	}
+	groupedName := "orion-web-" + terminalID
 
 	// Create a grouped tmux session with output callback
 	onOutput := func(data []byte) {
 		if data == nil {
-			// Terminal exited
+			if tmuxSessionExists(tmuxSession) {
+				log.Printf("[Orion Mobile] grouped terminal detached: terminal=%s grouped=%s tmux=%s", terminalID, groupedName, tmuxSession)
+				closeWS(websocket.CloseGoingAway, "terminal detached")
+				return
+			}
+			log.Printf("[Orion Mobile] terminal exited: terminal=%s grouped=%s tmux=%s", terminalID, groupedName, tmuxSession)
 			writeWS(wsMessage{Type: "exit"})
 			return
 		}
@@ -758,7 +1043,6 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Track active web terminal for zombie cleanup
-	groupedName := "orion-web-" + terminalID
 	s.activeWebTerminalsMu.Lock()
 	s.activeWebTerminals[groupedName] = true
 	s.activeWebTerminalsMu.Unlock()
@@ -832,11 +1116,332 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type codexChatWSMessage struct {
+	Type        string                  `json:"type"`
+	Text        string                  `json:"text,omitempty"`
+	ToolUseID   string                  `json:"toolUseId,omitempty"`
+	Action      string                  `json:"action,omitempty"`
+	Attachments []chatattachments.Input `json:"attachments,omitempty"`
+}
+
+func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	auth := r.Header.Get("Authorization")
+	if token != s.token && !(strings.HasPrefix(auth, "Bearer ") && strings.TrimPrefix(auth, "Bearer ") == s.token) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID := strings.TrimPrefix(r.URL.Path, "/ws/claude-chat/")
+	if sessionID == "" {
+		http.Error(w, "session id required", http.StatusBadRequest)
+		return
+	}
+	session, ok := s.claudeMgr.Get(sessionID)
+	if !ok {
+		workspacePath := tmuxCurrentPath(sessionID)
+		info, err := s.claudeMgr.Attach(sessionID, workspacePath, "Claude")
+		if err != nil {
+			http.Error(w, "claude chat session not found", http.StatusNotFound)
+			return
+		}
+		session, ok = s.claudeMgr.Get(info.ID)
+		if !ok {
+			http.Error(w, "claude chat session not found", http.StatusNotFound)
+			return
+		}
+	}
+
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[Orion Claude Chat] WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+		return nil
+	})
+
+	var wsMu sync.Mutex
+	writeJSONMessage := func(msg interface{}) bool {
+		wsMu.Lock()
+		defer wsMu.Unlock()
+		if err := conn.WriteJSON(msg); err != nil {
+			return false
+		}
+		return true
+	}
+
+	for _, msg := range session.Messages() {
+		if !writeJSONMessage(msg) {
+			return
+		}
+	}
+
+	updates, unsubscribe := session.Subscribe()
+	defer unsubscribe()
+
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				wsMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+				wsMu.Unlock()
+				if err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			}
+		}
+	}()
+	defer close(pingDone)
+
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		for {
+			var msg codexChatWSMessage
+			if err := conn.ReadJSON(&msg); err != nil {
+				return
+			}
+			conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+			switch msg.Type {
+			case "input":
+				attachments, err := chatattachments.Resolve(sessionID, msg.Attachments)
+				if err != nil {
+					writeJSONMessage(claudechat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+					continue
+				}
+				if err := session.Send(msg.Text, attachments); err != nil {
+					writeJSONMessage(claudechat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+				}
+			case "answer":
+				if err := session.Answer(msg.ToolUseID, msg.Text); err != nil {
+					writeJSONMessage(claudechat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+				}
+			case "plan_action":
+				if msg.Action != "approve" {
+					writeJSONMessage(claudechat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      "unsupported plan action",
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+					continue
+				}
+				if err := session.ApprovePlan(); err != nil {
+					writeJSONMessage(claudechat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+				}
+			case "ping":
+				writeJSONMessage(codexChatWSMessage{Type: "pong"})
+			}
+		}
+	}()
+
+	for {
+		select {
+		case msg, ok := <-updates:
+			if !ok {
+				return
+			}
+			if !writeJSONMessage(msg) {
+				return
+			}
+		case <-readDone:
+			return
+		}
+	}
+}
+
+func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	auth := r.Header.Get("Authorization")
+	if token != s.token && !(strings.HasPrefix(auth, "Bearer ") && strings.TrimPrefix(auth, "Bearer ") == s.token) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionID := strings.TrimPrefix(r.URL.Path, "/ws/codex-chat/")
+	if sessionID == "" {
+		http.Error(w, "session id required", http.StatusBadRequest)
+		return
+	}
+	session, ok := s.codexMgr.Get(sessionID)
+	if !ok {
+		http.Error(w, "codex chat session not found", http.StatusNotFound)
+		return
+	}
+
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[Orion Codex Chat] WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+		return nil
+	})
+
+	var wsMu sync.Mutex
+	writeJSONMessage := func(msg interface{}) bool {
+		wsMu.Lock()
+		defer wsMu.Unlock()
+		if err := conn.WriteJSON(msg); err != nil {
+			return false
+		}
+		return true
+	}
+
+	for _, msg := range session.Messages() {
+		if !writeJSONMessage(msg) {
+			return
+		}
+	}
+
+	updates, unsubscribe := session.Subscribe()
+	defer unsubscribe()
+
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				wsMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+				wsMu.Unlock()
+				if err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			}
+		}
+	}()
+	defer close(pingDone)
+
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		for {
+			var msg codexChatWSMessage
+			if err := conn.ReadJSON(&msg); err != nil {
+				return
+			}
+			conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+			switch msg.Type {
+			case "input":
+				attachments, err := chatattachments.Resolve(sessionID, msg.Attachments)
+				if err != nil {
+					writeJSONMessage(codexchat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+					continue
+				}
+				if err := session.Send(msg.Text, attachments); err != nil {
+					writeJSONMessage(codexchat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+				}
+			case "answer":
+				if err := session.Answer(msg.ToolUseID, msg.Text); err != nil {
+					writeJSONMessage(codexchat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: sessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+				}
+			case "ping":
+				writeJSONMessage(codexChatWSMessage{Type: "pong"})
+			}
+		}
+	}()
+
+	for {
+		select {
+		case msg, ok := <-updates:
+			if !ok {
+				return
+			}
+			if !writeJSONMessage(msg) {
+				return
+			}
+		case <-readDone:
+			return
+		}
+	}
+}
+
 // --- Helpers ---
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+func tmuxSessionExists(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
+}
+
+func tmuxCurrentPath(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "display-message", "-t", name, "-p", "#{pane_current_path}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func loadOrCreateToken() string {

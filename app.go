@@ -6,8 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
+	"orion/internal/chatattachments"
+	"orion/internal/claudechat"
+	"orion/internal/codexchat"
 	"orion/internal/config"
 	"orion/internal/files"
 	"orion/internal/git"
@@ -24,12 +29,14 @@ import (
 
 // App is the main application struct bound to Wails.
 type App struct {
-	ctx      context.Context
-	termMgr  *terminal.Manager
-	wsMgr    *workspace.Manager
-	srvMgr   *server.Manager
-	portReg  *port.Registry
-	appState *state.AppState
+	ctx        context.Context
+	termMgr    *terminal.Manager
+	claudeMgr  *claudechat.Manager
+	codexMgr   *codexchat.Manager
+	wsMgr      *workspace.Manager
+	srvMgr     *server.Manager
+	portReg    *port.Registry
+	appState   *state.AppState
 	filesMgr   *files.Manager
 	gitMgr     *git.Manager
 	watcherMgr *watcher.Manager
@@ -40,11 +47,13 @@ type App struct {
 func NewApp() *App {
 	portReg := port.NewRegistry()
 	return &App{
-		termMgr:  terminal.NewManager(),
-		wsMgr:    workspace.NewManager(),
-		srvMgr:   server.NewManager(portReg),
-		portReg:  portReg,
-		appState: state.NewAppState(),
+		termMgr:    terminal.NewManager(),
+		claudeMgr:  claudechat.NewManager(),
+		codexMgr:   codexchat.NewManager(),
+		wsMgr:      workspace.NewManager(),
+		srvMgr:     server.NewManager(portReg),
+		portReg:    portReg,
+		appState:   state.NewAppState(),
 		filesMgr:   files.NewManager(),
 		gitMgr:     git.NewManager(),
 		watcherMgr: watcher.NewManager(),
@@ -66,19 +75,29 @@ func (a *App) startup(ctx context.Context) {
 	os.Setenv("PATH", path)
 
 	a.termMgr.SetContext(ctx)
+	a.claudeMgr.SetContext(ctx)
+	a.codexMgr.SetContext(ctx)
 	a.wsMgr.SetContext(ctx)
 	a.srvMgr.SetContext(ctx)
 	a.filesMgr.SetContext(ctx)
 	a.gitMgr.SetContext(ctx)
 	a.watcherMgr.SetContext(ctx)
+	a.codexMgr.SetListener(func(sessionID string, message codexchat.Message) {
+		wailsRuntime.EventsEmit(ctx, "codex-chat:message:"+sessionID, message)
+		wailsRuntime.EventsEmit(ctx, "codex-chat:message", message)
+	})
+	a.claudeMgr.SetListener(func(sessionID string, message claudechat.Message) {
+		wailsRuntime.EventsEmit(ctx, "claude-chat:message:"+sessionID, message)
+		wailsRuntime.EventsEmit(ctx, "claude-chat:message", message)
+	})
 
 	// Clear macOS saved application state to prevent stale WKWebView restoration
 	home, _ := os.UserHomeDir()
 	os.RemoveAll(filepath.Join(home, "Library", "Saved Application State", "com.wails.Orion.savedState"))
 
 	// Start mobile companion web server
-	a.webSrv = web.NewServer(a, a.termMgr)
-	go a.webSrv.Start(9867)
+	a.webSrv = web.NewServer(a, a.termMgr, a.codexMgr, a.claudeMgr)
+	go a.webSrv.Start(mobileServerPort())
 
 	wailsRuntime.EventsOn(ctx, "terminal:input", func(optionalData ...interface{}) {
 		if len(optionalData) < 2 {
@@ -116,6 +135,14 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	// Detach from PTYs but keep tmux sessions alive for recovery on next launch
 	a.termMgr.DetachAll()
+	if a.codexMgr != nil {
+		for _, session := range a.codexMgr.List(nil) {
+			_ = a.codexMgr.Stop(session.ID)
+		}
+	}
+	if a.claudeMgr != nil {
+		a.claudeMgr.DetachAll()
+	}
 	a.watcherMgr.Stop()
 }
 
@@ -135,6 +162,10 @@ func (a *App) CreateAttachedTerminal(id string, tmuxSession string) error {
 
 func (a *App) CloseTerminal(id string) error {
 	return a.termMgr.Close(id)
+}
+
+func (a *App) DetachTerminal(id string) error {
+	return a.termMgr.Detach(id)
 }
 
 func (a *App) GetTmuxSession(terminalId string) string {
@@ -175,6 +206,27 @@ func (a *App) OpenProjectDialog() (*workspace.ProjectInfo, error) {
 	}
 	a.appState.SetProject(info.Root)
 	return info, nil
+}
+
+func (a *App) OpenChatAttachmentDialog() ([]chatattachments.Attachment, error) {
+	paths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: "Attach Images",
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "Images (*.png, *.jpg, *.jpeg, *.gif, *.webp, *.heic)", Pattern: "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.heic;*.heif"},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	attachments := make([]chatattachments.Attachment, 0, len(paths))
+	for _, path := range paths {
+		attachment, err := chatattachments.FromPath(path)
+		if err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, attachment)
+	}
+	return attachments, nil
 }
 
 // SetActiveProject sets the project and loads its per-project state.
@@ -233,6 +285,144 @@ func (a *App) LaunchAgent(repoRoot string, workspacePath string, agentType strin
 
 func (a *App) LaunchShell(repoRoot string, workspacePath string) (string, error) {
 	return a.wsMgr.LaunchShell(repoRoot, workspacePath)
+}
+
+func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error) {
+	switch chatKind {
+	case "claude":
+		if session, ok := a.claudeMgr.Get(sessionID); ok {
+			return session.Info().ID, nil
+		}
+		if strings.TrimSpace(sessionID) != "" {
+			return sessionID, nil
+		}
+		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
+	case "codex":
+		var threadID string
+		if session, ok := a.codexMgr.Get(sessionID); ok {
+			threadID = strings.TrimSpace(session.Info().ThreadID)
+			_ = session.Stop()
+		}
+		if threadID != "" {
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "codex resume --dangerously-bypass-approvals-and-sandbox --no-alt-screen "+threadID)
+		}
+		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "codex")
+	default:
+		return "", fmt.Errorf("unsupported chat kind: %s", chatKind)
+	}
+}
+
+// --- Claude chat methods ---
+
+func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error) {
+	startedAt := time.Now().Add(-2 * time.Second)
+	tmuxSession, err := a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
+	if err != nil {
+		return nil, err
+	}
+	return a.claudeMgr.AttachSince(tmuxSession, workspacePath, "Claude", startedAt)
+}
+
+func (a *App) AttachClaudeChat(tmuxSession string, workspacePath string) (*claudechat.SessionInfo, error) {
+	return a.claudeMgr.Attach(tmuxSession, workspacePath, "Claude")
+}
+
+func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo {
+	infos := a.claudeMgr.List(workspacePaths)
+	sessions := make([]state.SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		sessions = append(sessions, state.SessionInfo{
+			TmuxName:      info.ID,
+			Type:          info.Type,
+			Label:         info.Label,
+			WorkspacePath: info.WorkspacePath,
+		})
+	}
+	return sessions
+}
+
+func (a *App) GetClaudeChatMessages(sessionID string) []claudechat.Message {
+	session, ok := a.claudeMgr.Get(sessionID)
+	if !ok {
+		return nil
+	}
+	return session.Messages()
+}
+
+func (a *App) SendClaudeChatMessage(sessionID string, text string, attachments []chatattachments.Attachment) error {
+	session, ok := a.claudeMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("claude chat session not found: %s", sessionID)
+	}
+	return session.Send(text, attachments)
+}
+
+func (a *App) AnswerClaudeChatRequest(sessionID string, toolUseID string, result string) error {
+	session, ok := a.claudeMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("claude chat session not found: %s", sessionID)
+	}
+	return session.Answer(toolUseID, result)
+}
+
+func (a *App) ApproveClaudePlan(sessionID string) error {
+	session, ok := a.claudeMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("claude chat session not found: %s", sessionID)
+	}
+	return session.ApprovePlan()
+}
+
+func (a *App) StopClaudeChat(sessionID string) error {
+	return a.claudeMgr.Stop(sessionID)
+}
+
+// --- Codex chat methods ---
+
+func (a *App) LaunchCodexChat(repoRoot string, workspacePath string) (*codexchat.SessionInfo, error) {
+	return a.codexMgr.Start(workspacePath, "Codex Chat")
+}
+
+func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo {
+	infos := a.codexMgr.List(workspacePaths)
+	sessions := make([]state.SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		sessions = append(sessions, state.SessionInfo{
+			TmuxName:      info.ID,
+			Type:          codexchat.SessionType,
+			Label:         info.Label,
+			WorkspacePath: info.WorkspacePath,
+		})
+	}
+	return sessions
+}
+
+func (a *App) GetCodexChatMessages(sessionID string) []codexchat.Message {
+	session, ok := a.codexMgr.Get(sessionID)
+	if !ok {
+		return nil
+	}
+	return session.Messages()
+}
+
+func (a *App) SendCodexChatMessage(sessionID string, text string, attachments []chatattachments.Attachment) error {
+	session, ok := a.codexMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("codex chat session not found: %s", sessionID)
+	}
+	return session.Send(text, attachments)
+}
+
+func (a *App) AnswerCodexChatRequest(sessionID string, toolUseID string, result string) error {
+	session, ok := a.codexMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("codex chat session not found: %s", sessionID)
+	}
+	return session.Answer(toolUseID, result)
+}
+
+func (a *App) StopCodexChat(sessionID string) error {
+	return a.codexMgr.Stop(sessionID)
 }
 
 func (a *App) GetConfig(repoRoot string) *config.OrionConfig {
@@ -497,4 +687,13 @@ func sortAgents(agents []AgentTypeInfo) {
 			}
 		}
 	}
+}
+
+func mobileServerPort() int {
+	if raw := strings.TrimSpace(os.Getenv("ORION_MOBILE_PORT")); raw != "" {
+		if port, err := strconv.Atoi(raw); err == nil && port > 0 && port < 65536 {
+			return port
+		}
+	}
+	return 9867
 }

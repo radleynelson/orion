@@ -37,7 +37,7 @@ struct TerminalToolbar: View {
     }
 
     private func sendKey(_ key: String) {
-        guard let tab = state.activeTab, let connection = state.connections[tab.tmuxSession] else { return }
+        guard let connection = state.activeConnection else { return }
         connection.exitCopyMode()
         connection.sendInput([UInt8](key.utf8)); UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
@@ -85,7 +85,7 @@ struct MicButton: View {
             // Enable keyboard flag so input flows through after dictation
             NotificationCenter.default.post(name: .orionEnableKeyboard, object: nil)
             state.speech.onDictationResult = { text in
-                guard let tab = state.activeTab, let conn = state.connections[tab.tmuxSession] else { return }
+                guard let conn = state.activeConnection else { return }
                 conn.exitCopyMode()
                 conn.sendInput([UInt8](text.utf8))
             }

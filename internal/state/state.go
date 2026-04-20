@@ -324,10 +324,11 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 		matched := false
 		for _, ws := range wsEntries {
 			if afterRepo == ws.basename {
+				sessionType, label := recoveredAgentInfo(name, "Shell")
 				sessions = append(sessions, SessionInfo{
 					TmuxName:      name,
-					Type:          "shell",
-					Label:         "Shell",
+					Type:          sessionType,
+					Label:         label,
 					WorkspacePath: ws.path,
 				})
 				matched = true
@@ -336,9 +337,10 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 			if strings.HasPrefix(afterRepo, ws.basename+"-") {
 				suffix := strings.TrimPrefix(afterRepo, ws.basename+"-")
 				label := "Shell " + suffix
+				sessionType, label := recoveredAgentInfo(name, label)
 				sessions = append(sessions, SessionInfo{
 					TmuxName:      name,
-					Type:          "shell",
+					Type:          sessionType,
 					Label:         label,
 					WorkspacePath: ws.path,
 				})
@@ -350,6 +352,38 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	}
 
 	return sessions
+}
+
+func recoveredAgentInfo(tmuxSession string, fallbackLabel string) (string, string) {
+	out, err := exec.Command("tmux", "display-message", "-t", tmuxSession, "-p", "#{pane_pid}").Output()
+	if err != nil {
+		return "shell", fallbackLabel
+	}
+	panePID := strings.TrimSpace(string(out))
+	if panePID == "" {
+		return "shell", fallbackLabel
+	}
+	children, err := exec.Command("pgrep", "-P", panePID).Output()
+	if err != nil {
+		return "shell", fallbackLabel
+	}
+	for _, line := range strings.Split(string(children), "\n") {
+		childPID := strings.TrimSpace(line)
+		if childPID == "" {
+			continue
+		}
+		comm, err := exec.Command("ps", "-p", childPID, "-o", "comm=").Output()
+		if err != nil {
+			continue
+		}
+		switch filepath.Base(strings.TrimSpace(string(comm))) {
+		case "claude":
+			return "claude", "Claude"
+		case "codex":
+			return "codex", "Codex"
+		}
+	}
+	return "shell", fallbackLabel
 }
 
 func capitalize(s string) string {

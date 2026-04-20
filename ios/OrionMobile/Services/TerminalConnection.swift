@@ -241,3 +241,179 @@ final class TerminalConnection {
         }
     }
 }
+
+@Observable
+final class CodexChatConnection {
+    let sessionId: String
+    let sessionType: String
+    private(set) var isConnected = false
+    private(set) var connectionState = ConnectionState.disconnected
+    var messages: [CodexChatMessage] = []
+    var onPermanentFailure: (() -> Void)?
+
+    private var host: String?
+    private var token: String?
+    private var webSocket: URLSessionWebSocketTask?
+    private var session: URLSession?
+    private var reconnectTask: Task<Void, Never>?
+    private var pingTask: Task<Void, Never>?
+    private var shouldReconnect = false
+    private var connectionGeneration = 0
+
+    init(sessionId: String, sessionType: String = "codex-chat") {
+        self.sessionId = sessionId
+        self.sessionType = sessionType
+    }
+
+    private var isClaude: Bool { sessionType == "claude" || sessionType == "claude-chat" }
+    var displayName: String { isClaude ? "Claude" : "Codex" }
+    var avatar: String { isClaude ? "\u{25C6}" : "C" }
+
+    deinit { disconnect() }
+
+    func connect(host: String, token: String) {
+        self.host = host
+        self.token = token
+        shouldReconnect = true
+        connectionGeneration += 1
+        pingTask?.cancel(); pingTask = nil
+        webSocket?.cancel(with: .normalClosure, reason: nil); webSocket = nil
+        session?.invalidateAndCancel(); session = nil
+        connectWebSocket(host: host, token: token, generation: connectionGeneration)
+    }
+
+    func disconnect() {
+        shouldReconnect = false
+        connectionGeneration += 1
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        pingTask?.cancel()
+        pingTask = nil
+        webSocket?.cancel(with: .normalClosure, reason: nil)
+        webSocket = nil
+        session?.invalidateAndCancel()
+        session = nil
+        isConnected = false
+        connectionState = .disconnected
+    }
+
+    func sendInput(_ text: String, attachments: [ChatAttachmentPayload] = []) {
+        send(CodexChatWSMessage(type: "input", text: text, attachments: attachments.isEmpty ? nil : attachments))
+    }
+
+    func answer(toolUseId: String, text: String) {
+        send(CodexChatWSMessage(type: "answer", text: text, toolUseId: toolUseId))
+    }
+
+    func approvePlan() {
+        guard isClaude else { return }
+        send(CodexChatWSMessage(type: "plan_action", action: "approve"))
+    }
+
+    private func connectWebSocket(host: String, token: String, generation: Int) {
+        let encoded = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+        let encodedSession = sessionId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sessionId
+        let route = isClaude ? "claude-chat" : "codex-chat"
+        guard let url = URL(string: "ws://\(host)/ws/\(route)/\(encodedSession)?token=\(encoded)") else {
+            print("[Orion \(displayName) Chat] Invalid URL for \(sessionId)")
+            return
+        }
+        print("[Orion \(displayName) Chat] Connecting: \(sessionId)")
+        let config = URLSessionConfiguration.default
+        config.shouldUseExtendedBackgroundIdleMode = true
+        session = URLSession(configuration: config)
+        webSocket = session?.webSocketTask(with: url)
+        webSocket?.resume()
+        isConnected = true
+        connectionState = .connected
+        receiveLoop(generation: generation)
+        startPing()
+    }
+
+    private func send(_ message: CodexChatWSMessage) {
+        guard let data = try? JSONEncoder().encode(message),
+              let string = String(data: data, encoding: .utf8) else { return }
+        webSocket?.send(.string(string)) { _ in }
+    }
+
+    private func receiveLoop(generation: Int) {
+        webSocket?.receive { [weak self] result in
+            guard let self else { return }
+            guard generation == self.connectionGeneration else { return }
+            switch result {
+            case .success(let message):
+                self.handleMessage(message)
+                self.receiveLoop(generation: generation)
+            case .failure:
+                DispatchQueue.main.async {
+                    guard generation == self.connectionGeneration else { return }
+                    self.isConnected = false
+                    guard self.shouldReconnect else { return }
+                    self.attemptReconnect()
+                }
+            }
+        }
+    }
+
+    private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
+        guard case .string(let text) = message,
+              let data = text.data(using: .utf8) else { return }
+        if let chatMessage = try? JSONDecoder().decode(CodexChatMessage.self, from: data) {
+            DispatchQueue.main.async {
+                if !self.messages.contains(where: { $0.id == chatMessage.id }) {
+                    self.messages.append(chatMessage)
+                }
+            }
+            return
+        }
+        if let control = try? JSONDecoder().decode(CodexChatWSMessage.self, from: data),
+           control.type == "pong" {
+            return
+        }
+    }
+
+    private func attemptReconnect() {
+        guard let host, let token else {
+            connectionState = .failed
+            onPermanentFailure?()
+            return
+        }
+        connectionState = .reconnecting
+        reconnectTask = Task { [weak self] in
+            let maxAttempts = 5
+            for attempt in 0..<maxAttempts {
+                guard let self, !Task.isCancelled else { return }
+                let baseDelay = pow(2.0, Double(attempt))
+                let jittered = baseDelay * Double.random(in: 0.5...1.5)
+                try? await Task.sleep(nanoseconds: UInt64(jittered * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.connectionGeneration += 1
+                    let generation = self.connectionGeneration
+                    self.webSocket?.cancel(with: .normalClosure, reason: nil)
+                    self.webSocket = nil
+                    self.session?.invalidateAndCancel()
+                    self.session = nil
+                    self.connectWebSocket(host: host, token: token, generation: generation)
+                }
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            await MainActor.run {
+                self.connectionState = .failed
+                self.onPermanentFailure?()
+            }
+        }
+    }
+
+    private func startPing() {
+        pingTask?.cancel()
+        pingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20 * 1_000_000_000)
+                guard let self, !Task.isCancelled, self.isConnected else { return }
+                self.send(CodexChatWSMessage(type: "ping"))
+            }
+        }
+    }
+}

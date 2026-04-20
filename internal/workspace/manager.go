@@ -206,10 +206,28 @@ func (m *Manager) GetConfig(repoRoot string) *config.OrionConfig {
 // LaunchAgent creates a tmux session and sends the agent command.
 // Returns the tmux session name.
 func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error) {
+	cfg := config.Load(repoRoot)
+
+	// Determine command from config or defaults
+	var agentCmd string
+	if agentCfg, ok := cfg.Agents[agentType]; ok {
+		agentCmd = agentCfg.Command
+	} else {
+		switch agentType {
+		case "claude":
+			agentCmd = "claude --dangerously-skip-permissions --effort xhigh --chrome"
+		case "codex":
+			agentCmd = "codex --dangerously-bypass-approvals-and-sandbox"
+		}
+	}
+
+	return m.LaunchCommand(repoRoot, workspacePath, agentCmd)
+}
+
+// LaunchCommand creates a tmux session and sends a specific command.
+func (m *Manager) LaunchCommand(repoRoot string, workspacePath string, command string) (string, error) {
 	repoName := filepath.Base(repoRoot)
 	wsName := filepath.Base(workspacePath)
-
-	cfg := config.Load(repoRoot)
 
 	idx := nextSessionIndex(repoName, wsName)
 	tmuxName := sessionName(repoName, wsName, idx)
@@ -220,27 +238,14 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 		}
 	}
 
-	// Determine command from config or defaults
-	var agentCmd string
-	if agentCfg, ok := cfg.Agents[agentType]; ok {
-		agentCmd = agentCfg.Command
-	} else {
-		switch agentType {
-		case "claude":
-			agentCmd = "claude --dangerously-skip-permissions"
-		case "codex":
-			agentCmd = "codex --dangerously-bypass-approvals-and-sandbox"
-		}
-	}
-
 	// Source .orion/env.sh first so the agent has port awareness
 	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
 	if _, err := os.Stat(envFile); err == nil {
 		sendKeys(tmuxName, "source .orion/env.sh")
 	}
 
-	if agentCmd != "" {
-		if err := sendKeys(tmuxName, agentCmd); err != nil {
+	if command != "" {
+		if err := sendKeys(tmuxName, command); err != nil {
 			return "", err
 		}
 	}

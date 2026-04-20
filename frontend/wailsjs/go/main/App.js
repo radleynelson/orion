@@ -6,8 +6,28 @@ export function AllocatePorts(arg1, arg2, arg3) {
   return window['go']['main']['App']['AllocatePorts'](arg1, arg2, arg3);
 }
 
+export function AnswerClaudeChatRequest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AnswerClaudeChatRequest'](arg1, arg2, arg3);
+}
+
+export function ApproveClaudePlan(arg1) {
+  return window['go']['main']['App']['ApproveClaudePlan'](arg1);
+}
+
+export function AnswerCodexChatRequest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AnswerCodexChatRequest'](arg1, arg2, arg3);
+}
+
+export function AttachClaudeChat(arg1, arg2) {
+  return window['go']['main']['App']['AttachClaudeChat'](arg1, arg2);
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
+}
+
+export function ConvertChatToTerminal(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ConvertChatToTerminal'](arg1, arg2, arg3, arg4);
 }
 
 export function CreateAttachedTerminal(arg1, arg2) {
@@ -28,6 +48,10 @@ export function CreateWorkspace(arg1, arg2) {
 
 export function DeleteWorkspace(arg1, arg2) {
   return window['go']['main']['App']['DeleteWorkspace'](arg1, arg2);
+}
+
+export function DetachTerminal(arg1) {
+  return window['go']['main']['App']['DetachTerminal'](arg1);
 }
 
 export function DiscardAllChanges(arg1) {
@@ -58,8 +82,16 @@ export function GetChangedFilesAgainst(arg1, arg2) {
   return window['go']['main']['App']['GetChangedFilesAgainst'](arg1, arg2);
 }
 
+export function GetClaudeChatMessages(arg1) {
+  return window['go']['main']['App']['GetClaudeChatMessages'](arg1);
+}
+
 export function GetClipboard() {
   return window['go']['main']['App']['GetClipboard']();
+}
+
+export function GetCodexChatMessages(arg1) {
+  return window['go']['main']['App']['GetCodexChatMessages'](arg1);
 }
 
 export function GetConfig(arg1) {
@@ -118,8 +150,24 @@ export function LaunchAgent(arg1, arg2, arg3) {
   return window['go']['main']['App']['LaunchAgent'](arg1, arg2, arg3);
 }
 
+export function LaunchClaudeChat(arg1, arg2) {
+  return window['go']['main']['App']['LaunchClaudeChat'](arg1, arg2);
+}
+
+export function LaunchCodexChat(arg1, arg2) {
+  return window['go']['main']['App']['LaunchCodexChat'](arg1, arg2);
+}
+
 export function LaunchShell(arg1, arg2) {
   return window['go']['main']['App']['LaunchShell'](arg1, arg2);
+}
+
+export function ListClaudeChatSessions(arg1) {
+  return window['go']['main']['App']['ListClaudeChatSessions'](arg1);
+}
+
+export function ListCodexChatSessions(arg1) {
+  return window['go']['main']['App']['ListCodexChatSessions'](arg1);
 }
 
 export function ListDirectory(arg1, arg2) {
@@ -144,6 +192,10 @@ export function NewWindowWithProject(arg1) {
 
 export function OpenBrowser(arg1, arg2) {
   return window['go']['main']['App']['OpenBrowser'](arg1, arg2);
+}
+
+export function OpenChatAttachmentDialog() {
+  return window['go']['main']['App']['OpenChatAttachmentDialog']();
 }
 
 export function OpenProjectDialog() {
@@ -174,6 +226,14 @@ export function SearchFiles(arg1, arg2) {
   return window['go']['main']['App']['SearchFiles'](arg1, arg2);
 }
 
+export function SendClaudeChatMessage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendClaudeChatMessage'](arg1, arg2, arg3);
+}
+
+export function SendCodexChatMessage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendCodexChatMessage'](arg1, arg2, arg3);
+}
+
 export function SetActiveProject(arg1) {
   return window['go']['main']['App']['SetActiveProject'](arg1);
 }
@@ -184,6 +244,14 @@ export function SetClipboard(arg1) {
 
 export function StartServers(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartServers'](arg1, arg2, arg3);
+}
+
+export function StopClaudeChat(arg1) {
+  return window['go']['main']['App']['StopClaudeChat'](arg1);
+}
+
+export function StopCodexChat(arg1) {
+  return window['go']['main']['App']['StopCodexChat'](arg1);
 }
 
 export function StopServers(arg1) {

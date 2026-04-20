@@ -6,6 +6,8 @@ import {
   CreateWorkspace,
   DeleteWorkspace,
   LaunchAgent,
+  LaunchClaudeChat,
+  LaunchCodexChat,
   CreateAttachedTerminal,
   CreateTerminalInDir,
   CloseTerminal,
@@ -199,6 +201,38 @@ export default function Sidebar() {
       console.error('Failed to launch agent:', err);
     }
   }, [project, agentTypes, addTab]);
+
+  const handleLaunchCodexChat = useCallback(async (wsPath: string) => {
+    if (!project) return;
+    try {
+      const session = await LaunchCodexChat(project.root, wsPath);
+      addTab({
+        id: generateId('tab'),
+        label: session?.label || 'Codex Chat',
+        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'codex' } as PaneLeaf,
+        tabType: 'codex-chat',
+        workspacePath: wsPath,
+      });
+    } catch (err) {
+      console.error('Failed to launch Codex chat:', err);
+    }
+  }, [project, addTab]);
+
+  const handleLaunchClaudeChat = useCallback(async (wsPath: string) => {
+    if (!project) return;
+    try {
+      const session = await LaunchClaudeChat(project.root, wsPath);
+      addTab({
+        id: generateId('tab'),
+        label: session?.label || 'Claude Chat',
+        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'claude' } as PaneLeaf,
+        tabType: 'claude-chat',
+        workspacePath: wsPath,
+      });
+    } catch (err) {
+      console.error('Failed to launch Claude chat:', err);
+    }
+  }, [project, addTab]);
 
   const handleLaunchShell = useCallback(async (wsPath: string) => {
     if (!project) return;
@@ -399,6 +433,12 @@ export default function Sidebar() {
                         + {agent.label}
                       </span>
                     ))}
+                    <span className="sidebar-action" onClick={() => handleLaunchCodexChat(ws.path)}>
+                      + Codex Chat
+                    </span>
+                    <span className="sidebar-action" onClick={() => handleLaunchClaudeChat(ws.path)}>
+                      + Claude Chat
+                    </span>
                     <span className="sidebar-action" onClick={() => handleLaunchShell(ws.path)}>
                       + Shell
                     </span>

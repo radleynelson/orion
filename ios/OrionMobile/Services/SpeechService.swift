@@ -20,6 +20,7 @@ final class SpeechService: NSObject {
     private var sentenceQueue: [String] = []
     private var audioPlayer: AVAudioPlayer?
     private var ttsTask: Task<Void, Never>?
+    private var deliveredDictation = false
 
     override init() { super.init(); synthesizer.delegate = self; recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) }
 
@@ -37,8 +38,9 @@ final class SpeechService: NSObject {
             recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
             guard let request = recognitionRequest else { return }
             request.shouldReportPartialResults = true; request.requiresOnDeviceRecognition = true
+            deliveredDictation = false
             recognitionTask = recognizer?.recognitionTask(with: request) { [weak self] result, error in
-                if let result { self?.dictatedText = result.bestTranscription.formattedString; if result.isFinal { self?.onDictationResult?(self?.dictatedText ?? ""); self?.stopDictation() } }
+                if let result { self?.dictatedText = result.bestTranscription.formattedString; if result.isFinal { self?.deliverDictationResult(); self?.stopDictation() } }
                 if error != nil { self?.stopDictation() }
             }
             let inputNode = audioEngine.inputNode
@@ -49,8 +51,14 @@ final class SpeechService: NSObject {
 
     func stopDictation() {
         audioEngine.stop(); audioEngine.inputNode.removeTap(onBus: 0); recognitionRequest?.endAudio(); recognitionRequest = nil; recognitionTask?.cancel(); recognitionTask = nil
-        if !dictatedText.isEmpty { onDictationResult?(dictatedText) }
+        deliverDictationResult()
         isListening = false; dictatedText = ""; try? AVAudioSession.sharedInstance().setActive(false)
+    }
+
+    private func deliverDictationResult() {
+        guard !deliveredDictation, !dictatedText.isEmpty else { return }
+        deliveredDictation = true
+        onDictationResult?(dictatedText)
     }
 
     func speak(_ text: String, rate: Float = 0.52) {
