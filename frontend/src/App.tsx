@@ -7,6 +7,7 @@ import FileExplorer from './components/FileExplorer';
 import GlobalSearch from './components/GlobalSearch';
 import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
+import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
 import { useStore, generateId, Tab, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -25,6 +26,7 @@ import {
   GetTmuxSession,
   RecoverSessions,
   RevealInFinder,
+  LaunchAgent,
 } from '../wailsjs/go/main/App';
 
 function App() {
@@ -203,6 +205,7 @@ function App() {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
+  const [newTabPickerVisible, setNewTabPickerVisible] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
@@ -252,6 +255,29 @@ function App() {
       console.error('Failed to create terminal:', err);
     }
   }, [activeWorkspacePath, tabs, addTab]);
+
+  const launchAgentTab = useCallback(async (agentName: string, label: string) => {
+    if (!project || !activeWorkspacePath) return;
+    try {
+      const tmuxSession = await LaunchAgent(project.root, activeWorkspacePath, agentName);
+      const termId = generateId('term');
+      await CreateAttachedTerminal(termId, tmuxSession);
+      addTab({
+        id: generateId('tab'),
+        label,
+        rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+        tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
+        workspacePath: activeWorkspacePath,
+      });
+    } catch (err) {
+      console.error('Failed to launch agent:', err);
+    }
+  }, [project, activeWorkspacePath, addTab]);
+
+  const handleNewTabPick = useCallback((choice: NewTabChoice) => {
+    if (choice.kind === 'shell') createNewShell();
+    else launchAgentTab(choice.name, choice.label);
+  }, [createNewShell, launchAgentTab]);
 
   const handleSplit = useCallback(async (direction: 'horizontal' | 'vertical') => {
     if (!activeWorkspacePath || !focusedPaneId) return;
@@ -315,10 +341,10 @@ function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+T: new shell tab
+      // Cmd+T: open New Tab picker (pick shell / claude / codex)
       if (e.metaKey && !e.shiftKey && e.key === 't') {
         e.preventDefault();
-        createNewShell();
+        setNewTabPickerVisible(true);
       }
       // Cmd+W: close focused pane (or tab if single pane)
       if (e.metaKey && !e.shiftKey && e.key === 'w') {
@@ -460,7 +486,7 @@ function App() {
           if (info) await loadProject(info);
         } catch {}
       }),
-      EventsOn('menu:new-terminal', () => createNewShell()),
+      EventsOn('menu:new-terminal', () => setNewTabPickerVisible(true)),
       EventsOn('menu:close-tab', () => handleClosePane()),
       EventsOn('menu:toggle-sidebar', () => setSidebarMode(sidebarMode ? null : 'workspaces')),
       EventsOn('menu:show-files', () => setSidebarMode('files')),
@@ -487,6 +513,31 @@ function App() {
             workspacePath: data.workspacePath,
           });
         } catch {}
+      }),
+      EventsOn('agent:focus', async (data: any) => {
+        const cwd: string | undefined = data?.cwd;
+        const targetTmux: string | undefined = data?.tmuxSession;
+        if (!cwd) return;
+        const state = useStore.getState();
+        if (state.workspaces.some((w: any) => w.path === cwd)) {
+          state.setActiveWorkspace(cwd);
+        }
+        const candidates = state.tabs.filter((t: Tab) => t.workspacePath === cwd);
+        let target: Tab | undefined;
+        if (targetTmux) {
+          for (const tab of candidates) {
+            const termIds = state.getAllTerminalIds(tab);
+            for (const termId of termIds) {
+              try {
+                const ts = await GetTmuxSession(termId);
+                if (ts === targetTmux) { target = tab; break; }
+              } catch {}
+            }
+            if (target) break;
+          }
+        }
+        if (!target) target = candidates.find((t) => t.tabType === 'claude') || candidates[0];
+        if (target) useStore.getState().setActiveTab(target.id);
       }),
     ];
     return () => cancels.forEach((c) => c());
@@ -653,7 +704,7 @@ function App() {
                 </span>
               </div>
             ))}
-            <div className="tab-add" onClick={createNewShell} title="New shell (⌘T)">
+            <div className="tab-add" onClick={() => setNewTabPickerVisible(true)} title="New tab (⌘T)">
               +
             </div>
           </div>
@@ -796,6 +847,13 @@ function App() {
       <SearchEverywhere
         visible={searchEverywhereVisible}
         onClose={() => setSearchEverywhereVisible(false)}
+      />
+
+      {/* New tab picker (⌘T) */}
+      <NewTabPicker
+        visible={newTabPickerVisible}
+        onClose={() => setNewTabPickerVisible(false)}
+        onPick={handleNewTabPick}
       />
 
       {/* Context menu */}

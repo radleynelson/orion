@@ -522,6 +522,23 @@
   padding: 8px 0;
 }
 
+.switcher-modal.new-tab-modal {
+  width: 220px;
+  padding: 0;
+  align-self: flex-start;
+  height: fit-content;
+}
+.new-tab-modal .switcher-title {
+  padding: 6px 12px 4px;
+}
+.new-tab-modal .switcher-item {
+  padding: 6px 12px;
+  gap: 8px;
+}
+.new-tab-modal .switcher-item:last-child {
+  padding-bottom: 8px;
+}
+
 .switcher-title {
   padding: 8px 16px;
   font-size: var(--font-size-xs);
@@ -1001,7 +1018,7 @@
 
 .cr-line {
   display: flex;
-  white-space: pre;
+  align-items: flex-start;
   min-height: 1.5em;
 }
 .cr-line.cr-add {
@@ -1034,7 +1051,10 @@
 }
 .cr-text {
   flex: 1;
-  white-space: pre;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Tab bar */

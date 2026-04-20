@@ -46,6 +46,7 @@ export namespace config {
 	}
 	export class OrionConfig {
 	    BranchPrefix: string;
+	    WorktreesDir: string;
 	    Credentials: CredentialsConfig;
 	    Servers: Record<string, ServerConfig>;
 	    Agents: Record<string, AgentConfig>;
@@ -57,6 +58,7 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.BranchPrefix = source["BranchPrefix"];
+	        this.WorktreesDir = source["WorktreesDir"];
 	        this.Credentials = this.convertValues(source["Credentials"], CredentialsConfig);
 	        this.Servers = this.convertValues(source["Servers"], ServerConfig, true);
 	        this.Agents = this.convertValues(source["Agents"], AgentConfig, true);

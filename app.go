@@ -11,6 +11,7 @@ import (
 	"orion/internal/config"
 	"orion/internal/files"
 	"orion/internal/git"
+	"orion/internal/notify"
 	"orion/internal/port"
 	"orion/internal/server"
 	"orion/internal/state"
@@ -34,6 +35,7 @@ type App struct {
 	gitMgr     *git.Manager
 	watcherMgr *watcher.Manager
 	webSrv     *web.Server
+	notifier   *notify.Notifier
 }
 
 // NewApp creates a new App instance.
@@ -48,6 +50,7 @@ func NewApp() *App {
 		filesMgr:   files.NewManager(),
 		gitMgr:     git.NewManager(),
 		watcherMgr: watcher.NewManager(),
+		notifier:   notify.New(nil),
 	}
 }
 
@@ -71,6 +74,14 @@ func (a *App) startup(ctx context.Context) {
 	a.filesMgr.SetContext(ctx)
 	a.gitMgr.SetContext(ctx)
 	a.watcherMgr.SetContext(ctx)
+	a.notifier.SetContext(ctx)
+	if err := a.notifier.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "notify: failed to start hook listener: %v\n", err)
+	}
+	// Install the hook script up front so it's ready the moment a Claude agent
+	// launches. Per-workspace settings.local.json is written lazily by
+	// LaunchAgent.
+	go notify.InstallHookScript()
 
 	// Clear macOS saved application state to prevent stale WKWebView restoration
 	home, _ := os.UserHomeDir()
@@ -113,6 +124,9 @@ func (a *App) shutdown(ctx context.Context) {
 	// Stop mobile companion web server
 	if a.webSrv != nil {
 		a.webSrv.Stop()
+	}
+	if a.notifier != nil {
+		a.notifier.Stop()
 	}
 	// Detach from PTYs but keep tmux sessions alive for recovery on next launch
 	a.termMgr.DetachAll()

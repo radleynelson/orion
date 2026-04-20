@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"orion/internal/config"
+	"orion/internal/notify"
 )
 
 // Workspace represents a git worktree.
@@ -125,18 +126,37 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 
 // CreateWorkspace creates a new worktree and copies credential files.
 func (m *Manager) CreateWorkspace(repoRoot, name string) (*Workspace, error) {
-	parentDir := filepath.Dir(repoRoot)
 	repoName := filepath.Base(repoRoot)
-	worktreePath := filepath.Join(parentDir, repoName+"-"+name)
 	baseBranch := getMainBranch(repoRoot)
 
 	mainPath := getMainWorktreePath(repoRoot)
 
-	// Load config once for branch prefix and credential copying
+	// Load config once for branch prefix, worktrees dir, and credential copying
 	var cfg *config.OrionConfig
 	if mainPath != "" {
 		cfg = config.Load(mainPath)
 	}
+
+	// Resolve worktrees parent directory. Defaults to repo's sibling.
+	// Config can override with `worktrees_dir` (supports ~, $VARS, and
+	// relative paths resolved against the repo root).
+	parentDir := filepath.Dir(repoRoot)
+	if cfg != nil && cfg.WorktreesDir != "" {
+		resolved := os.ExpandEnv(cfg.WorktreesDir)
+		if strings.HasPrefix(resolved, "~") {
+			if home, err := os.UserHomeDir(); err == nil {
+				resolved = filepath.Join(home, strings.TrimPrefix(resolved, "~"))
+			}
+		}
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(repoRoot, resolved)
+		}
+		if err := os.MkdirAll(resolved, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create worktrees dir: %w", err)
+		}
+		parentDir = resolved
+	}
+	worktreePath := filepath.Join(parentDir, repoName+"-"+name)
 
 	// Apply branch prefix from config (e.g. "mckay" → branch "mckay/name")
 	branchName := name
@@ -237,6 +257,13 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
 	if _, err := os.Stat(envFile); err == nil {
 		sendKeys(tmuxName, "source .orion/env.sh")
+	}
+
+	// Install notification hooks for Claude so Orion sees Stop/Notification events.
+	if agentType == "claude" {
+		if scriptPath, err := notify.InstallHookScript(); err == nil {
+			notify.InstallWorkspaceHooks(workspacePath, scriptPath)
+		}
 	}
 
 	if agentCmd != "" {

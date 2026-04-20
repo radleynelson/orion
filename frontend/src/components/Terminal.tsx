@@ -68,6 +68,18 @@ export default function Terminal({ terminalId, visible, focused }: TerminalProps
     }
   }, [focused, visible]);
 
+  // When the Orion window regains focus, re-claim keyboard focus for the
+  // currently highlighted pane so the blue border and actual focus match.
+  useEffect(() => {
+    if (!focused || !visible) return;
+    const onFocus = () => {
+      // Defer so any default browser focus handling settles first.
+      setTimeout(() => termRef.current?.terminal.focus(), 0);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [focused, visible]);
+
   // React to zoom changes
   useEffect(() => {
     if (!termRef.current) return;
