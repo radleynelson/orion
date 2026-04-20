@@ -304,7 +304,7 @@ func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessi
 			_ = session.Stop()
 		}
 		if threadID != "" {
-			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "codex resume --dangerously-bypass-approvals-and-sandbox --no-alt-screen "+threadID)
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "codex resume --dangerously-bypass-approvals-and-sandbox --no-alt-screen "+shellQuote(threadID))
 		}
 		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "codex")
 	default:
@@ -332,10 +332,14 @@ func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInf
 	sessions := make([]state.SessionInfo, 0, len(infos))
 	for _, info := range infos {
 		sessions = append(sessions, state.SessionInfo{
-			TmuxName:      info.ID,
-			Type:          info.Type,
-			Label:         info.Label,
-			WorkspacePath: info.WorkspacePath,
+			TmuxName:         info.ID,
+			Type:             info.Type,
+			Label:            info.Label,
+			WorkspacePath:    info.WorkspacePath,
+			Provider:         "claude",
+			ViewMode:         "chat",
+			RuntimeSessionID: info.ID,
+			ThreadID:         info.ThreadID,
 		})
 	}
 	return sessions
@@ -383,15 +387,47 @@ func (a *App) LaunchCodexChat(repoRoot string, workspacePath string) (*codexchat
 	return a.codexMgr.Start(workspacePath, "Codex Chat")
 }
 
+func (a *App) ResumeCodexChat(repoRoot string, workspacePath string, threadID string) (*codexchat.SessionInfo, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, fmt.Errorf("threadId required")
+	}
+	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
+		WorkspacePath: workspacePath,
+		Label:         "Codex Chat",
+		ThreadID:      threadID,
+	})
+}
+
+func (a *App) ConvertTerminalToCodexChat(repoRoot string, workspacePath string, tmuxSession string) (*codexchat.SessionInfo, error) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return nil, fmt.Errorf("tmuxSession required")
+	}
+	threadID := codexchat.ThreadIDForTmux(tmuxSession, workspacePath)
+	if threadID == "" {
+		return nil, fmt.Errorf("could not identify Codex thread for tmux session %s", tmuxSession)
+	}
+	return a.ResumeCodexChat(repoRoot, workspacePath, threadID)
+}
+
 func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo {
 	infos := a.codexMgr.List(workspacePaths)
 	sessions := make([]state.SessionInfo, 0, len(infos))
 	for _, info := range infos {
 		sessions = append(sessions, state.SessionInfo{
-			TmuxName:      info.ID,
-			Type:          codexchat.SessionType,
-			Label:         info.Label,
-			WorkspacePath: info.WorkspacePath,
+			TmuxName:         info.ID,
+			Type:             codexchat.SessionType,
+			Label:            info.Label,
+			WorkspacePath:    info.WorkspacePath,
+			Provider:         codexchat.Provider,
+			ViewMode:         codexchat.ViewModeChat,
+			RuntimeSessionID: info.ID,
+			ThreadID:         info.ThreadID,
+			Model:            info.Model,
+			ReasoningEffort:  info.ReasoningEffort,
+			ApprovalPolicy:   info.ApprovalPolicy,
+			SandboxMode:      info.SandboxMode,
 		})
 	}
 	return sessions
@@ -532,6 +568,10 @@ func (a *App) GetSavedTabs() []state.SavedTab {
 	}
 	var alive []state.SavedTab
 	for _, tab := range saved {
+		if tab.TabType == codexchat.SessionType && strings.TrimSpace(tab.ThreadID) != "" {
+			alive = append(alive, tab)
+			continue
+		}
 		if tab.TmuxSession != "" {
 			cmd := exec.Command("tmux", "has-session", "-t", tab.TmuxSession)
 			if cmd.Run() == nil {
@@ -565,6 +605,30 @@ func (a *App) EmitSessionCreated(tmuxSession string, sessionType string, label s
 		"label":         label,
 		"workspacePath": workspacePath,
 	})
+}
+
+func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
+	wailsRuntime.EventsEmit(a.ctx, "mobile:session-created", map[string]string{
+		"tmuxSession":      session.TmuxName,
+		"type":             session.Type,
+		"label":            session.Label,
+		"workspacePath":    session.WorkspacePath,
+		"provider":         session.Provider,
+		"viewMode":         session.ViewMode,
+		"runtimeSessionId": session.RuntimeSessionID,
+		"threadId":         session.ThreadID,
+		"model":            session.Model,
+		"reasoningEffort":  session.ReasoningEffort,
+		"approvalPolicy":   session.ApprovalPolicy,
+		"sandboxMode":      session.SandboxMode,
+	})
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (a *App) GetAgentNames(repoRoot string) []web.AgentType {

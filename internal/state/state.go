@@ -12,18 +12,34 @@ import (
 
 // SessionInfo represents a recovered tmux session matched to a workspace.
 type SessionInfo struct {
-	TmuxName      string `json:"tmuxName"`
-	Type          string `json:"type"`
-	Label         string `json:"label"`
-	WorkspacePath string `json:"workspacePath"`
+	TmuxName         string `json:"tmuxName"`
+	Type             string `json:"type"`
+	Label            string `json:"label"`
+	WorkspacePath    string `json:"workspacePath"`
+	Provider         string `json:"provider,omitempty"`
+	ViewMode         string `json:"viewMode,omitempty"`
+	RuntimeSessionID string `json:"runtimeSessionId,omitempty"`
+	ThreadID         string `json:"threadId,omitempty"`
+	Model            string `json:"model,omitempty"`
+	ReasoningEffort  string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy   string `json:"approvalPolicy,omitempty"`
+	SandboxMode      string `json:"sandboxMode,omitempty"`
 }
 
 // SavedTab represents a tab that can be restored on next launch.
 type SavedTab struct {
-	Label         string `json:"label"`
-	TabType       string `json:"tabType"`
-	TmuxSession   string `json:"tmuxSession"`
-	WorkspacePath string `json:"workspacePath"`
+	Label            string `json:"label"`
+	TabType          string `json:"tabType"`
+	TmuxSession      string `json:"tmuxSession"`
+	WorkspacePath    string `json:"workspacePath"`
+	Provider         string `json:"provider,omitempty"`
+	ViewMode         string `json:"viewMode,omitempty"`
+	RuntimeSessionID string `json:"runtimeSessionId,omitempty"`
+	ThreadID         string `json:"threadId,omitempty"`
+	Model            string `json:"model,omitempty"`
+	ReasoningEffort  string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy   string `json:"approvalPolicy,omitempty"`
+	SandboxMode      string `json:"sandboxMode,omitempty"`
 }
 
 // --- Global State (shared across instances) ---
@@ -135,12 +151,38 @@ func NewProjectState(projectRoot string) *ProjectState {
 }
 
 func (ps *ProjectState) SaveTabs(tabs []SavedTab) {
-	ps.SavedTabs = tabs
+	ps.SavedTabs = dedupeSavedTabs(tabs)
 	ps.save()
 }
 
 func (ps *ProjectState) GetSavedTabs() []SavedTab {
 	return ps.SavedTabs
+}
+
+func dedupeSavedTabs(tabs []SavedTab) []SavedTab {
+	seen := make(map[string]bool)
+	deduped := make([]SavedTab, 0, len(tabs))
+	for _, tab := range tabs {
+		key := savedTabIdentity(tab)
+		if key != "" {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
+		deduped = append(deduped, tab)
+	}
+	return deduped
+}
+
+func savedTabIdentity(tab SavedTab) string {
+	if tab.TabType == "codex-chat" && strings.TrimSpace(tab.ThreadID) != "" {
+		return tab.WorkspacePath + "|codex-chat|" + strings.TrimSpace(tab.ThreadID)
+	}
+	if strings.TrimSpace(tab.TmuxSession) != "" {
+		return tab.WorkspacePath + "|" + tab.TabType + "|" + strings.TrimSpace(tab.TmuxSession)
+	}
+	return ""
 }
 
 func (ps *ProjectState) load() {

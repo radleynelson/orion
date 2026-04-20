@@ -525,8 +525,7 @@
 }
 
 .codex-chat-header {
-  height: 56px;
-  min-height: 56px;
+  min-height: 64px;
   border-bottom: 1px solid var(--border-dim);
   background: var(--bg-secondary);
   display: flex;
@@ -544,6 +543,23 @@
   margin-top: 3px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.codex-chat-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.codex-chat-session-meta span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-dim);
+  border: 1px solid var(--border-dim);
+  border-radius: 6px;
+  padding: 3px 5px;
 }
 
 .codex-chat-status {

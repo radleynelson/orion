@@ -196,6 +196,9 @@ export default function Sidebar() {
         rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
         tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
         workspacePath: wsPath,
+        provider: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : undefined,
+        viewMode: 'terminal',
+        runtimeSessionId: tmuxSession,
       });
     } catch (err) {
       console.error('Failed to launch agent:', err);
@@ -209,9 +212,17 @@ export default function Sidebar() {
       addTab({
         id: generateId('tab'),
         label: session?.label || 'Codex Chat',
-        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'codex' } as PaneLeaf,
+        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
         tabType: 'codex-chat',
         workspacePath: wsPath,
+        provider: 'codex',
+        viewMode: 'chat',
+        runtimeSessionId: session.id,
+        threadId: session.threadId,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        approvalPolicy: session.approvalPolicy,
+        sandboxMode: session.sandboxMode,
       });
     } catch (err) {
       console.error('Failed to launch Codex chat:', err);
@@ -225,9 +236,13 @@ export default function Sidebar() {
       addTab({
         id: generateId('tab'),
         label: session?.label || 'Claude Chat',
-        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'claude' } as PaneLeaf,
+        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
         tabType: 'claude-chat',
         workspacePath: wsPath,
+        provider: 'claude',
+        viewMode: 'chat',
+        runtimeSessionId: session.id,
+        threadId: session.threadId,
       });
     } catch (err) {
       console.error('Failed to launch Claude chat:', err);

@@ -1,3 +1,28 @@
+export namespace chatattachments {
+
+	export class Attachment {
+	    id?: string;
+	    name?: string;
+	    path: string;
+	    mimeType?: string;
+	    size?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new Attachment(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.mimeType = source["mimeType"];
+	        this.size = source["size"];
+	    }
+	}
+
+}
+
 export namespace claudechat {
 
 	export class Message {
@@ -13,6 +38,7 @@ export namespace claudechat {
 	    toolName?: string;
 	    details?: string;
 	    planPath?: string;
+	    attachments?: chatattachments.Attachment[];
 	    createdAt: string;
 
 	    static createFrom(source: any = {}) {
@@ -33,8 +59,27 @@ export namespace claudechat {
 	        this.toolName = source["toolName"];
 	        this.details = source["details"];
 	        this.planPath = source["planPath"];
+	        this.attachments = this.convertValues(source["attachments"], chatattachments.Attachment);
 	        this.createdAt = source["createdAt"];
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SessionInfo {
 	    id: string;
@@ -75,6 +120,7 @@ export namespace codexchat {
 	    toolUseId?: string;
 	    toolName?: string;
 	    details?: string;
+	    attachments?: chatattachments.Attachment[];
 	    createdAt: string;
 
 	    static createFrom(source: any = {}) {
@@ -94,8 +140,27 @@ export namespace codexchat {
 	        this.toolUseId = source["toolUseId"];
 	        this.toolName = source["toolName"];
 	        this.details = source["details"];
+	        this.attachments = this.convertValues(source["attachments"], chatattachments.Attachment);
 	        this.createdAt = source["createdAt"];
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SessionInfo {
 	    id: string;
@@ -104,6 +169,14 @@ export namespace codexchat {
 	    workspacePath: string;
 	    status: string;
 	    threadId?: string;
+	    provider?: string;
+	    viewMode?: string;
+	    runtimeSessionId?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -117,6 +190,14 @@ export namespace codexchat {
 	        this.workspacePath = source["workspacePath"];
 	        this.status = source["status"];
 	        this.threadId = source["threadId"];
+	        this.provider = source["provider"];
+	        this.viewMode = source["viewMode"];
+	        this.runtimeSessionId = source["runtimeSessionId"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}
 
@@ -370,6 +451,14 @@ export namespace state {
 	    tabType: string;
 	    tmuxSession: string;
 	    workspacePath: string;
+	    provider?: string;
+	    viewMode?: string;
+	    runtimeSessionId?: string;
+	    threadId?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SavedTab(source);
@@ -381,6 +470,14 @@ export namespace state {
 	        this.tabType = source["tabType"];
 	        this.tmuxSession = source["tmuxSession"];
 	        this.workspacePath = source["workspacePath"];
+	        this.provider = source["provider"];
+	        this.viewMode = source["viewMode"];
+	        this.runtimeSessionId = source["runtimeSessionId"];
+	        this.threadId = source["threadId"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
 	    }
 	}
 	export class SessionInfo {
@@ -388,6 +485,14 @@ export namespace state {
 	    type: string;
 	    label: string;
 	    workspacePath: string;
+	    provider?: string;
+	    viewMode?: string;
+	    runtimeSessionId?: string;
+	    threadId?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -399,6 +504,14 @@ export namespace state {
 	        this.type = source["type"];
 	        this.label = source["label"];
 	        this.workspacePath = source["workspacePath"];
+	        this.provider = source["provider"];
+	        this.viewMode = source["viewMode"];
+	        this.runtimeSessionId = source["runtimeSessionId"];
+	        this.threadId = source["threadId"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
 	    }
 	}
 

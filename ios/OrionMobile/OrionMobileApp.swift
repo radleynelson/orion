@@ -64,7 +64,7 @@ final class AppState {
         visibleSessions.map { TerminalTab(session: $0) }
     }
 
-    var activeSession: SessionInfo? { sessions.first { $0.tmuxName == activeTabId } }
+    var activeSession: SessionInfo? { sessions.first { $0.id == activeTabId || $0.tmuxName == activeTabId } }
 
     var activeTab: TerminalTab? {
         guard let activeSession else { return nil }
@@ -191,12 +191,12 @@ final class AppState {
             var fetched = try await client.getSessions(repo: info.name, workspacePaths: workspaces.map(\.path))
             // Override with phone-launched session info (correct type/label)
             for i in fetched.indices {
-                if let better = phoneLaunchedSessions[fetched[i].tmuxName] {
+                if let better = phoneLaunchedSessions[fetched[i].id] ?? phoneLaunchedSessions[fetched[i].tmuxName] {
                     fetched[i] = better
                 }
             }
             sessions = fetched
-            let liveSessions = Set(fetched.map(\.tmuxName))
+            let liveSessions = Set(fetched.flatMap { [$0.id, $0.tmuxName, $0.threadId ?? "", $0.runtimeSessionId ?? ""] }.filter { !$0.isEmpty })
             phoneLaunchedSessions = phoneLaunchedSessions.filter { liveSessions.contains($0.key) }
             await ensureWorkspaceSelectionAttached()
         } catch {}
@@ -206,15 +206,15 @@ final class AppState {
         guard let client else { return }
 
         activeWorkspacePath = session.workspacePath
-        activeTabId = session.tmuxName
-        selectedSessionByWorkspace[session.workspacePath] = session.tmuxName
+        activeTabId = session.id
+        selectedSessionByWorkspace[session.workspacePath] = session.id
 
         if showsChat(session) {
             connectChatSession(session)
             return
         }
 
-        if activeConnection?.tmuxSession == session.tmuxName {
+        if activeConnection?.tmuxSession == session.terminalTmuxSession {
             if let activeConnection, !activeConnection.isConnected, activeConnection.connectionState != .reconnecting {
                 activeConnection.connect(host: host, token: token)
             }
@@ -225,13 +225,13 @@ final class AppState {
         activationGeneration += 1
         let generation = activationGeneration
 
-        let resp = try await client.createTerminal(tmuxSession: session.tmuxName)
+        let resp = try await client.createTerminal(tmuxSession: session.terminalTmuxSession)
         guard generation == activationGeneration else { return }
 
-        let connection = TerminalConnection(terminalId: resp.terminalId, tmuxSession: session.tmuxName)
+        let connection = TerminalConnection(terminalId: resp.terminalId, tmuxSession: session.terminalTmuxSession)
         connection.onExit = { [weak self] in
             Task { @MainActor in
-                self?.handleSessionExit(tmuxSession: session.tmuxName, workspacePath: session.workspacePath)
+                self?.handleSessionExit(tmuxSession: session.terminalTmuxSession, workspacePath: session.workspacePath)
             }
         }
         connection.onPermanentFailure = { [weak self] in
@@ -272,10 +272,23 @@ final class AppState {
     func launchCodexChat(workspacePath: String) async throws {
         guard let client, let root = selectedProject else { return }
         let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath)
-        let session = SessionInfo(tmuxName: resp.id, type: resp.type, label: resp.label, workspacePath: resp.workspacePath)
-        phoneLaunchedSessions[resp.id] = session
+        let session = SessionInfo(
+            tmuxName: resp.threadId ?? resp.id,
+            type: resp.type,
+            label: resp.label,
+            workspacePath: resp.workspacePath,
+            provider: resp.provider ?? "codex",
+            viewMode: resp.viewMode ?? "chat",
+            runtimeSessionId: resp.runtimeSessionId ?? resp.id,
+            threadId: resp.threadId,
+            model: resp.model,
+            reasoningEffort: resp.reasoningEffort,
+            approvalPolicy: resp.approvalPolicy,
+            sandboxMode: resp.sandboxMode
+        )
+        phoneLaunchedSessions[session.id] = session
         await refreshSessions()
-        if let refreshed = sessions.first(where: { $0.tmuxName == resp.id }) {
+        if let refreshed = sessions.first(where: { $0.id == session.id || $0.threadId == resp.threadId }) {
             try await activateSession(refreshed)
         } else {
             sessions.append(session)
@@ -286,7 +299,7 @@ final class AppState {
     func launchClaudeChat(workspacePath: String) async throws {
         guard let client, let root = selectedProject else { return }
         let resp = try await client.launchClaudeChat(repoRoot: root, workspacePath: workspacePath)
-        let session = SessionInfo(tmuxName: resp.id, type: resp.type, label: resp.label, workspacePath: resp.workspacePath)
+        let session = SessionInfo(tmuxName: resp.id, type: resp.type, label: resp.label, workspacePath: resp.workspacePath, provider: resp.provider ?? "claude", viewMode: resp.viewMode ?? "chat", runtimeSessionId: resp.runtimeSessionId ?? resp.id, threadId: resp.threadId)
         claudeViewModeBySession[resp.id] = "chat"
         phoneLaunchedSessions[resp.id] = session
         await refreshSessions()
@@ -318,11 +331,11 @@ final class AppState {
 
             if session.isChat {
                 let kind = session.type == "claude-chat" ? "claude" : "codex"
-                let resp = try await client.convertChatToTerminal(repoRoot: root, workspacePath: session.workspacePath, sessionId: session.tmuxName, chatKind: kind)
+                let resp = try await client.convertChatToTerminal(repoRoot: root, workspacePath: session.workspacePath, sessionId: session.chatConnectionId, chatKind: kind)
                 let label = kind == "claude" ? "Claude" : "Codex"
-                let converted = SessionInfo(tmuxName: resp.tmuxSession, type: kind, label: label, workspacePath: session.workspacePath)
-                sessions.removeAll { $0.tmuxName == session.tmuxName }
-                phoneLaunchedSessions.removeValue(forKey: session.tmuxName)
+                let converted = SessionInfo(tmuxName: resp.tmuxSession, type: kind, label: label, workspacePath: session.workspacePath, provider: kind, viewMode: "terminal", runtimeSessionId: resp.tmuxSession, threadId: session.threadId)
+                sessions.removeAll { $0.id == session.id }
+                phoneLaunchedSessions.removeValue(forKey: session.id)
                 phoneLaunchedSessions[resp.tmuxSession] = converted
                 await refreshSessions()
                 if let refreshed = sessions.first(where: { $0.tmuxName == resp.tmuxSession }) {
@@ -337,17 +350,32 @@ final class AppState {
             guard session.type == "claude" || session.type == "codex" else { return }
             let resp = session.type == "claude"
                 ? try await client.launchClaudeChat(repoRoot: root, workspacePath: session.workspacePath)
-                : try await client.launchCodexChat(repoRoot: root, workspacePath: session.workspacePath)
-            let converted = SessionInfo(tmuxName: resp.id, type: resp.type, label: resp.label, workspacePath: resp.workspacePath)
+                : try await client.launchCodexChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession)
+            let converted = SessionInfo(
+                tmuxName: session.type == "codex" ? (resp.threadId ?? resp.id) : resp.id,
+                type: resp.type,
+                label: resp.label,
+                workspacePath: resp.workspacePath,
+                provider: session.type,
+                viewMode: "chat",
+                runtimeSessionId: resp.runtimeSessionId ?? resp.id,
+                threadId: resp.threadId,
+                model: resp.model,
+                reasoningEffort: resp.reasoningEffort,
+                approvalPolicy: resp.approvalPolicy,
+                sandboxMode: resp.sandboxMode
+            )
             if activeConnection?.tmuxSession == session.tmuxName {
                 disconnectActiveTerminal()
             }
             sessions.removeAll { $0.tmuxName == session.tmuxName }
             phoneLaunchedSessions.removeValue(forKey: session.tmuxName)
-            try? await client.killSession(tmuxSession: session.tmuxName)
-            phoneLaunchedSessions[resp.id] = converted
+            if session.type == "codex" {
+                try? await client.killSession(tmuxSession: session.terminalTmuxSession)
+            }
+            phoneLaunchedSessions[converted.id] = converted
             await refreshSessions()
-            if let refreshed = sessions.first(where: { $0.tmuxName == resp.id }) {
+            if let refreshed = sessions.first(where: { $0.id == converted.id || $0.threadId == converted.threadId }) {
                 try await activateSession(refreshed)
             } else {
                 sessions.append(converted)
@@ -366,12 +394,12 @@ final class AppState {
         }
     }
 
-    func requestKillSession(_ tmuxSession: String) {
-        pendingKillSession = sessions.first { $0.tmuxName == tmuxSession }
+    func requestKillSession(_ sessionId: String) {
+        pendingKillSession = sessions.first { $0.id == sessionId || $0.tmuxName == sessionId }
     }
 
     func activateTab(_ tabId: String) {
-        guard let session = sessions.first(where: { $0.tmuxName == tabId }) else { return }
+        guard let session = sessions.first(where: { $0.id == tabId || $0.tmuxName == tabId }) else { return }
         Task {
             try? await activateSession(session)
         }
@@ -387,22 +415,25 @@ final class AppState {
     func killSession(_ session: SessionInfo) async {
         guard let client else { return }
 
-        if activeConnection?.tmuxSession == session.tmuxName {
+        if activeConnection?.tmuxSession == session.terminalTmuxSession {
             disconnectActiveTerminal()
         }
-        if activeChatConnection?.sessionId == session.tmuxName {
+        if activeChatConnection?.sessionId == session.chatConnectionId {
             disconnectActiveTerminal()
         }
-        if activeTabId == session.tmuxName {
+        if activeTabId == session.id {
             activeTabId = nil
         }
-        if selectedSessionByWorkspace[session.workspacePath] == session.tmuxName {
+        if selectedSessionByWorkspace[session.workspacePath] == session.id {
             selectedSessionByWorkspace.removeValue(forKey: session.workspacePath)
         }
-        sessions.removeAll { $0.tmuxName == session.tmuxName }
+        sessions.removeAll { $0.id == session.id || $0.tmuxName == session.tmuxName }
+        phoneLaunchedSessions.removeValue(forKey: session.id)
         phoneLaunchedSessions.removeValue(forKey: session.tmuxName)
         // Then kill on server and refresh in background
-        try? await client.killSession(tmuxSession: session.tmuxName)
+        if !session.isChat || session.isClaude {
+            try? await client.killSession(tmuxSession: session.terminalTmuxSession)
+        }
         // Small delay to let the List animation finish before refreshing
         try? await Task.sleep(for: .milliseconds(500))
         await refreshSessions()
@@ -488,7 +519,7 @@ final class AppState {
     }
 
     private func connectChatSession(_ session: SessionInfo) {
-        if activeChatConnection?.sessionId == session.tmuxName {
+        if activeChatConnection?.sessionId == session.chatConnectionId {
             if let activeChatConnection, !activeChatConnection.isConnected, activeChatConnection.connectionState != .reconnecting {
                 activeChatConnection.connect(host: host, token: token)
             }
@@ -498,7 +529,7 @@ final class AppState {
         activationGeneration += 1
         let oldTerminal = activeConnection
         let oldChat = activeChatConnection
-        let connection = CodexChatConnection(sessionId: session.tmuxName, sessionType: session.type)
+        let connection = CodexChatConnection(sessionId: session.chatConnectionId, sessionType: session.type, workspacePath: session.workspacePath)
         connection.onPermanentFailure = { [weak self] in
             self?.showTransientError("\(session.label) disconnected. Tap Reconnect to resume.")
         }
@@ -530,11 +561,11 @@ final class AppState {
         let workspaceSessions = sessions.filter { $0.workspacePath == workspacePath && $0.type != "server" }
         guard !workspaceSessions.isEmpty else { return nil }
         if let selected = selectedSessionByWorkspace[workspacePath],
-           let session = workspaceSessions.first(where: { $0.tmuxName == selected }) {
+           let session = workspaceSessions.first(where: { $0.id == selected || $0.tmuxName == selected }) {
             return session
         }
         if let activeSession, activeSession.workspacePath == workspacePath,
-           let session = workspaceSessions.first(where: { $0.tmuxName == activeSession.tmuxName }) {
+           let session = workspaceSessions.first(where: { $0.id == activeSession.id || $0.tmuxName == activeSession.tmuxName }) {
             return session
         }
         return workspaceSessions.first
@@ -555,12 +586,12 @@ final class AppState {
             return
         }
 
-        if activeTabId != preferred.tmuxName {
-            activeTabId = preferred.tmuxName
+        if activeTabId != preferred.id {
+            activeTabId = preferred.id
         }
-        selectedSessionByWorkspace[activeWorkspacePath] = preferred.tmuxName
+        selectedSessionByWorkspace[activeWorkspacePath] = preferred.id
 
-        if let activeConnection, activeConnection.tmuxSession == preferred.tmuxName {
+        if let activeConnection, activeConnection.tmuxSession == preferred.terminalTmuxSession {
             if !activeConnection.isConnected && activeConnection.connectionState != .reconnecting {
                 activeConnection.connect(host: host, token: token)
             }

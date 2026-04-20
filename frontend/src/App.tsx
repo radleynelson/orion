@@ -17,7 +17,8 @@ import {
   CreateAttachedTerminal,
   CloseTerminal,
   DetachTerminal,
-  LaunchCodexChat,
+  ResumeCodexChat,
+  ConvertTerminalToCodexChat,
   SaveTabs,
   GetLastProject,
   GetProjectInfo,
@@ -125,11 +126,35 @@ function App() {
             addTab({
               id: generateId('tab'),
               label: saved.label,
-              rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'claude' } as PaneLeaf,
+              rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
               tabType: 'claude-chat',
               workspacePath: saved.workspacePath,
+              provider: 'claude',
+              viewMode: 'chat',
+              runtimeSessionId: session.id,
+              threadId: session.threadId || saved.threadId,
             });
             restoredSessions.add(saved.tmuxSession);
+            continue;
+          }
+          if (saved.tabType === 'codex-chat' && saved.threadId) {
+            const session = await ResumeCodexChat(info.root, saved.workspacePath, saved.threadId);
+            addTab({
+              id: generateId('tab'),
+              label: saved.label || 'Codex Chat',
+              rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
+              tabType: 'codex-chat',
+              workspacePath: saved.workspacePath,
+              provider: 'codex',
+              viewMode: 'chat',
+              runtimeSessionId: session.id,
+              threadId: session.threadId || saved.threadId,
+              model: session.model || saved.model,
+              reasoningEffort: session.reasoningEffort || saved.reasoningEffort,
+              approvalPolicy: session.approvalPolicy || saved.approvalPolicy,
+              sandboxMode: session.sandboxMode || saved.sandboxMode,
+            });
+            restoredSessions.add(saved.threadId);
             continue;
           }
           const termId = generateId('term');
@@ -140,6 +165,14 @@ function App() {
             rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
             tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
             workspacePath: saved.workspacePath,
+            provider: saved.provider as 'codex' | 'claude' | undefined,
+            viewMode: 'terminal',
+            runtimeSessionId: saved.runtimeSessionId,
+            threadId: saved.threadId,
+            model: saved.model,
+            reasoningEffort: saved.reasoningEffort,
+            approvalPolicy: saved.approvalPolicy,
+            sandboxMode: saved.sandboxMode,
           });
           restoredSessions.add(saved.tmuxSession);
         } catch {}
@@ -154,12 +187,20 @@ function App() {
           const termId = generateId('term');
           try {
             await CreateAttachedTerminal(termId, sess.tmuxName);
-            const tab = {
+            const tab: Tab = {
               id: generateId('tab'),
               label: sess.label,
               rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
               tabType: (sess.type === 'server' || sess.type === 'claude' || sess.type === 'codex' ? sess.type : 'shell') as 'shell' | 'claude' | 'codex' | 'server',
               workspacePath: sess.workspacePath,
+              provider: sess.provider as 'codex' | 'claude' | undefined,
+              viewMode: 'terminal',
+              runtimeSessionId: sess.runtimeSessionId,
+              threadId: sess.threadId,
+              model: sess.model,
+              reasoningEffort: sess.reasoningEffort,
+              approvalPolicy: sess.approvalPolicy,
+              sandboxMode: sess.sandboxMode,
             };
             if (sess.type === 'server') {
               useStore.getState().addServerTab(tab);
@@ -290,9 +331,9 @@ function App() {
     }
   }, [focusedPaneId, closePane]);
 
-  const getChatSessions = useCallback((pane: Pane, fallbackKind: 'codex' | 'claude' = 'codex'): { id: string; kind: 'codex' | 'claude' }[] => {
+  const getChatSessions = useCallback((pane: Pane, fallbackKind: 'codex' | 'claude' = 'codex'): { id: string; kind: 'codex' | 'claude'; threadId?: string }[] => {
     if (pane.type === 'chat' && pane.chatSessionId) {
-      return [{ id: pane.chatSessionId, kind: pane.chatKind || fallbackKind }];
+      return [{ id: pane.chatSessionId, kind: pane.chatKind || fallbackKind, threadId: pane.chatThreadId }];
     }
     if (!('children' in pane)) return [];
     return pane.children.flatMap((child) => getChatSessions(child, fallbackKind));
@@ -338,6 +379,13 @@ function App() {
           rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
           tabType: chat.kind,
           workspacePath: tab.workspacePath,
+          provider: chat.kind,
+          viewMode: 'terminal',
+          threadId: chat.threadId || tab.threadId,
+          model: tab.model,
+          reasoningEffort: tab.reasoningEffort,
+          approvalPolicy: tab.approvalPolicy,
+          sandboxMode: tab.sandboxMode,
         });
         removeTab(tab.id);
       } catch (err) {
@@ -359,23 +407,39 @@ function App() {
           addTab({
             id: generateId('tab'),
             label: session?.label ? `${session.label} Chat` : 'Claude Chat',
-            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'claude' } as PaneLeaf,
+            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
             tabType: 'claude-chat',
             workspacePath: tab.workspacePath,
+            provider: 'claude',
+            viewMode: 'chat',
+            runtimeSessionId: session.id,
+            threadId: session.threadId || tab.threadId,
           });
           removeTab(tab.id);
           return;
         }
-        const session = await LaunchCodexChat(project.root, tab.workspacePath);
+        const termId = getAllTerminalIds(tab)[0];
+        if (!termId) return;
+        const tmuxSession = await GetTmuxSession(termId);
+        if (!tmuxSession) return;
+        const session = await ConvertTerminalToCodexChat(project.root, tab.workspacePath, tmuxSession);
         for (const termId of getAllTerminalIds(tab)) {
           try { await CloseTerminal(termId); } catch {}
         }
         addTab({
           id: generateId('tab'),
           label: session?.label || 'Codex Chat',
-          rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatKind: 'codex' } as PaneLeaf,
+          rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
           tabType: 'codex-chat',
           workspacePath: tab.workspacePath,
+          provider: 'codex',
+          viewMode: 'chat',
+          runtimeSessionId: session.id,
+          threadId: session.threadId || tab.threadId,
+          model: session.model || tab.model,
+          reasoningEffort: session.reasoningEffort || tab.reasoningEffort,
+          approvalPolicy: session.approvalPolicy || tab.approvalPolicy,
+          sandboxMode: session.sandboxMode || tab.sandboxMode,
         });
         removeTab(tab.id);
       } catch (err) {
@@ -390,7 +454,27 @@ function App() {
     (async () => {
       const savedTabs = [];
       for (const tab of tabs) {
-        if (tab.tabType === 'codex-chat') continue;
+        if (tab.tabType === 'codex-chat') {
+          const chat = getChatSessions(tab.rootPane, 'codex')[0];
+          const threadId = chat?.threadId || tab.threadId;
+          if (chat?.id || threadId) {
+            savedTabs.push({
+              label: tab.label,
+              tabType: tab.tabType,
+              tmuxSession: '',
+              workspacePath: tab.workspacePath,
+              provider: 'codex',
+              viewMode: 'chat',
+              runtimeSessionId: chat?.id || tab.runtimeSessionId || '',
+              threadId: threadId || '',
+              model: tab.model || '',
+              reasoningEffort: tab.reasoningEffort || '',
+              approvalPolicy: tab.approvalPolicy || '',
+              sandboxMode: tab.sandboxMode || '',
+            });
+          }
+          continue;
+        }
         if (tab.tabType === 'claude-chat') {
           const chat = getChatSessions(tab.rootPane, 'claude')[0];
           if (chat?.id) {
@@ -399,6 +483,14 @@ function App() {
               tabType: tab.tabType,
               tmuxSession: chat.id,
               workspacePath: tab.workspacePath,
+              provider: 'claude',
+              viewMode: 'chat',
+              runtimeSessionId: chat.id,
+              threadId: chat.threadId || tab.threadId || '',
+              model: tab.model || '',
+              reasoningEffort: tab.reasoningEffort || '',
+              approvalPolicy: tab.approvalPolicy || '',
+              sandboxMode: tab.sandboxMode || '',
             });
           }
           continue;
@@ -413,6 +505,14 @@ function App() {
               tabType: tab.tabType,
               tmuxSession,
               workspacePath: tab.workspacePath,
+              provider: tab.provider || (tab.tabType === 'claude' || tab.tabType === 'codex' ? tab.tabType : ''),
+              viewMode: 'terminal',
+              runtimeSessionId: tab.runtimeSessionId || tmuxSession,
+              threadId: tab.threadId || '',
+              model: tab.model || '',
+              reasoningEffort: tab.reasoningEffort || '',
+              approvalPolicy: tab.approvalPolicy || '',
+              sandboxMode: tab.sandboxMode || '',
             });
           }
         }
@@ -592,9 +692,17 @@ function App() {
           addTab({
             id: generateId('tab'),
             label: data.label || (chatKind === 'claude' ? 'Claude Chat' : 'Codex Chat'),
-            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: data.tmuxSession, chatKind } as PaneLeaf,
+            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: data.runtimeSessionId || data.tmuxSession, chatThreadId: data.threadId, chatKind } as PaneLeaf,
             tabType: data.type as 'codex-chat' | 'claude-chat',
             workspacePath: data.workspacePath,
+            provider: chatKind,
+            viewMode: 'chat',
+            runtimeSessionId: data.runtimeSessionId || data.tmuxSession,
+            threadId: data.threadId,
+            model: data.model,
+            reasoningEffort: data.reasoningEffort,
+            approvalPolicy: data.approvalPolicy,
+            sandboxMode: data.sandboxMode,
           });
           return;
         }
@@ -607,6 +715,10 @@ function App() {
             rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
             tabType: (data.type === 'claude' || data.type === 'codex') ? data.type : 'shell',
             workspacePath: data.workspacePath,
+            provider: data.provider || (data.type === 'claude' || data.type === 'codex' ? data.type : undefined),
+            viewMode: 'terminal',
+            runtimeSessionId: data.runtimeSessionId || data.tmuxSession,
+            threadId: data.threadId,
           });
         } catch {}
       }),

@@ -20,17 +20,31 @@ import (
 
 const (
 	SessionType            = "codex-chat"
+	Provider               = "codex"
+	ViewModeChat           = "chat"
+	ViewModeTerminal       = "terminal"
 	defaultModel           = "gpt-5.4"
 	defaultReasoningEffort = "xhigh"
+	defaultApprovalPolicy  = "never"
+	defaultSandboxMode     = "danger-full-access"
+	defaultCollabMode      = "default"
 )
 
 type SessionInfo struct {
-	ID            string `json:"id"`
-	Type          string `json:"type"`
-	Label         string `json:"label"`
-	WorkspacePath string `json:"workspacePath"`
-	Status        string `json:"status"`
-	ThreadID      string `json:"threadId,omitempty"`
+	ID                string `json:"id"`
+	Type              string `json:"type"`
+	Label             string `json:"label"`
+	WorkspacePath     string `json:"workspacePath"`
+	Status            string `json:"status"`
+	ThreadID          string `json:"threadId,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	ViewMode          string `json:"viewMode,omitempty"`
+	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
+	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
+	SandboxMode       string `json:"sandboxMode,omitempty"`
+	CollaborationMode string `json:"collaborationMode,omitempty"`
 }
 
 type Message struct {
@@ -50,6 +64,17 @@ type Message struct {
 }
 
 type Listener func(sessionID string, message Message)
+
+type StartOptions struct {
+	WorkspacePath     string
+	Label             string
+	ThreadID          string
+	Model             string
+	ReasoningEffort   string
+	ApprovalPolicy    string
+	SandboxMode       string
+	CollaborationMode string
+}
 
 type Manager struct {
 	ctx context.Context
@@ -80,12 +105,37 @@ func (m *Manager) SetListener(listener Listener) {
 }
 
 func (m *Manager) Start(workspacePath string, label string) (*SessionInfo, error) {
-	workspacePath = strings.TrimSpace(workspacePath)
+	return m.StartWithOptions(StartOptions{WorkspacePath: workspacePath, Label: label})
+}
+
+func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
+	workspacePath := strings.TrimSpace(options.WorkspacePath)
 	if workspacePath == "" {
 		return nil, errors.New("workspacePath required")
 	}
-	if strings.TrimSpace(label) == "" {
+	label := strings.TrimSpace(options.Label)
+	if label == "" {
 		label = "Codex Chat"
+	}
+	model := strings.TrimSpace(options.Model)
+	if model == "" {
+		model = defaultModel
+	}
+	reasoningEffort := strings.TrimSpace(options.ReasoningEffort)
+	if reasoningEffort == "" {
+		reasoningEffort = defaultReasoningEffort
+	}
+	approvalPolicy := strings.TrimSpace(options.ApprovalPolicy)
+	if approvalPolicy == "" {
+		approvalPolicy = defaultApprovalPolicy
+	}
+	sandboxMode := strings.TrimSpace(options.SandboxMode)
+	if sandboxMode == "" {
+		sandboxMode = defaultSandboxMode
+	}
+	collaborationMode := strings.TrimSpace(options.CollaborationMode)
+	if collaborationMode == "" {
+		collaborationMode = defaultCollabMode
 	}
 
 	id := "codex-chat-" + shortID()
@@ -110,21 +160,34 @@ func (m *Manager) Start(workspacePath string, label string) (*SessionInfo, error
 	}
 
 	session := &Session{
-		manager:         m,
-		ctx:             ctx,
-		cancel:          cancel,
-		id:              id,
-		label:           label,
-		workspacePath:   workspacePath,
-		status:          "starting",
-		cmd:             cmd,
-		stdin:           stdin,
-		pending:         make(map[string]chan rpcResponse),
-		pendingInputs:   make(map[string]pendingInput),
-		subscribers:     make(map[chan Message]struct{}),
-		agentDeltaItems: make(map[string]bool),
-		model:           defaultModel,
-		reasoningEffort: defaultReasoningEffort,
+		manager:           m,
+		ctx:               ctx,
+		cancel:            cancel,
+		id:                id,
+		label:             label,
+		workspacePath:     workspacePath,
+		threadID:          strings.TrimSpace(options.ThreadID),
+		status:            "starting",
+		cmd:               cmd,
+		stdin:             stdin,
+		pending:           make(map[string]chan rpcResponse),
+		pendingInputs:     make(map[string]pendingInput),
+		subscribers:       make(map[chan Message]struct{}),
+		agentDeltaItems:   make(map[string]bool),
+		model:             model,
+		reasoningEffort:   reasoningEffort,
+		approvalPolicy:    approvalPolicy,
+		sandboxMode:       sandboxMode,
+		collaborationMode: collaborationMode,
+	}
+	if session.threadID != "" {
+		session.messages = LoadHistory(session.threadID, workspacePath)
+		for i := range session.messages {
+			session.messages[i].SessionID = session.id
+			if session.messages[i].ThreadID == "" {
+				session.messages[i].ThreadID = session.threadID
+			}
+		}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -207,13 +270,16 @@ type Session struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	id              string
-	label           string
-	workspacePath   string
-	threadID        string
-	status          string
-	model           string
-	reasoningEffort string
+	id                string
+	label             string
+	workspacePath     string
+	threadID          string
+	status            string
+	model             string
+	reasoningEffort   string
+	approvalPolicy    string
+	sandboxMode       string
+	collaborationMode string
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -253,12 +319,20 @@ func (s *Session) Info() SessionInfo {
 	s.messagesMu.Lock()
 	defer s.messagesMu.Unlock()
 	return SessionInfo{
-		ID:            s.id,
-		Type:          SessionType,
-		Label:         s.label,
-		WorkspacePath: s.workspacePath,
-		Status:        s.status,
-		ThreadID:      s.threadID,
+		ID:                s.id,
+		Type:              SessionType,
+		Label:             s.label,
+		WorkspacePath:     s.workspacePath,
+		Status:            s.status,
+		ThreadID:          s.threadID,
+		Provider:          Provider,
+		ViewMode:          ViewModeChat,
+		RuntimeSessionID:  s.id,
+		Model:             s.model,
+		ReasoningEffort:   s.reasoningEffort,
+		ApprovalPolicy:    s.approvalPolicy,
+		SandboxMode:       s.sandboxMode,
+		CollaborationMode: s.collaborationMode,
 	}
 }
 
@@ -330,10 +404,10 @@ func (s *Session) Send(text string, attachments []chatattachments.Attachment) er
 	params := map[string]any{
 		"threadId":       s.threadID,
 		"input":          input,
-		"approvalPolicy": "never",
+		"approvalPolicy": s.approvalPolicy,
 		"effort":         s.reasoningEffort,
 		"collaborationMode": map[string]any{
-			"mode": "default",
+			"mode": s.collaborationMode,
 			"settings": map[string]any{
 				"model":                  s.model,
 				"reasoning_effort":       s.reasoningEffort,
@@ -411,15 +485,23 @@ func (s *Session) bootstrap() error {
 		return err
 	}
 
-	response, err := s.request("thread/start", map[string]any{
+	method := "thread/start"
+	params := map[string]any{
 		"cwd":                    s.workspacePath,
-		"approvalPolicy":         "never",
-		"sandbox":                "danger-full-access",
+		"approvalPolicy":         s.approvalPolicy,
+		"sandbox":                s.sandboxMode,
+		"model":                  s.model,
+		"effort":                 s.reasoningEffort,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
-	}, 45*time.Second)
+	}
+	if s.threadID != "" {
+		method = "thread/resume"
+		params["threadId"] = s.threadID
+	}
+	response, err := s.request(method, params, 45*time.Second)
 	if err != nil {
-		return fmt.Errorf("start codex thread: %w", err)
+		return fmt.Errorf("%s codex thread: %w", method, err)
 	}
 
 	if thread, ok := response["thread"].(map[string]any); ok {
@@ -434,10 +516,25 @@ func (s *Session) bootstrap() error {
 		s.model = model
 	}
 	if s.threadID == "" {
-		return errors.New("thread/start returned no thread id")
+		return fmt.Errorf("%s returned no thread id", method)
 	}
 
-	s.emit(Message{Type: "system", Text: "Codex chat ready", ThreadID: s.threadID})
+	s.emit(Message{
+		Type:     "system",
+		Text:     "Codex chat ready",
+		ThreadID: s.threadID,
+		Details: compactAny(map[string]any{
+			"provider":          Provider,
+			"viewMode":          ViewModeChat,
+			"runtimeSessionId":  s.id,
+			"threadId":          s.threadID,
+			"model":             s.model,
+			"reasoningEffort":   s.reasoningEffort,
+			"approvalPolicy":    s.approvalPolicy,
+			"sandboxMode":       s.sandboxMode,
+			"collaborationMode": s.collaborationMode,
+		}),
+	})
 	s.setStatus("idle")
 	return nil
 }
@@ -659,7 +756,7 @@ func (s *Session) handleNotification(method string, params map[string]any) {
 		}
 	case "turn/plan/updated":
 		if text := compactAny(params); text != "" {
-			s.emit(Message{Type: "assistant", Role: "assistant", Text: "Plan updated", Details: text})
+			s.emit(Message{Type: "plan", Role: "assistant", Text: "Plan updated", Details: text})
 		}
 	case "item/started":
 		if item, ok := params["item"].(map[string]any); ok {
@@ -757,6 +854,12 @@ func (s *Session) processItemCompleted(item map[string]any) {
 		if text := extractText(item); text != "" {
 			s.emit(Message{Type: "thinking_delta", Text: text})
 		}
+	case "plan":
+		text := extractText(item)
+		if text == "" {
+			text = compactAny(item)
+		}
+		s.emit(Message{Type: "plan", Role: "assistant", Text: text})
 	case "commandexecution":
 		output := stringFrom(item, "aggregatedOutput", "output")
 		if output == "" {

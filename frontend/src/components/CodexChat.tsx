@@ -41,6 +41,14 @@ type ChatRow = ChatMessage & {
   merged?: boolean;
 };
 
+type SessionMetadata = {
+  model?: string;
+  reasoningEffort?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  threadId?: string;
+};
+
 interface CodexChatProps {
   sessionId: string;
   visible: boolean;
@@ -128,6 +136,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   }, [visible, sessionId]);
 
   const rows = useMemo(() => mergeRows(messages, config.displayName), [messages, config.displayName]);
+  const metadata = useMemo(() => sessionMetadata(messages), [messages]);
   const lastStatusMessage = [...messages].reverse().find((m) => m.type === 'status');
   const lastStatus = lastStatusMessage?.status || 'idle';
 
@@ -221,6 +230,14 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
           <div>
             <div className="codex-chat-title">{config.displayName} Chat</div>
           <div className="codex-chat-subtitle">{statusLabel(lastStatus, config.displayName, lastStatusMessage?.text)}</div>
+          {metadata && (
+            <div className="codex-chat-session-meta">
+              {metadata.model && <span>{metadata.model}</span>}
+              {metadata.reasoningEffort && <span>{metadata.reasoningEffort}</span>}
+              {metadata.approvalPolicy && <span>{metadata.approvalPolicy === 'never' ? 'full access' : metadata.approvalPolicy}</span>}
+              {metadata.sandboxMode && <span>{metadata.sandboxMode}</span>}
+            </div>
+          )}
         </div>
         <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>{lastStatus}</div>
       </div>
@@ -338,6 +355,21 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
     });
   }
   return rows;
+}
+
+function sessionMetadata(messages: ChatMessage[]): SessionMetadata | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.type !== 'system' || !msg.details) continue;
+    try {
+      const parsed = JSON.parse(msg.details) as SessionMetadata;
+      if (parsed.model || parsed.reasoningEffort || parsed.approvalPolicy || parsed.sandboxMode || parsed.threadId) {
+        return parsed;
+      }
+    } catch {}
+  }
+  const threadId = [...messages].reverse().find((msg) => msg.threadId)?.threadId;
+  return threadId ? { threadId } : null;
 }
 
 function renderRow(
@@ -661,5 +693,5 @@ function planPreview(markdown: string): string {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'));
-  return lines.slice(0, 4).join('\n') || 'Review the plan before Claude starts changing files.';
+  return lines.slice(0, 4).join('\n') || 'Review the plan before changes start.';
 }

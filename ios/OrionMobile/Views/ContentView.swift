@@ -34,7 +34,7 @@ struct MainView: View {
                 if let activeSession = state.activeSession,
                    state.activeSessionShowsChat,
                    let connection = state.activeChatConnection,
-                   connection.sessionId == activeSession.tmuxName {
+                   connection.sessionId == activeSession.chatConnectionId {
                     CodexChatView(connection: connection)
                     if connection.connectionState == .failed {
                         VStack(spacing: 10) {
@@ -56,7 +56,7 @@ struct MainView: View {
                     }
                 } else if let activeSession = state.activeSession,
                    let connection = state.activeConnection,
-                   connection.tmuxSession == activeSession.tmuxName {
+                   connection.tmuxSession == activeSession.terminalTmuxSession {
                     TerminalContainerView(connection: connection)
                     if connection.connectionState == .failed {
                         VStack(spacing: 10) {
@@ -427,7 +427,7 @@ struct TabPill: View {
             .buttonStyle(.plain)
             if isConvertibleSession(tab.type) {
                 Button {
-                    if let session = state.sessions.first(where: { $0.tmuxName == tab.tmuxSession }) {
+                    if let session = state.sessions.first(where: { $0.id == tab.id || $0.tmuxName == tab.tmuxSession }) {
                         Task { await state.convertSession(session) }
                     }
                 } label: {
@@ -438,7 +438,7 @@ struct TabPill: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button { state.requestKillSession(tab.tmuxSession) } label: {
+            Button { state.requestKillSession(tab.id) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(OrionTheme.textDim)
@@ -585,9 +585,6 @@ struct CodexChatView: View {
             }
 
             composer
-            .padding(12)
-            .background(OrionTheme.bgSecondary)
-            .overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
         }
         .fullScreenCover(item: $expandedPlan) { plan in
             PlanReviewView(
@@ -755,7 +752,7 @@ struct CodexChatView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 7) {
             if !pendingImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -767,14 +764,14 @@ struct CodexChatView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 7) {
                 TextField("Message \(assistantName)...", text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
                     .foregroundStyle(OrionTheme.textPrimary)
                     .lineLimit(1...5)
-                    .padding(.horizontal, 4)
-                    .padding(.top, 2)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
 
                 HStack(spacing: 6) {
                     PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 4, matching: .images) {
@@ -809,15 +806,15 @@ struct CodexChatView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(10)
-            .background(OrionTheme.bgSurface.opacity(0.96))
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .overlay(RoundedRectangle(cornerRadius: 22).stroke(OrionTheme.border, lineWidth: 0.5))
+            .padding(8)
+            .background(OrionTheme.bgSurface.opacity(0.94))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(OrionTheme.borderDim, lineWidth: 0.5))
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 6)
-        .padding(.bottom, 6)
-        .background(OrionTheme.bgPrimary)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(OrionTheme.bgTerminal.opacity(0.98))
     }
 
     private var canSend: Bool {
@@ -1342,5 +1339,5 @@ private func planPreview(_ markdown: String) -> String {
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty && !$0.hasPrefix("#") }
     let preview = lines.prefix(4).joined(separator: "\n")
-    return preview.isEmpty ? "Review the plan before Claude starts changing files." : preview
+    return preview.isEmpty ? "Review the plan before changes start." : preview
 }

@@ -8,6 +8,7 @@ export interface PaneLeaf {
   id: string;
   terminalId?: string;  // for terminal
   chatSessionId?: string; // for agent chat
+  chatThreadId?: string; // durable agent conversation id
   chatKind?: 'codex' | 'claude';
   filePath?: string;    // for editor & diff
   language?: string;    // Monaco language id
@@ -31,6 +32,14 @@ export interface Tab {
   rootPane: Pane;
   tabType: 'shell' | 'claude' | 'codex' | 'codex-chat' | 'claude-chat' | 'server' | 'mixed' | 'editor';
   workspacePath: string;
+  provider?: 'codex' | 'claude';
+  viewMode?: 'terminal' | 'chat';
+  runtimeSessionId?: string;
+  threadId?: string;
+  model?: string;
+  reasoningEffort?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
 }
 
 interface ProjectState {

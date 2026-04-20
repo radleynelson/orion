@@ -246,6 +246,7 @@ final class TerminalConnection {
 final class CodexChatConnection {
     let sessionId: String
     let sessionType: String
+    let workspacePath: String
     private(set) var isConnected = false
     private(set) var connectionState = ConnectionState.disconnected
     var messages: [CodexChatMessage] = []
@@ -260,9 +261,10 @@ final class CodexChatConnection {
     private var shouldReconnect = false
     private var connectionGeneration = 0
 
-    init(sessionId: String, sessionType: String = "codex-chat") {
+    init(sessionId: String, sessionType: String = "codex-chat", workspacePath: String = "") {
         self.sessionId = sessionId
         self.sessionType = sessionType
+        self.workspacePath = workspacePath
     }
 
     private var isClaude: Bool { sessionType == "claude" || sessionType == "claude-chat" }
@@ -314,7 +316,12 @@ final class CodexChatConnection {
         let encoded = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
         let encodedSession = sessionId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sessionId
         let route = isClaude ? "claude-chat" : "codex-chat"
-        guard let url = URL(string: "ws://\(host)/ws/\(route)/\(encodedSession)?token=\(encoded)") else {
+        var query = "token=\(encoded)"
+        if !isClaude && !workspacePath.isEmpty {
+            let encodedWorkspace = workspacePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? workspacePath
+            query += "&workspacePath=\(encodedWorkspace)"
+        }
+        guard let url = URL(string: "ws://\(host)/ws/\(route)/\(encodedSession)?\(query)") else {
             print("[Orion \(displayName) Chat] Invalid URL for \(sessionId)")
             return
         }

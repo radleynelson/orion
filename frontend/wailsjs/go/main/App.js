@@ -10,12 +10,12 @@ export function AnswerClaudeChatRequest(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerClaudeChatRequest'](arg1, arg2, arg3);
 }
 
-export function ApproveClaudePlan(arg1) {
-  return window['go']['main']['App']['ApproveClaudePlan'](arg1);
-}
-
 export function AnswerCodexChatRequest(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerCodexChatRequest'](arg1, arg2, arg3);
+}
+
+export function ApproveClaudePlan(arg1) {
+  return window['go']['main']['App']['ApproveClaudePlan'](arg1);
 }
 
 export function AttachClaudeChat(arg1, arg2) {
@@ -28,6 +28,10 @@ export function CloseTerminal(arg1) {
 
 export function ConvertChatToTerminal(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ConvertChatToTerminal'](arg1, arg2, arg3, arg4);
+}
+
+export function ConvertTerminalToCodexChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ConvertTerminalToCodexChat'](arg1, arg2, arg3);
 }
 
 export function CreateAttachedTerminal(arg1, arg2) {
@@ -64,6 +68,10 @@ export function DiscardFileChanges(arg1, arg2) {
 
 export function EmitSessionCreated(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['EmitSessionCreated'](arg1, arg2, arg3, arg4);
+}
+
+export function EmitSessionCreatedInfo(arg1) {
+  return window['go']['main']['App']['EmitSessionCreatedInfo'](arg1);
 }
 
 export function GetAgentNames(arg1) {
@@ -208,6 +216,10 @@ export function ReadFileContents(arg1) {
 
 export function RecoverSessions(arg1, arg2) {
   return window['go']['main']['App']['RecoverSessions'](arg1, arg2);
+}
+
+export function ResumeCodexChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResumeCodexChat'](arg1, arg2, arg3);
 }
 
 export function RevealInFinder(arg1) {

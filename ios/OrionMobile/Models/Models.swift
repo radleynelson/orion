@@ -18,14 +18,52 @@ struct Workspace: Codable, Identifiable {
 }
 
 struct SessionInfo: Codable, Identifiable {
-    var id: String { tmuxName }
+    var id: String { runtimeSessionId ?? threadId ?? tmuxName }
     let tmuxName: String
     let type: String
     let label: String
     let workspacePath: String
+    let provider: String?
+    let viewMode: String?
+    let runtimeSessionId: String?
+    let threadId: String?
+    let model: String?
+    let reasoningEffort: String?
+    let approvalPolicy: String?
+    let sandboxMode: String?
 
     var isChat: Bool { type == "codex-chat" || type == "claude-chat" }
     var isClaude: Bool { type == "claude" || type == "claude-chat" }
+    var chatConnectionId: String { runtimeSessionId ?? threadId ?? tmuxName }
+    var terminalTmuxSession: String { tmuxName }
+
+    init(
+        tmuxName: String,
+        type: String,
+        label: String,
+        workspacePath: String,
+        provider: String? = nil,
+        viewMode: String? = nil,
+        runtimeSessionId: String? = nil,
+        threadId: String? = nil,
+        model: String? = nil,
+        reasoningEffort: String? = nil,
+        approvalPolicy: String? = nil,
+        sandboxMode: String? = nil
+    ) {
+        self.tmuxName = tmuxName
+        self.type = type
+        self.label = label
+        self.workspacePath = workspacePath
+        self.provider = provider
+        self.viewMode = viewMode
+        self.runtimeSessionId = runtimeSessionId
+        self.threadId = threadId
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.approvalPolicy = approvalPolicy
+        self.sandboxMode = sandboxMode
+    }
 }
 
 struct CreateTerminalResponse: Codable {
@@ -56,10 +94,10 @@ struct TerminalTab: Identifiable {
     let workspacePath: String
 
     init(session: SessionInfo) {
-        self.id = session.tmuxName
+        self.id = session.id
         self.label = session.label
         self.type = session.type
-        self.tmuxSession = session.tmuxName
+        self.tmuxSession = session.terminalTmuxSession
         self.workspacePath = session.workspacePath
     }
 }
@@ -105,6 +143,13 @@ struct LaunchCodexChatResponse: Codable {
     let workspacePath: String
     let status: String
     let threadId: String?
+    let provider: String?
+    let viewMode: String?
+    let runtimeSessionId: String?
+    let model: String?
+    let reasoningEffort: String?
+    let approvalPolicy: String?
+    let sandboxMode: String?
 }
 
 typealias LaunchClaudeChatResponse = LaunchCodexChatResponse

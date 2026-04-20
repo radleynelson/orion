@@ -54,6 +54,7 @@ type AppAPI interface {
 	GetServerStatuses(repoRoot string, workspacePath string) []server.ServerStatus
 	GetAgentNames(repoRoot string) []AgentType
 	EmitSessionCreated(tmuxSession string, sessionType string, label string, workspacePath string)
+	EmitSessionCreatedInfo(session state.SessionInfo)
 }
 
 // Server is the embedded HTTP/WebSocket server for the mobile companion PWA.
@@ -336,20 +337,53 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	var sessions []state.SessionInfo
 	seen := make(map[string]bool)
 	for _, t := range savedTabs {
-		if !liveSessions[t.TmuxSession] {
-			continue // tmux session is gone
-		}
 		if len(pathSet) > 0 && !pathSet[t.WorkspacePath] {
 			continue // not in the requested workspace set
+		}
+		if t.TabType == codexchat.SessionType && strings.TrimSpace(t.ThreadID) != "" {
+			sessionID := firstNonEmpty(t.ThreadID, t.RuntimeSessionID, t.TmuxSession)
+			if seen[sessionID] {
+				continue
+			}
+			sessions = append(sessions, state.SessionInfo{
+				TmuxName:         sessionID,
+				Type:             t.TabType,
+				Label:            t.Label,
+				WorkspacePath:    t.WorkspacePath,
+				Provider:         firstNonEmpty(t.Provider, codexchat.Provider),
+				ViewMode:         firstNonEmpty(t.ViewMode, codexchat.ViewModeChat),
+				RuntimeSessionID: "",
+				ThreadID:         t.ThreadID,
+				Model:            t.Model,
+				ReasoningEffort:  t.ReasoningEffort,
+				ApprovalPolicy:   t.ApprovalPolicy,
+				SandboxMode:      t.SandboxMode,
+			})
+			seen[sessionID] = true
+			continue
+		}
+		if !liveSessions[t.TmuxSession] {
+			continue // tmux session is gone
 		}
 		if strings.HasPrefix(t.TmuxSession, "orion-web-") {
 			continue // skip phone companion sessions
 		}
+		if seen[t.TmuxSession] {
+			continue
+		}
 		sessions = append(sessions, state.SessionInfo{
-			TmuxName:      t.TmuxSession,
-			Type:          t.TabType,
-			Label:         t.Label,
-			WorkspacePath: t.WorkspacePath,
+			TmuxName:         t.TmuxSession,
+			Type:             t.TabType,
+			Label:            t.Label,
+			WorkspacePath:    t.WorkspacePath,
+			Provider:         t.Provider,
+			ViewMode:         t.ViewMode,
+			RuntimeSessionID: t.RuntimeSessionID,
+			ThreadID:         t.ThreadID,
+			Model:            t.Model,
+			ReasoningEffort:  t.ReasoningEffort,
+			ApprovalPolicy:   t.ApprovalPolicy,
+			SandboxMode:      t.SandboxMode,
 		})
 		seen[t.TmuxSession] = true
 	}
@@ -365,7 +399,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 	upsertSession := func(sess state.SessionInfo) {
 		for i := range sessions {
-			if sessions[i].TmuxName == sess.TmuxName {
+			if sessions[i].TmuxName == sess.TmuxName || (sessions[i].ThreadID != "" && sessions[i].ThreadID == sess.ThreadID) {
 				sessions[i] = sess
 				seen[sess.TmuxName] = true
 				return
@@ -496,6 +530,8 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			RepoRoot      string `json:"repoRoot"`
 			WorkspacePath string `json:"workspacePath"`
+			ThreadID      string `json:"threadId"`
+			TmuxSession   string `json:"tmuxSession"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -514,7 +550,16 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.app.EmitSessionCreated(info.ID, info.Type, info.Label, info.WorkspacePath)
+		s.app.EmitSessionCreatedInfo(state.SessionInfo{
+			TmuxName:         info.ID,
+			Type:             info.Type,
+			Label:            info.Label,
+			WorkspacePath:    info.WorkspacePath,
+			Provider:         "claude",
+			ViewMode:         "chat",
+			RuntimeSessionID: info.ID,
+			ThreadID:         info.ThreadID,
+		})
 		writeJSON(w, info)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -591,6 +636,8 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			RepoRoot      string `json:"repoRoot"`
 			WorkspacePath string `json:"workspacePath"`
+			ThreadID      string `json:"threadId"`
+			TmuxSession   string `json:"tmuxSession"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -600,12 +647,37 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "workspacePath required", http.StatusBadRequest)
 			return
 		}
-		info, err := s.codexMgr.Start(req.WorkspacePath, "Codex Chat")
+		threadID := strings.TrimSpace(req.ThreadID)
+		if threadID == "" && strings.TrimSpace(req.TmuxSession) != "" {
+			threadID = codexchat.ThreadIDForTmux(req.TmuxSession, req.WorkspacePath)
+			if threadID == "" {
+				http.Error(w, "could not identify Codex thread for tmux session", http.StatusBadRequest)
+				return
+			}
+		}
+		info, err := s.codexMgr.StartWithOptions(codexchat.StartOptions{
+			WorkspacePath: req.WorkspacePath,
+			Label:         "Codex Chat",
+			ThreadID:      threadID,
+		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.app.EmitSessionCreated(info.ID, codexchat.SessionType, info.Label, info.WorkspacePath)
+		s.app.EmitSessionCreatedInfo(state.SessionInfo{
+			TmuxName:         info.ID,
+			Type:             codexchat.SessionType,
+			Label:            info.Label,
+			WorkspacePath:    info.WorkspacePath,
+			Provider:         codexchat.Provider,
+			ViewMode:         codexchat.ViewModeChat,
+			RuntimeSessionID: info.ID,
+			ThreadID:         info.ThreadID,
+			Model:            info.Model,
+			ReasoningEffort:  info.ReasoningEffort,
+			ApprovalPolicy:   info.ApprovalPolicy,
+			SandboxMode:      info.SandboxMode,
+		})
 		writeJSON(w, info)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1301,9 +1373,27 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 	}
 	session, ok := s.codexMgr.Get(sessionID)
 	if !ok {
-		http.Error(w, "codex chat session not found", http.StatusNotFound)
-		return
+		workspacePath := firstNonEmpty(r.URL.Query().Get("workspacePath"), r.URL.Query().Get("workspace"))
+		if workspacePath == "" {
+			http.Error(w, "codex chat session not found", http.StatusNotFound)
+			return
+		}
+		info, err := s.codexMgr.StartWithOptions(codexchat.StartOptions{
+			WorkspacePath: workspacePath,
+			Label:         "Codex Chat",
+			ThreadID:      sessionID,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		session, ok = s.codexMgr.Get(info.ID)
+		if !ok {
+			http.Error(w, "codex chat session not found", http.StatusNotFound)
+			return
+		}
 	}
+	runtimeSessionID := session.Info().ID
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -1368,11 +1458,11 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 			conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 			switch msg.Type {
 			case "input":
-				attachments, err := chatattachments.Resolve(sessionID, msg.Attachments)
+				attachments, err := chatattachments.Resolve(runtimeSessionID, msg.Attachments)
 				if err != nil {
 					writeJSONMessage(codexchat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1382,7 +1472,7 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 				if err := session.Send(msg.Text, attachments); err != nil {
 					writeJSONMessage(codexchat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1392,7 +1482,7 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 				if err := session.Answer(msg.ToolUseID, msg.Text); err != nil {
 					writeJSONMessage(codexchat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1424,6 +1514,15 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func tmuxSessionExists(name string) bool {
