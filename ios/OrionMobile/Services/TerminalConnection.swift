@@ -251,6 +251,7 @@ final class CodexChatConnection {
     private(set) var connectionState = ConnectionState.disconnected
     var messages: [CodexChatMessage] = []
     var onPermanentFailure: (() -> Void)?
+    var onAssistantVoiceText: ((String) -> Void)?
 
     private var host: String?
     private var token: String?
@@ -260,6 +261,9 @@ final class CodexChatConnection {
     private var pingTask: Task<Void, Never>?
     private var shouldReconnect = false
     private var connectionGeneration = 0
+    private var connectedAt = Date.distantPast
+    private var pendingCodexVoiceText = ""
+    private var lastCodexVoiceMessageType = ""
 
     init(sessionId: String, sessionType: String = "codex-chat", workspacePath: String = "") {
         self.sessionId = sessionId
@@ -297,6 +301,7 @@ final class CodexChatConnection {
         session = nil
         isConnected = false
         connectionState = .disconnected
+        resetPendingCodexVoiceText()
     }
 
     func sendInput(_ text: String, attachments: [ChatAttachmentPayload] = []) {
@@ -333,6 +338,8 @@ final class CodexChatConnection {
         webSocket?.resume()
         isConnected = true
         connectionState = .connected
+        connectedAt = Date()
+        resetPendingCodexVoiceText()
         receiveLoop(generation: generation)
         startPing()
     }
@@ -369,6 +376,7 @@ final class CodexChatConnection {
             DispatchQueue.main.async {
                 if !self.messages.contains(where: { $0.id == chatMessage.id }) {
                     self.messages.append(chatMessage)
+                    self.publishAssistantVoiceTextIfNeeded(chatMessage)
                 }
             }
             return
@@ -423,4 +431,78 @@ final class CodexChatConnection {
             }
         }
     }
+
+    private func publishAssistantVoiceTextIfNeeded(_ message: CodexChatMessage) {
+        guard !isClaude else { return }
+        guard isLiveMessage(message) else { return }
+
+        switch message.type {
+        case "user":
+            resetPendingCodexVoiceText()
+        case "status":
+            if message.status == "running" {
+                resetPendingCodexVoiceText()
+            } else if message.status == "idle" {
+                publishPendingCodexVoiceText()
+            }
+        case "stream_delta":
+            appendPendingCodexVoiceText(message.text)
+        case "assistant":
+            let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else { return }
+            resetPendingCodexVoiceText()
+            onAssistantVoiceText?(text)
+        case "result":
+            let value = (message.subtype ?? message.text ?? "").lowercased()
+            guard value != "error" && value != "failed" else {
+                resetPendingCodexVoiceText()
+                return
+            }
+            publishPendingCodexVoiceText()
+        default:
+            break
+        }
+        lastCodexVoiceMessageType = message.type
+    }
+
+    private func appendPendingCodexVoiceText(_ text: String?) {
+        guard let text, !text.isEmpty else { return }
+        if !pendingCodexVoiceText.isEmpty && lastCodexVoiceMessageType != "stream_delta" {
+            pendingCodexVoiceText += "\n\n"
+        }
+        pendingCodexVoiceText += text
+    }
+
+    private func publishPendingCodexVoiceText() {
+        let text = pendingCodexVoiceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        resetPendingCodexVoiceText()
+        guard !text.isEmpty else { return }
+        onAssistantVoiceText?(text)
+    }
+
+    private func resetPendingCodexVoiceText() {
+        pendingCodexVoiceText = ""
+        lastCodexVoiceMessageType = ""
+    }
+
+    private func isLiveMessage(_ message: CodexChatMessage) -> Bool {
+        guard let createdAt = Self.parseCreatedAt(message.createdAt) else { return true }
+        return createdAt >= connectedAt.addingTimeInterval(-1)
+    }
+
+    private static func parseCreatedAt(_ value: String) -> Date? {
+        fractionalDateFormatter.date(from: value) ?? plainDateFormatter.date(from: value)
+    }
+
+    private static let fractionalDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let plainDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }

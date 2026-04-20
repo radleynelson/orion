@@ -155,17 +155,56 @@ export function createTerminal(
   // in both alternate screen (TUI apps) and normal buffer (server logs).
   const el = container;
 
-  let lastScrollTime = 0;
-  const scrollThrottleMs = 16; // minimum ms between scroll events (~60fps)
+  let wheelAccumulator = 0;
+  let lastWheelTime = 0;
+  let lastScrollEmitTime = 0;
+  let scrollFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  const scrollIdleResetMs = 180;
+  const scrollEmitIntervalMs = 48;
+  const minScrollPixelsPerEvent = 88;
+
+  const normalizedWheelDelta = (e: WheelEvent, cellHeight: number, viewportHeight: number) => {
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * cellHeight;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * viewportHeight;
+    return e.deltaY;
+  };
+
+  const emitScrollEvent = (direction: 1 | -1, col: number, row: number) => {
+    const button = direction < 0 ? 64 : 65;
+    const seq = `\x1b[<${button};${col};${row}M`;
+    const bytes = new TextEncoder().encode(seq);
+    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+    EventsEmit('terminal:input', terminalId, btoa(binary));
+  };
+
+  const scheduleScrollFlush = (delay: number, col: number, row: number, threshold: number) => {
+    if (scrollFlushTimer) return;
+    scrollFlushTimer = setTimeout(() => {
+      scrollFlushTimer = null;
+      const magnitude = Math.abs(wheelAccumulator);
+      if (magnitude < threshold) return;
+
+      const now = Date.now();
+      const elapsed = now - lastScrollEmitTime;
+      if (elapsed < scrollEmitIntervalMs) {
+        scheduleScrollFlush(scrollEmitIntervalMs - elapsed, col, row, threshold);
+        return;
+      }
+
+      const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
+      emitScrollEvent(direction, col, row);
+      wheelAccumulator -= direction * threshold;
+      lastScrollEmitTime = now;
+
+      if (Math.abs(wheelAccumulator) >= threshold) {
+        scheduleScrollFlush(scrollEmitIntervalMs, col, row, threshold);
+      }
+    }, delay);
+  };
 
   const wheelHandler = (e: WheelEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    // Throttle scroll events to control speed
-    const now = Date.now();
-    if (now - lastScrollTime < scrollThrottleMs) return;
-    lastScrollTime = now;
 
     const rect = el.getBoundingClientRect();
     const cellWidth = rect.width / terminal.cols;
@@ -173,13 +212,20 @@ export function createTerminal(
     const col = Math.min(terminal.cols, Math.max(1, Math.floor((e.clientX - rect.left) / cellWidth) + 1));
     const row = Math.min(terminal.rows, Math.max(1, Math.floor((e.clientY - rect.top) / cellHeight) + 1));
 
-    const button = e.deltaY < 0 ? 64 : 65;
-    const lines = 1; // lines per throttled event
-    for (let i = 0; i < lines; i++) {
-      const seq = `\x1b[<${button};${col};${row}M`;
-      const bytes = new TextEncoder().encode(seq);
-      const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
-      EventsEmit('terminal:input', terminalId, btoa(binary));
+    const delta = normalizedWheelDelta(e, cellHeight, rect.height);
+    const now = Date.now();
+    if (
+      now - lastWheelTime > scrollIdleResetMs ||
+      (wheelAccumulator !== 0 && Math.sign(delta) !== Math.sign(wheelAccumulator))
+    ) {
+      wheelAccumulator = 0;
+    }
+    lastWheelTime = now;
+    wheelAccumulator += delta;
+
+    const threshold = Math.max(minScrollPixelsPerEvent, cellHeight * 5);
+    if (Math.abs(wheelAccumulator) >= threshold) {
+      scheduleScrollFlush(0, col, row, threshold);
     }
   };
   // Use capture phase so we intercept before xterm.js's internal handlers
@@ -222,6 +268,7 @@ export function createTerminal(
   EventsEmit('terminal:resize', terminalId, terminal.cols, terminal.rows);
 
   const dispose = () => {
+    if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('copy', copyHandler);
     onDataDispose.dispose();

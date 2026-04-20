@@ -41,7 +41,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading) { Text("Font Size: \(Int(fontSize))pt"); Slider(value: $fontSize, in: 10...24, step: 1).tint(OrionTheme.accentBlue) }
                 }
                 Section("Voice Mode") {
-                    Toggle("Read Claude Responses", isOn: Binding(get: { state.voiceModeEnabled }, set: { _ in state.toggleVoiceMode() }))
+                    Toggle("Read Agent Responses", isOn: Binding(get: { state.voiceModeEnabled }, set: { _ in state.toggleVoiceMode() }))
                         .tint(OrionTheme.accentBlue)
 
                     Picker("TTS Engine", selection: $ttsProvider) {

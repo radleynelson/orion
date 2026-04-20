@@ -139,16 +139,22 @@ final class AppState {
     }
 
     func connectVoice() {
-        voiceConnection.onVoiceText = { [weak self] text, session in
+        voiceConnection.onVoiceText = { [weak self] text, _ in
             guard let self else { return }
-            // Always store the last response for on-demand playback
-            self.lastVoiceText = text
-            // Only auto-speak if voice mode is on
-            guard self.voiceModeEnabled else { return }
-            let rate = UserDefaults.standard.double(forKey: "ttsRate")
-            self.speech.speakResponse(text, rate: Float(rate > 0 ? rate : 0.52))
+            self.handleVoiceText(text)
         }
         voiceConnection.connect(host: host, token: token)
+    }
+
+    func handleVoiceText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Always store the last response for on-demand playback.
+        lastVoiceText = trimmed
+        // Only auto-speak if voice mode is on.
+        guard voiceModeEnabled else { return }
+        let rate = UserDefaults.standard.double(forKey: "ttsRate")
+        speech.speakResponse(trimmed, rate: Float(rate > 0 ? rate : 0.52))
     }
 
     func toggleVoiceMode() {
@@ -532,6 +538,10 @@ final class AppState {
         let connection = CodexChatConnection(sessionId: session.chatConnectionId, sessionType: session.type, workspacePath: session.workspacePath)
         connection.onPermanentFailure = { [weak self] in
             self?.showTransientError("\(session.label) disconnected. Tap Reconnect to resume.")
+        }
+        connection.onAssistantVoiceText = { [weak self, weak connection] text in
+            guard let self, let connection, self.activeChatConnection === connection else { return }
+            self.handleVoiceText(text)
         }
 
         activeConnection = nil
