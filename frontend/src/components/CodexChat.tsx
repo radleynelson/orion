@@ -139,6 +139,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   const metadata = useMemo(() => sessionMetadata(messages), [messages]);
   const lastStatusMessage = [...messages].reverse().find((m) => m.type === 'status');
   const lastStatus = lastStatusMessage?.status || 'idle';
+  const isRunning = lastStatus === 'running';
 
   const send = async () => {
     const text = input.trim();
@@ -274,6 +275,11 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
       )}
 
       <div className="codex-chat-input">
+        {isRunning && (
+          <WorkingIndicator
+            text={lastStatusMessage?.text || `${config.displayName} is working`}
+          />
+        )}
         {attachments.length > 0 && (
           <div className="codex-chat-attachment-tray">
             {attachments.map((attachment, index) => (
@@ -342,17 +348,6 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
       continue;
     }
     rows.push({ ...msg });
-  }
-  const status = [...messages].reverse().find((msg) => msg.type === 'status');
-  if (status?.status === 'running') {
-    rows.push({
-      id: `loading-${status.id}`,
-      sessionId: status.sessionId,
-      threadId: status.threadId,
-      type: 'loading',
-      text: status.text || `${assistantName} is thinking`,
-      createdAt: status.createdAt,
-    });
   }
   return rows;
 }
@@ -477,6 +472,19 @@ function attachmentName(attachment: ChatAttachment): string {
     return parts[parts.length - 1] || 'Image';
   }
   return 'Image';
+}
+
+function WorkingIndicator({ text }: { text: string }) {
+  return (
+    <div className="codex-chat-working-indicator">
+      <span className="codex-chat-typing-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span>{text}</span>
+    </div>
+  );
 }
 
 function LoadingRow({ msg, assistantName, avatar }: { msg: ChatRow; assistantName: string; avatar: string }) {

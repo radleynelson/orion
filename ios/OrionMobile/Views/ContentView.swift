@@ -522,7 +522,10 @@ struct CodexChatView: View {
     @State private var pendingImages: [PendingChatImage] = []
     @State private var isLoadingPhotos = false
     @State private var expandedPlan: CodexChatRow?
+    @State private var dismissedKeyboardDuringDrag = false
+    @FocusState private var composerFocused: Bool
 
+    private let chatBottomID = "chat-bottom"
     private var assistantName: String { connection.displayName }
     private var assistantAvatar: String { connection.avatar }
     private var assistantColor: Color { sessionColor(connection.sessionType) }
@@ -570,21 +573,22 @@ struct CodexChatView: View {
                             chatRow(row)
                                 .id(row.id)
                         }
+                        Color.clear
+                            .frame(height: 1)
+                            .id(chatBottomID)
                     }
                     .padding(14)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(keyboardDismissGesture)
                 .background(OrionTheme.bgTerminal)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    composer
+                }
                 .onChange(of: connection.messages.count) { _, _ in
-                    if let last = chatRows.last {
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
-                    }
+                    scrollToChatBottom(proxy)
                 }
             }
-
-            composer
         }
         .fullScreenCover(item: $expandedPlan) { plan in
             PlanReviewView(
@@ -615,6 +619,19 @@ struct CodexChatView: View {
             }
         }
         return "Ready"
+    }
+
+    private var isAssistantRunning: Bool {
+        connection.messages.reversed().first(where: { $0.type == "status" })?.status == "running"
+    }
+
+    private var workingLabel: String {
+        if let message = connection.messages.reversed().first(where: { $0.type == "status" && $0.status == "running" }),
+           let text = message.text,
+           !text.isEmpty {
+            return text
+        }
+        return "\(assistantName) is working"
     }
 
     private var chatRows: [CodexChatRow] {
@@ -753,6 +770,11 @@ struct CodexChatView: View {
 
     private var composer: some View {
         VStack(spacing: 7) {
+            if isAssistantRunning {
+                workingIndicator
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             if !pendingImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -770,6 +792,7 @@ struct CodexChatView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(OrionTheme.textPrimary)
                     .lineLimit(1...5)
+                    .focused($composerFocused)
                     .padding(.horizontal, 6)
                     .padding(.top, 4)
 
@@ -815,10 +838,63 @@ struct CodexChatView: View {
         .padding(.top, 8)
         .padding(.bottom, 8)
         .background(OrionTheme.bgTerminal.opacity(0.98))
+        .simultaneousGesture(keyboardDismissGesture)
+    }
+
+    private var workingIndicator: some View {
+        HStack(spacing: 8) {
+            TypingDotsView()
+            Text(workingLabel)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OrionTheme.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(assistantColor.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var canSend: Bool {
         !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty
+    }
+
+    private var keyboardDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard !dismissedKeyboardDuringDrag else { return }
+                guard value.translation.height > 18 else { return }
+                guard value.translation.height > abs(value.translation.width) else { return }
+                dismissedKeyboardDuringDrag = true
+                dismissKeyboard()
+            }
+            .onEnded { _ in
+                dismissedKeyboardDuringDrag = false
+            }
+    }
+
+    private func dismissKeyboard() {
+        composerFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func scrollToChatBottom(_ proxy: ScrollViewProxy, delay: TimeInterval = 0, animated: Bool = true) {
+        let update = {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(chatBottomID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(chatBottomID, anchor: .bottom)
+            }
+        }
+        guard delay > 0 else {
+            update()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            update()
+        }
     }
 
     private var chatMicButton: some View {
@@ -1256,19 +1332,6 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             toolUseId: message.toolUseId,
             planPath: message.planPath,
             attachments: message.attachments ?? []
-        ))
-    }
-    if let status = messages.reversed().first(where: { $0.type == "status" }),
-       status.status == "running" {
-        rows.append(CodexChatRow(
-            id: "loading-\(status.id)",
-            type: "loading",
-            label: assistantName,
-            text: status.text ?? "\(assistantName) is thinking",
-            details: nil,
-            toolUseId: nil,
-            planPath: nil,
-            attachments: []
         ))
     }
     return rows

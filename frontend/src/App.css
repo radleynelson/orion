@@ -1020,6 +1020,21 @@
   padding: 12px 18px;
 }
 
+.codex-chat-working-indicator {
+  width: fit-content;
+  max-width: min(420px, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent-green) 9%, var(--bg-active));
+  border: 1px solid color-mix(in srgb, var(--accent-green) 22%, var(--border-dim));
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
 .codex-chat-input-row {
   display: flex;
   align-items: flex-end;
