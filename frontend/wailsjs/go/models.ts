@@ -85,6 +85,155 @@ export namespace config {
 
 }
 
+export namespace diag {
+	
+	export class GoStats {
+	    heapAllocMB: number;
+	    heapSysMB: number;
+	    stackInUseMB: number;
+	    sysMB: number;
+	    numGC: number;
+	    numGoroutine: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GoStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.heapAllocMB = source["heapAllocMB"];
+	        this.heapSysMB = source["heapSysMB"];
+	        this.stackInUseMB = source["stackInUseMB"];
+	        this.sysMB = source["sysMB"];
+	        this.numGC = source["numGC"];
+	        this.numGoroutine = source["numGoroutine"];
+	    }
+	}
+	export class Totals {
+	    orionMB: number;
+	    webviewMB: number;
+	    helpersMB: number;
+	    sessionsMB: number;
+	    grandMB: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Totals(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.orionMB = source["orionMB"];
+	        this.webviewMB = source["webviewMB"];
+	        this.helpersMB = source["helpersMB"];
+	        this.sessionsMB = source["sessionsMB"];
+	        this.grandMB = source["grandMB"];
+	    }
+	}
+	export class SessionMem {
+	    sessionName: string;
+	    kind: string;
+	    panePID: number;
+	    processes: ProcessStats[];
+	    totalRSSMB: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionMem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionName = source["sessionName"];
+	        this.kind = source["kind"];
+	        this.panePID = source["panePID"];
+	        this.processes = this.convertValues(source["processes"], ProcessStats);
+	        this.totalRSSMB = source["totalRSSMB"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ProcessStats {
+	    pid: number;
+	    ppid: number;
+	    name: string;
+	    rssMB: number;
+	    cpuPct: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProcessStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pid = source["pid"];
+	        this.ppid = source["ppid"];
+	        this.name = source["name"];
+	        this.rssMB = source["rssMB"];
+	        this.cpuPct = source["cpuPct"];
+	    }
+	}
+	export class MemorySnapshot {
+	    go: GoStats;
+	    orion: ProcessStats;
+	    webview: ProcessStats[];
+	    helpers: ProcessStats[];
+	    sessions: SessionMem[];
+	    totals: Totals;
+	    timestamp: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemorySnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.go = this.convertValues(source["go"], GoStats);
+	        this.orion = this.convertValues(source["orion"], ProcessStats);
+	        this.webview = this.convertValues(source["webview"], ProcessStats);
+	        this.helpers = this.convertValues(source["helpers"], ProcessStats);
+	        this.sessions = this.convertValues(source["sessions"], SessionMem);
+	        this.totals = this.convertValues(source["totals"], Totals);
+	        this.timestamp = source["timestamp"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+
+}
+
 export namespace files {
 	
 	export class FileEntry {

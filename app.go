@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"orion/internal/config"
+	"orion/internal/diag"
 	"orion/internal/files"
 	"orion/internal/git"
 	"orion/internal/notify"
@@ -36,6 +37,7 @@ type App struct {
 	watcherMgr *watcher.Manager
 	webSrv     *web.Server
 	notifier   *notify.Notifier
+	diagMgr    *diag.Manager
 }
 
 // NewApp creates a new App instance.
@@ -51,6 +53,7 @@ func NewApp() *App {
 		gitMgr:     git.NewManager(),
 		watcherMgr: watcher.NewManager(),
 		notifier:   notify.New(nil),
+		diagMgr:    diag.NewManager(),
 	}
 }
 
@@ -75,6 +78,7 @@ func (a *App) startup(ctx context.Context) {
 	a.gitMgr.SetContext(ctx)
 	a.watcherMgr.SetContext(ctx)
 	a.notifier.SetContext(ctx)
+	a.diagMgr.SetContext(ctx)
 	if err := a.notifier.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "notify: failed to start hook listener: %v\n", err)
 	}
@@ -492,6 +496,28 @@ func (a *App) GetClipboard() string {
 
 func (a *App) SetClipboard(text string) {
 	wailsRuntime.ClipboardSetText(a.ctx, text)
+}
+
+// --- Diagnostics ---
+
+func (a *App) GetMemorySnapshot() (*diag.MemorySnapshot, error) {
+	return a.diagMgr.Snapshot()
+}
+
+// KillSession terminates a tmux session by name. Closes any attached Orion
+// terminal first so the PTY and tab state are cleaned up, then issues
+// tmux kill-session for anything not attached. Refuses non-orion- sessions
+// so a buggy UI can't wipe a user's unrelated tmux work.
+func (a *App) KillSession(name string) error {
+	if !strings.HasPrefix(name, "orion-") {
+		return fmt.Errorf("refusing to kill non-orion session: %s", name)
+	}
+	for _, id := range a.termMgr.List() {
+		if a.termMgr.GetTmuxSession(id) == name {
+			return a.termMgr.Close(id)
+		}
+	}
+	return exec.Command("tmux", "kill-session", "-t", name).Run()
 }
 
 func sortAgents(agents []AgentTypeInfo) {

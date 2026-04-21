@@ -4,7 +4,7 @@ import { workspace } from '../../wailsjs/go/models';
 // --- Pane tree types ---
 
 export interface PaneLeaf {
-  type: 'terminal' | 'editor';
+  type: 'terminal' | 'editor' | 'diagnostics';
   id: string;
   terminalId?: string;  // for terminal
   filePath?: string;    // for editor & diff
@@ -27,7 +27,7 @@ export interface Tab {
   id: string;
   label: string;
   rootPane: Pane;
-  tabType: 'shell' | 'claude' | 'codex' | 'server' | 'mixed' | 'editor';
+  tabType: 'shell' | 'claude' | 'codex' | 'server' | 'mixed' | 'editor' | 'diagnostics';
   workspacePath: string;
 }
 
@@ -167,7 +167,7 @@ export function generateId(prefix: string): string {
 // --- Pane tree helpers ---
 
 function isLeaf(pane: Pane): pane is PaneLeaf {
-  return pane.type === 'terminal' || pane.type === 'editor';
+  return pane.type === 'terminal' || pane.type === 'editor' || pane.type === 'diagnostics';
 }
 
 function isSplit(pane: Pane): pane is PaneSplit {

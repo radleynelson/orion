@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Pane, PaneSplit, useStore } from '../store';
 import Terminal from './Terminal';
 import MonacoEditor from './MonacoEditor';
+import DiagnosticsPage from './DiagnosticsPage';
 
 interface SplitPaneProps {
   pane: Pane;
@@ -31,6 +32,18 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
         onClick={() => setFocusedPane(pane.id)}
       >
         <MonacoEditor filePath={pane.filePath!} language={pane.language || 'plaintext'} visible={visible} line={pane.line} />
+      </div>
+    );
+  }
+
+  if (pane.type === 'diagnostics') {
+    const isFocused = pane.id === focusedPaneId;
+    return (
+      <div
+        className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
+        onClick={() => setFocusedPane(pane.id)}
+      >
+        <DiagnosticsPage visible={visible} />
       </div>
     );
   }

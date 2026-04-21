@@ -279,6 +279,33 @@ function App() {
     else launchAgentTab(choice.name, choice.label);
   }, [createNewShell, launchAgentTab]);
 
+  // Open a Diagnostics tab globally: if one exists anywhere, switch to its
+  // workspace and focus it. Otherwise create a new one in the active workspace.
+  const openDiagnostics = useCallback(() => {
+    const state = useStore.getState();
+    const existing = state.tabs.find((t) => t.tabType === 'diagnostics');
+    if (existing) {
+      if (existing.workspacePath !== state.activeWorkspacePath) {
+        state.setActiveWorkspace(existing.workspacePath);
+      }
+      state.setActiveTab(existing.id);
+      return;
+    }
+    if (!activeWorkspacePath) return;
+    const pane: PaneLeaf = { type: 'diagnostics', id: generateId('pane') };
+    addTab({
+      id: generateId('tab'),
+      label: 'Diagnostics',
+      rootPane: pane,
+      tabType: 'diagnostics',
+      workspacePath: activeWorkspacePath,
+    });
+  }, [activeWorkspacePath, addTab]);
+
+  const diagnosticsActive = !!tabs.find(
+    (t) => t.tabType === 'diagnostics' && t.id === activeTabId,
+  );
+
   const handleSplit = useCallback(async (direction: 'horizontal' | 'vertical') => {
     if (!activeWorkspacePath || !focusedPaneId) return;
     const terminalId = generateId('term');
@@ -566,7 +593,7 @@ function App() {
       </div>
 
       <div className="content">
-        <ActivityBar />
+        <ActivityBar onOpenDiagnostics={openDiagnostics} diagnosticsActive={diagnosticsActive} />
         {sidebarMode && (
           <div className="sidebar-container" style={{ width: sidebarWidth }}>
             {sidebarMode === 'workspaces' && <Sidebar />}
@@ -660,7 +687,8 @@ function App() {
                   {tab.tabType === 'claude' ? '◆' :
                    tab.tabType === 'codex' ? '◇' :
                    tab.tabType === 'server' ? '▸' :
-                   tab.tabType === 'editor' ? '◈' : '›'}
+                   tab.tabType === 'editor' ? '◈' :
+                   tab.tabType === 'diagnostics' ? '◎' : '›'}
                 </span>
                 {renamingTabId === tab.id ? (
                   <input
