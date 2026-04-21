@@ -91,20 +91,29 @@ export default function Sidebar() {
           for (const [path, statuses] of results) next[path] = statuses;
           return next;
         });
-        // Publish activity tier so the cycle order in App.tsx matches the sidebar sort
-        // 0 = servers running (green), 1 = agent only (yellow), 2 = inactive (grey)
-        for (const [path, statuses] of results) {
-          const ws = workspaces.find((w) => w.path === path);
-          const hasServers = statuses.some((s) => s.running);
-          const tier = hasServers ? 0 : ws?.hasAgent ? 1 : 2;
-          setWorkspaceActive(path, tier);
-        }
       } catch {}
     };
     fetchAll();
     const interval = setInterval(fetchAll, 5000);
     return () => clearInterval(interval);
   }, [project, workspaces]);
+
+  // Recompute activity tier whenever tabs or server statuses change.
+  // Tier drives icon color AND the Cmd+Up/Down cycle order. Uses live tab
+  // state as the source of truth for "has agent" so closing a Claude tab
+  // clears the yellow indicator immediately (ws.hasAgent is a stale snapshot).
+  // 0 = servers running (green), 1 = agent only (yellow), 2 = inactive (grey)
+  useEffect(() => {
+    for (const ws of workspaces) {
+      const statuses = serverStatuses[ws.path] || [];
+      const hasServers = statuses.some((s) => s.running);
+      const hasAgent = tabs.some(
+        (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex'),
+      );
+      const tier = hasServers ? 0 : hasAgent ? 1 : 2;
+      setWorkspaceActive(ws.path, tier);
+    }
+  }, [tabs, serverStatuses, workspaces, setWorkspaceActive]);
 
   // Keyboard shortcut: Cmd+\ to toggle sidebar
   useEffect(() => {
@@ -349,6 +358,9 @@ export default function Sidebar() {
         {sortWorkspaces(workspaces, workspaceActive).map((ws) => {
           const wsStatuses = serverStatuses[ws.path] || [];
           const wsHasServers = wsStatuses.some((s) => s.running);
+          const wsHasAgent = tabs.some(
+            (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex'),
+          );
 
           return (
             <div key={ws.path}>
@@ -360,8 +372,8 @@ export default function Sidebar() {
                   if (project) AllocatePorts(project.root, ws.path, ws.isMain).catch(() => {});
                 }}
               >
-                <span className={`icon ${wsHasServers ? '' : ws.hasAgent ? 'agent-only' : 'inactive'}`}>
-                  {ws.isMain ? '◉' : ws.hasAgent || wsHasServers ? '●' : '○'}
+                <span className={`icon ${wsHasServers ? '' : wsHasAgent ? 'agent-only' : 'inactive'}`}>
+                  {ws.isMain ? '◉' : wsHasAgent || wsHasServers ? '●' : '○'}
                 </span>
                 <span className="label">{ws.isMain ? 'main' : (project ? ws.name.replace(project.name + '-', '') : ws.name)}</span>
                 {!ws.isMain && deletingPath === ws.path && (
