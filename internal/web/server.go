@@ -388,25 +388,23 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		seen[t.TmuxSession] = true
 	}
 
-	// Supplement: pick up any sessions that RecoverSessions finds but saved tabs missed
-	recovered := s.app.RecoverSessions(repo, paths)
-	for _, sess := range recovered {
-		if !seen[sess.TmuxName] {
-			sessions = append(sessions, sess)
-			seen[sess.TmuxName] = true
-		}
-	}
-
 	upsertSession := func(sess state.SessionInfo) {
 		for i := range sessions {
 			if sessions[i].TmuxName == sess.TmuxName || (sessions[i].ThreadID != "" && sessions[i].ThreadID == sess.ThreadID) {
-				sessions[i] = sess
+				sessions[i] = reconcileSessionInfo(sessions[i], sess)
 				seen[sess.TmuxName] = true
 				return
 			}
 		}
 		sessions = append(sessions, sess)
 		seen[sess.TmuxName] = true
+	}
+
+	// Supplement and reconcile with live tmux recovery. Recovery is allowed to
+	// correct stale saved tabs, for example a tab saved as shell while Claude is
+	// now the live process inside that tmux session.
+	for _, sess := range s.app.RecoverSessions(repo, paths) {
+		upsertSession(sess)
 	}
 	for _, sess := range s.app.ListCodexChatSessions(paths) {
 		upsertSession(sess)
@@ -1523,6 +1521,56 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func reconcileSessionInfo(existing state.SessionInfo, incoming state.SessionInfo) state.SessionInfo {
+	if incoming.Type == codexchat.SessionType || incoming.Type == claudechat.SessionType {
+		return incoming
+	}
+	if isTerminalAgent(incoming.Type) {
+		out := existing
+		typeChanged := out.Type != "" && out.Type != incoming.Type
+		out.TmuxName = firstNonEmpty(incoming.TmuxName, out.TmuxName)
+		out.Type = incoming.Type
+		out.Label = firstNonEmpty(incoming.Label, labelForTerminalType(incoming.Type), out.Label)
+		out.WorkspacePath = firstNonEmpty(out.WorkspacePath, incoming.WorkspacePath)
+		out.Provider = firstNonEmpty(incoming.Provider, incoming.Type, out.Provider)
+		out.ViewMode = firstNonEmpty(out.ViewMode, incoming.ViewMode, "terminal")
+		out.RuntimeSessionID = firstNonEmpty(out.RuntimeSessionID, incoming.RuntimeSessionID, incoming.TmuxName)
+		if typeChanged {
+			out.ThreadID = ""
+			out.Model = ""
+			out.ReasoningEffort = ""
+			out.ApprovalPolicy = ""
+			out.SandboxMode = ""
+		} else {
+			out.ThreadID = firstNonEmpty(out.ThreadID, incoming.ThreadID)
+			out.Model = firstNonEmpty(out.Model, incoming.Model)
+			out.ReasoningEffort = firstNonEmpty(out.ReasoningEffort, incoming.ReasoningEffort)
+			out.ApprovalPolicy = firstNonEmpty(out.ApprovalPolicy, incoming.ApprovalPolicy)
+			out.SandboxMode = firstNonEmpty(out.SandboxMode, incoming.SandboxMode)
+		}
+		return out
+	}
+	if existing.Type == "" || existing.Type == "shell" {
+		return incoming
+	}
+	return existing
+}
+
+func isTerminalAgent(sessionType string) bool {
+	return sessionType == "claude" || sessionType == "codex"
+}
+
+func labelForTerminalType(sessionType string) string {
+	switch sessionType {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	default:
+		return "Shell"
+	}
 }
 
 func tmuxSessionExists(name string) bool {

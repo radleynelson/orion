@@ -180,7 +180,7 @@ func savedTabIdentity(tab SavedTab) string {
 		return tab.WorkspacePath + "|codex-chat|" + strings.TrimSpace(tab.ThreadID)
 	}
 	if strings.TrimSpace(tab.TmuxSession) != "" {
-		return tab.WorkspacePath + "|" + tab.TabType + "|" + strings.TrimSpace(tab.TmuxSession)
+		return tab.WorkspacePath + "|tmux|" + strings.TrimSpace(tab.TmuxSession)
 	}
 	return ""
 }
@@ -190,7 +190,9 @@ func (ps *ProjectState) load() {
 	if err != nil {
 		return
 	}
-	json.Unmarshal(data, ps)
+	if err := json.Unmarshal(data, ps); err == nil {
+		ps.SavedTabs = dedupeSavedTabs(ps.SavedTabs)
+	}
 }
 
 func (ps *ProjectState) save() {
@@ -327,12 +329,7 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 					if shellCount[ws.path] > 1 {
 						label = fmt.Sprintf("Shell %d", shellCount[ws.path])
 					}
-					sessions = append(sessions, SessionInfo{
-						TmuxName:      name,
-						Type:          "shell",
-						Label:         label,
-						WorkspacePath: ws.path,
-					})
+					sessions = append(sessions, recoveredSessionInfo(name, label, ws.path))
 					break
 				}
 			}
@@ -366,26 +363,14 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 		matched := false
 		for _, ws := range wsEntries {
 			if afterRepo == ws.basename {
-				sessionType, label := recoveredAgentInfo(name, "Shell")
-				sessions = append(sessions, SessionInfo{
-					TmuxName:      name,
-					Type:          sessionType,
-					Label:         label,
-					WorkspacePath: ws.path,
-				})
+				sessions = append(sessions, recoveredSessionInfo(name, "Shell", ws.path))
 				matched = true
 				break
 			}
 			if strings.HasPrefix(afterRepo, ws.basename+"-") {
 				suffix := strings.TrimPrefix(afterRepo, ws.basename+"-")
 				label := "Shell " + suffix
-				sessionType, label := recoveredAgentInfo(name, label)
-				sessions = append(sessions, SessionInfo{
-					TmuxName:      name,
-					Type:          sessionType,
-					Label:         label,
-					WorkspacePath: ws.path,
-				})
+				sessions = append(sessions, recoveredSessionInfo(name, label, ws.path))
 				matched = true
 				break
 			}
@@ -396,36 +381,135 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	return sessions
 }
 
+func recoveredSessionInfo(tmuxSession string, fallbackLabel string, workspacePath string) SessionInfo {
+	sessionType, label := recoveredAgentInfo(tmuxSession, fallbackLabel)
+	info := SessionInfo{
+		TmuxName:      tmuxSession,
+		Type:          sessionType,
+		Label:         label,
+		WorkspacePath: workspacePath,
+	}
+	if isAgentType(sessionType) {
+		info.Provider = sessionType
+		info.ViewMode = "terminal"
+		info.RuntimeSessionID = tmuxSession
+	}
+	return info
+}
+
 func recoveredAgentInfo(tmuxSession string, fallbackLabel string) (string, string) {
+	metadataType := normalizeSessionType(tmuxOption(tmuxSession, "@orion_type"))
+	metadataLabel := strings.TrimSpace(tmuxOption(tmuxSession, "@orion_label"))
+	if isAgentType(metadataType) {
+		return metadataType, firstNonEmpty(metadataLabel, labelForType(metadataType))
+	}
+
 	out, err := exec.Command("tmux", "display-message", "-t", tmuxSession, "-p", "#{pane_pid}").Output()
 	if err != nil {
-		return "shell", fallbackLabel
+		return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel)
 	}
 	panePID := strings.TrimSpace(string(out))
 	if panePID == "" {
-		return "shell", fallbackLabel
+		return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel)
 	}
-	children, err := exec.Command("pgrep", "-P", panePID).Output()
+	if processType := detectAgentProcess(panePID); processType != "" {
+		return processType, labelForType(processType)
+	}
+	return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel)
+}
+
+func detectAgentProcess(rootPID string) string {
+	queue := childPIDs(rootPID)
+	seen := make(map[string]bool)
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if pid == "" || seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		if sessionType := processSessionType(pid); sessionType != "" {
+			return sessionType
+		}
+		queue = append(queue, childPIDs(pid)...)
+	}
+	return ""
+}
+
+func processSessionType(pid string) string {
+	comm, _ := exec.Command("ps", "-p", pid, "-o", "comm=").Output()
+	if sessionType := normalizeSessionType(filepath.Base(strings.TrimSpace(string(comm)))); isAgentType(sessionType) {
+		return sessionType
+	}
+	args, _ := exec.Command("ps", "-p", pid, "-o", "args=").Output()
+	for _, field := range strings.Fields(string(args)) {
+		if sessionType := normalizeSessionType(filepath.Base(field)); isAgentType(sessionType) {
+			return sessionType
+		}
+	}
+	return ""
+}
+
+func childPIDs(pid string) []string {
+	children, err := exec.Command("pgrep", "-P", pid).Output()
 	if err != nil {
-		return "shell", fallbackLabel
+		return nil
 	}
+	var pids []string
 	for _, line := range strings.Split(string(children), "\n") {
-		childPID := strings.TrimSpace(line)
-		if childPID == "" {
-			continue
-		}
-		comm, err := exec.Command("ps", "-p", childPID, "-o", "comm=").Output()
-		if err != nil {
-			continue
-		}
-		switch filepath.Base(strings.TrimSpace(string(comm))) {
-		case "claude":
-			return "claude", "Claude"
-		case "codex":
-			return "codex", "Codex"
+		if childPID := strings.TrimSpace(line); childPID != "" {
+			pids = append(pids, childPID)
 		}
 	}
-	return "shell", fallbackLabel
+	return pids
+}
+
+func tmuxOption(tmuxSession string, option string) string {
+	if strings.TrimSpace(tmuxSession) == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "show-option", "-qv", "-t", tmuxSession, option).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func normalizeSessionType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "claude":
+		return "claude"
+	case "codex":
+		return "codex"
+	case "shell":
+		return "shell"
+	default:
+		return ""
+	}
+}
+
+func isAgentType(sessionType string) bool {
+	return sessionType == "claude" || sessionType == "codex"
+}
+
+func labelForType(sessionType string) string {
+	switch sessionType {
+	case "claude":
+		return "Claude"
+	case "codex":
+		return "Codex"
+	default:
+		return "Shell"
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func capitalize(s string) string {

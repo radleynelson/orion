@@ -112,6 +112,7 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 	exec.Command("tmux", "set-option", "-t", tmuxName, "set-clipboard", "on").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
+	setTmuxMetadata(tmuxName, "shell", "Shell", dir)
 
 	// Source .orion/env.sh if it exists
 	envFile := filepath.Join(dir, ".orion", "env.sh")
@@ -183,6 +184,15 @@ func (m *Manager) CreateAttached(id, tmuxSession string) error {
 	go m.readLoop(t)
 
 	return nil
+}
+
+func setTmuxMetadata(session string, sessionType string, label string, workspacePath string) {
+	if strings.TrimSpace(session) == "" {
+		return
+	}
+	exec.Command("tmux", "set-option", "-t", session, "@orion_type", sessionType).Run()
+	exec.Command("tmux", "set-option", "-t", session, "@orion_label", label).Run()
+	exec.Command("tmux", "set-option", "-t", session, "@orion_workspace", workspacePath).Run()
 }
 
 // CreateGroupedAttached creates a grouped tmux session linked to an existing session.

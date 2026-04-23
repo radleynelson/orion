@@ -96,13 +96,24 @@ export function createTerminal(
     EventsEmit('terminal:input', terminalId, btoa(binary));
   };
 
+  const keyCaptureHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      sendSeq('\x1b[13;2u');
+    }
+  };
+  container.addEventListener('keydown', keyCaptureHandler, { capture: true });
+
   // Handle keyboard shortcuts that the Wails webview doesn't route natively
   terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
 
-    // Shift+Enter: send distinct escape sequence so Claude Code can
-    // differentiate it from Enter (new line vs submit)
+    // Fallback for Shift+Enter if the DOM capture listener misses it.
     if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
       sendSeq('\x1b[13;2u');
       return false;
     }
@@ -270,6 +281,7 @@ export function createTerminal(
   const dispose = () => {
     if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
+    container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
     container.removeEventListener('copy', copyHandler);
     onDataDispose.dispose();
     onResizeDispose.dispose();
