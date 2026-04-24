@@ -7,6 +7,7 @@ import FileExplorer from './components/FileExplorer';
 import GlobalSearch from './components/GlobalSearch';
 import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
+import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -32,6 +33,7 @@ import {
   RevealInFinder,
   StopClaudeChat,
   StopCodexChat,
+  LaunchAgent,
 } from '../wailsjs/go/main/App';
 
 function App() {
@@ -54,6 +56,7 @@ function App() {
     rotateSplit,
     detachPane,
     mergeTabInto,
+    reorderTab,
     renameTab,
     focusedPaneId,
     getAllTerminalIds,
@@ -257,9 +260,11 @@ function App() {
     .sort((a, b) => (serverOrder[a.label?.toLowerCase() ?? ''] ?? 99) - (serverOrder[b.label?.toLowerCase() ?? ''] ?? 99));
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  const [dragMerge, setDragMerge] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
+  const [newTabPickerVisible, setNewTabPickerVisible] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
@@ -309,6 +314,56 @@ function App() {
       console.error('Failed to create terminal:', err);
     }
   }, [activeWorkspacePath, tabs, addTab]);
+
+  const launchAgentTab = useCallback(async (agentName: string, label: string) => {
+    if (!project || !activeWorkspacePath) return;
+    try {
+      const tmuxSession = await LaunchAgent(project.root, activeWorkspacePath, agentName);
+      const termId = generateId('term');
+      await CreateAttachedTerminal(termId, tmuxSession);
+      addTab({
+        id: generateId('tab'),
+        label,
+        rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+        tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
+        workspacePath: activeWorkspacePath,
+      });
+    } catch (err) {
+      console.error('Failed to launch agent:', err);
+    }
+  }, [project, activeWorkspacePath, addTab]);
+
+  const handleNewTabPick = useCallback((choice: NewTabChoice) => {
+    if (choice.kind === 'shell') createNewShell();
+    else launchAgentTab(choice.name, choice.label);
+  }, [createNewShell, launchAgentTab]);
+
+  // Open a Diagnostics tab globally: if one exists anywhere, switch to its
+  // workspace and focus it. Otherwise create a new one in the active workspace.
+  const openDiagnostics = useCallback(() => {
+    const state = useStore.getState();
+    const existing = state.tabs.find((t) => t.tabType === 'diagnostics');
+    if (existing) {
+      if (existing.workspacePath !== state.activeWorkspacePath) {
+        state.setActiveWorkspace(existing.workspacePath);
+      }
+      state.setActiveTab(existing.id);
+      return;
+    }
+    if (!activeWorkspacePath) return;
+    const pane: PaneLeaf = { type: 'diagnostics', id: generateId('pane') };
+    addTab({
+      id: generateId('tab'),
+      label: 'Diagnostics',
+      rootPane: pane,
+      tabType: 'diagnostics',
+      workspacePath: activeWorkspacePath,
+    });
+  }, [activeWorkspacePath, addTab]);
+
+  const diagnosticsActive = !!tabs.find(
+    (t) => t.tabType === 'diagnostics' && t.id === activeTabId,
+  );
 
   const handleSplit = useCallback(async (direction: 'horizontal' | 'vertical') => {
     if (!activeWorkspacePath || !focusedPaneId) return;
@@ -526,10 +581,10 @@ function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+T: new shell tab
+      // Cmd+T: open New Tab picker (pick shell / claude / codex)
       if (e.metaKey && !e.shiftKey && e.key === 't') {
         e.preventDefault();
-        createNewShell();
+        setNewTabPickerVisible(true);
       }
       // Cmd+W: close focused pane (or tab if single pane)
       if (e.metaKey && !e.shiftKey && e.key === 'w') {
@@ -671,7 +726,7 @@ function App() {
           if (info) await loadProject(info);
         } catch {}
       }),
-      EventsOn('menu:new-terminal', () => createNewShell()),
+      EventsOn('menu:new-terminal', () => setNewTabPickerVisible(true)),
       EventsOn('menu:close-tab', () => handleClosePane()),
       EventsOn('menu:toggle-sidebar', () => setSidebarMode(sidebarMode ? null : 'workspaces')),
       EventsOn('menu:show-files', () => setSidebarMode('files')),
@@ -722,6 +777,31 @@ function App() {
           });
         } catch {}
       }),
+      EventsOn('agent:focus', async (data: any) => {
+        const cwd: string | undefined = data?.cwd;
+        const targetTmux: string | undefined = data?.tmuxSession;
+        if (!cwd) return;
+        const state = useStore.getState();
+        if (state.workspaces.some((w: any) => w.path === cwd)) {
+          state.setActiveWorkspace(cwd);
+        }
+        const candidates = state.tabs.filter((t: Tab) => t.workspacePath === cwd);
+        let target: Tab | undefined;
+        if (targetTmux) {
+          for (const tab of candidates) {
+            const termIds = state.getAllTerminalIds(tab);
+            for (const termId of termIds) {
+              try {
+                const ts = await GetTmuxSession(termId);
+                if (ts === targetTmux) { target = tab; break; }
+              } catch {}
+            }
+            if (target) break;
+          }
+        }
+        if (!target) target = candidates.find((t) => t.tabType === 'claude') || candidates[0];
+        if (target) useStore.getState().setActiveTab(target.id);
+      }),
     ];
     return () => cancels.forEach((c) => c());
   }, [sidebarMode, createNewShell, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab]);
@@ -749,7 +829,7 @@ function App() {
       </div>
 
       <div className="content">
-        <ActivityBar />
+        <ActivityBar onOpenDiagnostics={openDiagnostics} diagnosticsActive={diagnosticsActive} />
         {sidebarMode && (
           <div className="sidebar-container" style={{ width: sidebarWidth }}>
             {sidebarMode === 'workspaces' && <Sidebar />}
@@ -792,7 +872,7 @@ function App() {
             {activeTabs.map((tab) => (
               <div
                 key={tab.id}
-                className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? 'tab-drop-target' : ''}`}
+                className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? (dragMerge ? 'tab-drop-target' : 'tab-reorder-target') : ''}`}
                 onClick={() => setActiveTab(tab.id)}
                 onContextMenu={(e) => {
                   if (tab.tabType === 'editor') {
@@ -822,14 +902,20 @@ function App() {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                   setDragOverTabId(tab.id);
+                  setDragMerge(e.altKey);
                 }}
-                onDragLeave={() => setDragOverTabId(null)}
+                onDragLeave={() => { setDragOverTabId(null); setDragMerge(false); }}
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOverTabId(null);
+                  setDragMerge(false);
                   const sourceTabId = e.dataTransfer.getData('text/plain');
                   if (sourceTabId && sourceTabId !== tab.id) {
-                    mergeTabInto(sourceTabId, tab.id);
+                    if (e.altKey) {
+                      mergeTabInto(sourceTabId, tab.id);
+                    } else {
+                      reorderTab(sourceTabId, tab.id);
+                    }
                   }
                 }}
               >
@@ -839,7 +925,8 @@ function App() {
                    tab.tabType === 'codex-chat' ? '◈' :
                    tab.tabType === 'codex' ? '◇' :
                    tab.tabType === 'server' ? '▸' :
-                   tab.tabType === 'editor' ? '◈' : '›'}
+                   tab.tabType === 'editor' ? '◈' :
+                   tab.tabType === 'diagnostics' ? '◎' : '›'}
                 </span>
                 {renamingTabId === tab.id ? (
                   <input
@@ -895,7 +982,7 @@ function App() {
                 </span>
               </div>
             ))}
-            <div className="tab-add" onClick={createNewShell} title="New shell (⌘T)">
+            <div className="tab-add" onClick={() => setNewTabPickerVisible(true)} title="New tab (⌘T)">
               +
             </div>
           </div>
@@ -1040,6 +1127,13 @@ function App() {
         onClose={() => setSearchEverywhereVisible(false)}
       />
 
+      {/* New tab picker (⌘T) */}
+      <NewTabPicker
+        visible={newTabPickerVisible}
+        onClose={() => setNewTabPickerVisible(false)}
+        onPick={handleNewTabPick}
+      />
+
       {/* Context menu */}
       {contextMenu && (
         <div
@@ -1089,7 +1183,7 @@ function App() {
         <div className="status-right">
           {paneCount > 1 && <span>{paneCount} panes</span>}
           <span>{activeTabs.length} tab{activeTabs.length !== 1 ? 's' : ''}</span>
-          <span style={{ color: 'var(--text-muted)' }}>⌘D split  ⌘[] panes  drag tabs to merge</span>
+          <span style={{ color: 'var(--text-muted)' }}>⌘D split  ⌘[] panes  drag to reorder  ⌥drag to merge</span>
         </div>
       </div>
     </div>

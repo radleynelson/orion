@@ -3,6 +3,7 @@ import { Pane, PaneSplit, useStore } from '../store';
 import Terminal from './Terminal';
 import MonacoEditor from './MonacoEditor';
 import CodexChat from './CodexChat';
+import DiagnosticsPage from './DiagnosticsPage';
 
 interface SplitPaneProps {
   pane: Pane;
@@ -44,6 +45,18 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
         onClick={() => setFocusedPane(pane.id)}
       >
         <CodexChat sessionId={pane.chatSessionId!} visible={visible} kind={pane.chatKind || 'codex'} />
+      </div>
+    );
+  }
+
+  if (pane.type === 'diagnostics') {
+    const isFocused = pane.id === focusedPaneId;
+    return (
+      <div
+        className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
+        onClick={() => setFocusedPane(pane.id)}
+      >
+        <DiagnosticsPage visible={visible} />
       </div>
     );
   }

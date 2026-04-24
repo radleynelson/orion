@@ -8,6 +8,7 @@ import {web} from '../models';
 import {main} from '../models';
 import {git} from '../models';
 import {config} from '../models';
+import {diag} from '../models';
 import {server} from '../models';
 import {files} from '../models';
 import {chatattachments} from '../models';
@@ -68,6 +69,8 @@ export function GetFileDiff(arg1:string,arg2:string):Promise<git.FileDiff>;
 
 export function GetLastProject():Promise<string>;
 
+export function GetMemorySnapshot():Promise<diag.MemorySnapshot>;
+
 export function GetMobileToken():Promise<string>;
 
 export function GetMobileURL():Promise<string>;
@@ -87,6 +90,8 @@ export function GetTmuxSession(arg1:string):Promise<string>;
 export function GetUnifiedDiff(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetWorkspaceEnv(arg1:string):Promise<Record<string, string>>;
+
+export function KillSession(arg1:string):Promise<void>;
 
 export function LaunchAgent(arg1:string,arg2:string,arg3:string):Promise<string>;
 

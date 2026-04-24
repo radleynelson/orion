@@ -114,6 +114,10 @@ export function GetLastProject() {
   return window['go']['main']['App']['GetLastProject']();
 }
 
+export function GetMemorySnapshot() {
+  return window['go']['main']['App']['GetMemorySnapshot']();
+}
+
 export function GetMobileToken() {
   return window['go']['main']['App']['GetMobileToken']();
 }
@@ -152,6 +156,10 @@ export function GetUnifiedDiff(arg1, arg2, arg3) {
 
 export function GetWorkspaceEnv(arg1) {
   return window['go']['main']['App']['GetWorkspaceEnv'](arg1);
+}
+
+export function KillSession(arg1) {
+  return window['go']['main']['App']['KillSession'](arg1);
 }
 
 export function LaunchAgent(arg1, arg2, arg3) {

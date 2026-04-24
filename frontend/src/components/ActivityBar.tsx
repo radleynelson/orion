@@ -2,7 +2,12 @@ import { useStore } from '../store';
 
 type SidebarMode = 'workspaces' | 'files' | 'search';
 
-export default function ActivityBar() {
+interface ActivityBarProps {
+  onOpenDiagnostics: () => void;
+  diagnosticsActive: boolean;
+}
+
+export default function ActivityBar({ onOpenDiagnostics, diagnosticsActive }: ActivityBarProps) {
   const { sidebarMode, setSidebarMode } = useStore();
 
   const toggle = (mode: SidebarMode) => {
@@ -35,6 +40,13 @@ export default function ActivityBar() {
         title="Search (⌘⇧F)"
       >
         ⌕
+      </div>
+      <div
+        className={`activity-bar-icon ${diagnosticsActive ? 'active' : ''}`}
+        onClick={onOpenDiagnostics}
+        title="Diagnostics"
+      >
+        ◎
       </div>
     </div>
   );
