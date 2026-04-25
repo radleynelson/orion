@@ -8,6 +8,8 @@ import GlobalSearch from './components/GlobalSearch';
 import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
 import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
+import AgentSigil from './components/AgentSigil';
+import OrionMark from './components/OrionMark';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -825,7 +827,13 @@ function App() {
         >
           ⎇
         </div>
-        <span className="titlebar-title">orion</span>
+        <div className="titlebar-brand">
+          <OrionMark size={24} />
+          <span className="titlebar-title">orion</span>
+          {activeWorkspace && (
+            <span className="titlebar-project">{activeWorkspace.branch || activeWorkspace.name}</span>
+          )}
+        </div>
       </div>
 
       <div className="content">
@@ -919,15 +927,7 @@ function App() {
                   }
                 }}
               >
-                <span className="tab-icon">
-                  {tab.tabType === 'claude' ? '◆' :
-                   tab.tabType === 'claude-chat' ? '◆' :
-                   tab.tabType === 'codex-chat' ? '◈' :
-                   tab.tabType === 'codex' ? '◇' :
-                   tab.tabType === 'server' ? '▸' :
-                   tab.tabType === 'editor' ? '◈' :
-                   tab.tabType === 'diagnostics' ? '◎' : '›'}
-                </span>
+                <span className="tab-icon"><AgentSigil id={tab.tabType} size={18} /></span>
                 {renamingTabId === tab.id ? (
                   <input
                     autoFocus
@@ -1048,7 +1048,7 @@ function App() {
                           if (!serverPaneVisible) setServerPaneVisible(true);
                         }}
                       >
-                        <span className="tab-icon">▸</span>
+                        <span className="tab-icon"><AgentSigil id="server" size={18} /></span>
                         <span>{tab.label}</span>
                         <span className="close" onClick={(e) => {
                           e.stopPropagation();

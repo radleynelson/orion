@@ -1,38 +1,39 @@
-/* Orion — Warp-inspired dark palette */
+/* Orion — Nocturne palette */
 
 :root {
-  /* Warp-inspired warm dark palette */
-  --bg-primary: #2d2d2d;
-  --bg-secondary: #252525;
-  --bg-surface: #333333;
-  --bg-hover: #3a3a3a;
-  --bg-active: #404040;
-  --bg-terminal: #1e1e1e;
+  --bg-primary: #1a1a1c;
+  --bg-secondary: #212124;
+  --bg-surface: #28282c;
+  --bg-hover: #2f2f34;
+  --bg-active: #35353b;
+  --bg-terminal: #131316;
+  --bg-input: #1e1e21;
 
-  --border: #3d3d3d;
-  --border-dim: #333333;
-  --border-bright: #4a4a4a;
+  --border: rgba(255, 255, 255, 0.12);
+  --border-dim: rgba(255, 255, 255, 0.06);
+  --border-bright: rgba(255, 255, 255, 0.18);
 
-  --text-primary: #d4d4d4;
-  --text-secondary: #b0b0b0;
-  --text-dim: #808080;
-  --text-muted: #5a5a5a;
+  --text-primary: #eaeaec;
+  --text-secondary: #c8c8cf;
+  --text-dim: #a5a5ae;
+  --text-muted: #6e6e78;
 
-  --accent-blue: #6cb6ff;
-  --accent-purple: #d2a8ff;
-  --accent-green: #7ee787;
-  --accent-red: #ff7b72;
-  --accent-yellow: #d29922;
-  --accent-cyan: #76e3ea;
-  --accent-orange: #ffa657;
+  --accent-blue: #7ca9f7;
+  --accent-purple: #b9a3ec;
+  --accent-green: #8acfa3;
+  --accent-red: #e89180;
+  --accent-yellow: #e6b86b;
+  --accent-cyan: #9bc5ff;
+  --accent-orange: #f4b46a;
 
-  --diff-add-bg: rgba(126, 231, 135, 0.12);
-  --diff-add-fg: #b6f0bd;
-  --diff-del-bg: rgba(255, 123, 114, 0.14);
-  --diff-del-fg: #ffb1ab;
-  --diff-hunk-bg: rgba(108, 182, 255, 0.08);
+  --diff-add-bg: rgba(138, 207, 163, 0.1);
+  --diff-add-fg: #bde8ca;
+  --diff-del-bg: rgba(232, 145, 128, 0.12);
+  --diff-del-fg: #f2b6aa;
+  --diff-hunk-bg: rgba(124, 169, 247, 0.08);
 
-  --font-mono: 'JetBrains Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Fira Code', monospace;
   --zoom: 1;
   --font-size: calc(13px * var(--zoom));
   --font-size-sm: calc(12px * var(--zoom));
@@ -56,7 +57,7 @@ html, body, #root {
   overflow: hidden;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--font-size);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -81,7 +82,7 @@ html, body, #root {
 }
 
 ::selection {
-  background: rgba(108, 182, 255, 0.3);
+  background: rgba(124, 169, 247, 0.3);
   color: inherit;
 }
 

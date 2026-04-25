@@ -22,6 +22,8 @@ import {
   GetWorkspaceEnv,
   AllocatePorts,
 } from '../../wailsjs/go/main/App';
+import AgentSigil from './AgentSigil';
+import OrionMark from './OrionMark';
 
 export default function Sidebar() {
   const {
@@ -370,14 +372,18 @@ export default function Sidebar() {
     <div className="sidebar">
       {/* Project name */}
       <div className="sidebar-section">
-        <div className="sidebar-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>{project.name}</span>
+        <div className="sidebar-brand">
+          <OrionMark size={30} />
+          <div className="sidebar-brand-text">
+            <div className="sidebar-brand-title">{project.name}</div>
+            <div className="sidebar-brand-subtitle">{project.root}</div>
+          </div>
           <span
             style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size-xs)' }}
             onClick={handleOpenProject}
             title="Switch project"
           >
-            ↗
+            ▾
           </span>
         </div>
       </div>
@@ -459,17 +465,17 @@ export default function Sidebar() {
                         onClick={() => handleLaunchAgent(ws.path, agent.name)}
                         title={agent.command}
                       >
-                        + {agent.label}
+                        <AgentSigil id={agent.name} size={16} /> {agent.label}
                       </span>
                     ))}
                     <span className="sidebar-action" onClick={() => handleLaunchCodexChat(ws.path)}>
-                      + Codex Chat
+                      <AgentSigil id="codex" size={16} /> Codex Chat
                     </span>
                     <span className="sidebar-action" onClick={() => handleLaunchClaudeChat(ws.path)}>
-                      + Claude Chat
+                      <AgentSigil id="claude" size={16} /> Claude Chat
                     </span>
                     <span className="sidebar-action" onClick={() => handleLaunchShell(ws.path)}>
-                      + Shell
+                      <AgentSigil id="shell" size={16} /> Shell
                     </span>
                   </div>
 

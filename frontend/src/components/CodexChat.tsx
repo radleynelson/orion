@@ -11,6 +11,7 @@ import {
 	  SendClaudeChatMessage,
 	  SendCodexChatMessage,
 	} from '../../wailsjs/go/main/App';
+import AgentSigil from './AgentSigil';
 
 type ChatAttachment = {
   id?: string;
@@ -60,6 +61,7 @@ type ChatKind = 'codex' | 'claude';
 type ChatConfig = {
   displayName: string;
   avatar: string;
+  sigil: string;
   eventPrefix: string;
   getMessages: (sessionID: string) => Promise<any>;
   sendMessage: (sessionID: string, text: string, attachments: ChatAttachment[]) => Promise<void>;
@@ -72,6 +74,7 @@ const CHAT_CONFIG: Record<ChatKind, ChatConfig> = {
   codex: {
     displayName: 'Codex',
     avatar: 'C',
+    sigil: 'codex',
     eventPrefix: 'codex-chat',
     getMessages: GetCodexChatMessages,
     sendMessage: SendCodexChatMessage,
@@ -81,6 +84,7 @@ const CHAT_CONFIG: Record<ChatKind, ChatConfig> = {
   claude: {
     displayName: 'Claude',
     avatar: '◆',
+    sigil: 'claude',
     eventPrefix: 'claude-chat',
     getMessages: GetClaudeChatMessages,
     sendMessage: SendClaudeChatMessage,
@@ -228,17 +232,20 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   return (
     <div className="codex-chat">
       <div className="codex-chat-header">
+        <div className="codex-chat-heading">
+          <AgentSigil id={config.sigil} size={34} strong />
           <div>
             <div className="codex-chat-title">{config.displayName} Chat</div>
-          <div className="codex-chat-subtitle">{statusLabel(lastStatus, config.displayName, lastStatusMessage?.text)}</div>
-          {metadata && (
-            <div className="codex-chat-session-meta">
-              {metadata.model && <span>{metadata.model}</span>}
-              {metadata.reasoningEffort && <span>{metadata.reasoningEffort}</span>}
-              {metadata.approvalPolicy && <span>{metadata.approvalPolicy === 'never' ? 'full access' : metadata.approvalPolicy}</span>}
-              {metadata.sandboxMode && <span>{metadata.sandboxMode}</span>}
-            </div>
-          )}
+            <div className="codex-chat-subtitle">{statusLabel(lastStatus, config.displayName, lastStatusMessage?.text)}</div>
+            {metadata && (
+              <div className="codex-chat-session-meta">
+                {metadata.model && <span>{metadata.model}</span>}
+                {metadata.reasoningEffort && <span>{metadata.reasoningEffort}</span>}
+                {metadata.approvalPolicy && <span>{metadata.approvalPolicy === 'never' ? 'full access' : metadata.approvalPolicy}</span>}
+                {metadata.sandboxMode && <span>{metadata.sandboxMode}</span>}
+              </div>
+            )}
+          </div>
         </div>
         <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>{lastStatus}</div>
       </div>
@@ -256,7 +263,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
             setAnswers,
             answer,
             config.displayName,
-            config.avatar,
+            config.sigil,
             setExpandedPlan,
             config.approvePlan ? approvePlan : undefined,
             approvingPlanId === msg.id,
@@ -373,7 +380,7 @@ function renderRow(
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>,
   answer: (toolUseId: string) => Promise<void>,
   assistantName: string,
-  avatar: string,
+  agentId: string,
   expandPlan: (msg: ChatMessage) => void,
   approvePlan?: (msg: ChatMessage) => Promise<void>,
   approvingPlan?: boolean,
@@ -384,7 +391,7 @@ function renderRow(
         key={msg.id}
         plan={msg}
         assistantName={assistantName}
-        avatar={avatar}
+        agentId={agentId}
         onReview={() => expandPlan(msg)}
         onApprove={approvePlan ? () => approvePlan(msg) : undefined}
         approving={approvingPlan}
@@ -392,7 +399,7 @@ function renderRow(
     );
   }
   if (msg.type === 'loading') {
-    return <LoadingRow key={msg.id} msg={msg} assistantName={assistantName} avatar={avatar} />;
+    return <LoadingRow key={msg.id} msg={msg} assistantName={assistantName} agentId={agentId} />;
   }
 
   const kind = rowKind(msg.type);
@@ -416,7 +423,7 @@ function renderRow(
       key={msg.id}
       className={`codex-chat-message ${isUser ? 'codex-chat-message-user' : 'codex-chat-message-assistant'}${isPermission ? ' codex-chat-message-permission' : ''}`}
     >
-      {!isUser && <div className="codex-chat-avatar">{avatar}</div>}
+      {!isUser && <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />}
       <div className="codex-chat-message-stack">
         <div className="codex-chat-message-meta">{rowLabel(msg, assistantName)}</div>
         <div className="codex-chat-bubble">
@@ -487,10 +494,10 @@ function WorkingIndicator({ text }: { text: string }) {
   );
 }
 
-function LoadingRow({ msg, assistantName, avatar }: { msg: ChatRow; assistantName: string; avatar: string }) {
+function LoadingRow({ msg, assistantName, agentId }: { msg: ChatRow; assistantName: string; agentId: string }) {
   return (
     <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-loading" key={msg.id}>
-      <div className="codex-chat-avatar">{avatar}</div>
+      <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
         <div className="codex-chat-message-meta">{assistantName}</div>
         <div className="codex-chat-loading-bubble">
@@ -509,14 +516,14 @@ function LoadingRow({ msg, assistantName, avatar }: { msg: ChatRow; assistantNam
 function PlanCard({
   plan,
   assistantName,
-  avatar,
+  agentId,
   onReview,
   onApprove,
   approving,
 }: {
   plan: ChatMessage;
   assistantName: string;
-  avatar: string;
+  agentId: string;
   onReview: () => void;
   onApprove?: () => void;
   approving?: boolean;
@@ -524,7 +531,7 @@ function PlanCard({
   const markdown = plan.details || plan.text || '';
   return (
     <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-plan" key={plan.id}>
-      <div className="codex-chat-avatar">{avatar}</div>
+      <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
         <div className="codex-chat-message-meta">{assistantName} has a plan</div>
         <div className="codex-plan-card">

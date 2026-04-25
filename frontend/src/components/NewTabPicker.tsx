@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { GetAgentTypes } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 import { useStore } from '../store';
+import AgentSigil from './AgentSigil';
 
 export type NewTabChoice = { kind: 'shell' } | { kind: 'agent'; name: string; label: string };
 
@@ -67,7 +68,7 @@ export default function NewTabPicker({ visible, onClose, onPick }: Props) {
             className={`switcher-item ${i === selectedIndex ? 'selected' : ''}`}
             onClick={() => pick(opt)}
           >
-            <span className="switcher-icon">{iconFor(opt)}</span>
+            <span className="switcher-icon"><AgentSigil id={idFor(opt)} size={22} /></span>
             <span className="switcher-name">{labelFor(opt)}</span>
             <span className="switcher-current" style={{ opacity: 0.6 }}>{i + 1}</span>
           </div>
@@ -83,7 +84,6 @@ function labelFor(o: NewTabChoice) {
 function keyFor(o: NewTabChoice) {
   return o.kind === 'shell' ? 'shell' : `agent:${o.name}`;
 }
-function iconFor(o: NewTabChoice) {
-  if (o.kind === 'shell') return '▸';
-  return '◉';
+function idFor(o: NewTabChoice) {
+  return o.kind === 'shell' ? 'shell' : o.name;
 }

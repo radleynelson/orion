@@ -159,33 +159,41 @@ struct HeaderBar: View {
             }
 
             Spacer()
-            Circle().fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed).frame(width: 8, height: 8)
+            HStack(spacing: 5) {
+                Circle().fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed).frame(width: 6, height: 6)
+                Text(state.isConnected ? "Live" : "Off")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(state.isConnected ? OrionTheme.textSecondary : OrionTheme.textDim)
+            }
             Button { state.showSettings = true } label: {
                 Image(systemName: "gearshape").font(.system(size: 16)).foregroundStyle(OrionTheme.textSecondary)
             }
         }
-        .padding(.horizontal, 12).frame(height: 48).background(OrionTheme.bgSecondary)
+        .padding(.horizontal, 14).frame(height: 54).background(OrionTheme.bgSecondary)
         .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
     }
 
     @ViewBuilder
     private var titleView: some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 4) {
-                Text(state.projectInfo?.name ?? "Orion")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(OrionTheme.textPrimary)
-                if state.projects.count > 1 {
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(OrionTheme.textDim)
+        HStack(spacing: 10) {
+            OrionMarkView(size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(state.projectInfo?.name ?? "Orion")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    if state.projects.count > 1 {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
                 }
-            }
-            if let workspace = state.activeWorkspace {
-                Text(workspaceSubtitle(workspace))
-                    .font(.system(size: 11))
-                    .foregroundStyle(OrionTheme.textDim)
-                    .lineLimit(1)
+                if let workspace = state.activeWorkspace {
+                    Text(workspaceSubtitle(workspace))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
             }
         }
     }
@@ -213,7 +221,7 @@ struct WorkspaceSheet: View {
                     WorkspaceSection(workspace: ws)
                 }
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(OrionTheme.bgPrimary)
             .navigationTitle("Workspaces")
@@ -267,13 +275,18 @@ struct WorkspaceSection: View {
                     }
                     state.showWorkspaces = false
                 } label: {
-                    HStack(spacing: 8) {
-                        Text(sessionIcon(session.type)).font(.system(size: 14))
-                            .foregroundStyle(sessionColor(session.type))
-                        Text(session.label).font(.system(size: 14)).foregroundStyle(OrionTheme.textPrimary)
+                    HStack(spacing: 10) {
+                        AgentSigilView(session.type, size: 26)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.label).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
+                            Text(session.type.replacingOccurrences(of: "-chat", with: " chat"))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                        }
                         Spacer()
                         Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(OrionTheme.textDim)
                     }
+                    .padding(.vertical, 3)
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -283,17 +296,19 @@ struct WorkspaceSection: View {
                     }
                 }
                 .listRowBackground(OrionTheme.bgSurface)
+                .listRowSeparator(.hidden)
             }
 
             // Only show running servers
             ForEach(runningServers) { srv in
-                HStack(spacing: 8) {
-                    Circle().fill(OrionTheme.accentGreen).frame(width: 7, height: 7)
-                    Text(srv.name.capitalized).font(.system(size: 14)).foregroundStyle(OrionTheme.textPrimary)
+                HStack(spacing: 10) {
+                    AgentSigilView("server", size: 24)
+                    Text(srv.name.capitalized).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
                     Spacer()
                     Text(":\(srv.port)").font(.system(size: 12, design: .monospaced)).foregroundStyle(OrionTheme.textDim)
                 }
                 .listRowBackground(OrionTheme.bgSurface)
+                .listRowSeparator(.hidden)
             }
 
             // Actions row: New session menu + server controls
@@ -369,6 +384,7 @@ struct WorkspaceSection: View {
                 }
             }
             .listRowBackground(OrionTheme.bgSurface)
+            .listRowSeparator(.hidden)
         } header: {
             Button {
                 Task {
@@ -376,11 +392,24 @@ struct WorkspaceSection: View {
                     state.showWorkspaces = false
                 }
             } label: {
-                HStack(spacing: 6) {
-                    Text(workspace.name).font(.system(size: 13, weight: .semibold))
-                    if workspace.isMain {
-                        Text("MAIN").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(OrionTheme.accentBlue).foregroundStyle(.black).clipShape(RoundedRectangle(cornerRadius: 3))
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isActiveWorkspace ? OrionTheme.accentBlue : openTabCount > 0 ? OrionTheme.accentGreen : OrionTheme.border)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: isActiveWorkspace ? OrionTheme.accentBlue.opacity(0.45) : .clear, radius: 5)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(workspace.name).font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            if workspace.isMain {
+                                Text("MAIN").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(OrionTheme.accentBlue.opacity(0.16)).foregroundStyle(OrionTheme.accentBlue).clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                        }
+                        Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .lineLimit(1)
                     }
                     Spacer()
                     if openTabCount > 0 {
@@ -388,13 +417,11 @@ struct WorkspaceSection: View {
                             .font(.system(size: 11))
                             .foregroundStyle(OrionTheme.textDim)
                     }
-                    if !workspace.branch.isEmpty {
-                        Text(workspace.branch).font(.system(size: 11)).foregroundStyle(OrionTheme.textDim)
-                    }
                     Image(systemName: isActiveWorkspace ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 13))
-                        .foregroundStyle(isActiveWorkspace ? OrionTheme.accentGreen : OrionTheme.textDim)
+                        .foregroundStyle(isActiveWorkspace ? OrionTheme.accentBlue : OrionTheme.textDim)
                 }
+                .padding(.vertical, 4)
             }
             .buttonStyle(.plain)
         }
@@ -408,8 +435,10 @@ struct TabStrip: View {
     @Environment(AppState.self) private var state
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) { ForEach(state.visibleTabs) { tab in TabPill(tab: tab, isActive: tab.id == state.activeTabId) } }
-        }.frame(height: 36).background(OrionTheme.bgSecondary).overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
+            HStack(spacing: 6) { ForEach(state.visibleTabs) { tab in TabPill(tab: tab, isActive: tab.id == state.activeTabId) } }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+        }.frame(height: 44).background(OrionTheme.bgSecondary).overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
     }
 }
 
@@ -419,10 +448,16 @@ struct TabPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Button { state.activateTab(tab.id) } label: {
-                Text(tab.label).font(.system(size: 13)).foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
-                    .padding(.leading, 16)
-                    .padding(.trailing, 2)
-                    .frame(height: 36)
+                HStack(spacing: 7) {
+                    AgentSigilView(tab.type, size: 20)
+                    Text(tab.label)
+                        .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                        .foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                .padding(.leading, 4)
+                .padding(.trailing, 6)
+                .frame(height: 30)
             }
             .buttonStyle(.plain)
             if isConvertibleSession(tab.type) {
@@ -434,7 +469,7 @@ struct TabPill: View {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(OrionTheme.textDim)
-                        .frame(width: 24, height: 36)
+                        .frame(width: 22, height: 30)
                 }
                 .buttonStyle(.plain)
             }
@@ -442,14 +477,15 @@ struct TabPill: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(OrionTheme.textDim)
-                    .frame(width: 24, height: 36)
-                    .padding(.trailing, 8)
+                    .frame(width: 22, height: 30)
+                    .padding(.trailing, 6)
             }
             .buttonStyle(.plain)
         }
-        .frame(height: 36)
-        .background(isActive ? OrionTheme.bgPrimary : .clear)
-        .overlay(alignment: .trailing) { OrionTheme.borderDim.frame(width: 0.5) }
+        .frame(height: 30)
+        .background(isActive ? OrionTheme.bgSurface : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(isActive ? OrionTheme.borderDim : .clear, lineWidth: 0.7))
     }
 }
 
@@ -527,12 +563,12 @@ struct CodexChatView: View {
 
     private let chatBottomID = "chat-bottom"
     private var assistantName: String { connection.displayName }
-    private var assistantAvatar: String { connection.avatar }
     private var assistantColor: Color { sessionColor(connection.sessionType) }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                AgentSigilView(connection.sessionType, size: 34, strong: true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(assistantName)
                         .font(.system(size: 15, weight: .semibold))
@@ -555,7 +591,7 @@ struct CodexChatView: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
             }
             .padding(.horizontal, 14)
-            .frame(height: 52)
+            .frame(height: 62)
             .background(OrionTheme.bgSecondary)
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
@@ -659,13 +695,7 @@ struct CodexChatView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             HStack(alignment: .bottom, spacing: 8) {
-                Text(assistantAvatar)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(OrionTheme.textPrimary)
-                    .frame(width: 24, height: 24)
-                    .background(assistantColor.opacity(0.18))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(assistantColor.opacity(0.35), lineWidth: 0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                AgentSigilView(connection.sessionType, size: 24)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(row.type == "permission_request" ? "\(assistantName) needs an answer" : assistantName)
                         .font(.system(size: 11))
@@ -680,13 +710,7 @@ struct CodexChatView: View {
 
     private func planRow(_ row: CodexChatRow) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
-            Text(assistantAvatar)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(OrionTheme.textPrimary)
-                .frame(width: 24, height: 24)
-                .background(assistantColor.opacity(0.18))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(assistantColor.opacity(0.35), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text("\(assistantName) has a plan")
                     .font(.system(size: 11))
@@ -696,19 +720,19 @@ struct CodexChatView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Waiting for approval")
                                 .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(OrionTheme.textDim)
+                                .foregroundStyle(OrionTheme.accentBlue)
                             Text(row.text.isEmpty ? "Plan ready" : row.text)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(OrionTheme.textPrimary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
-                        Text("Plan")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(OrionTheme.accentYellow)
+                            Text("Plan")
+                                .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrionTheme.accentBlue)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(OrionTheme.accentYellow.opacity(0.55), lineWidth: 0.5))
+                            .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.45), lineWidth: 0.5))
                     }
 
                     Text(planPreview(row.details ?? row.text))
@@ -727,9 +751,9 @@ struct CodexChatView: View {
                 }
                 .padding(12)
                 .frame(maxWidth: 340, alignment: .leading)
-                .background(OrionTheme.accentYellow.opacity(0.08))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.accentYellow.opacity(0.55), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(OrionTheme.accentBlue.opacity(0.28), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             Spacer(minLength: 22)
         }
@@ -738,13 +762,7 @@ struct CodexChatView: View {
 
     private func loadingRow(_ row: CodexChatRow) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
-            Text(assistantAvatar)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(OrionTheme.textPrimary)
-                .frame(width: 24, height: 24)
-                .background(assistantColor.opacity(0.18))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(assistantColor.opacity(0.35), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text(assistantName)
                     .font(.system(size: 11))
@@ -830,14 +848,14 @@ struct CodexChatView: View {
                 }
             }
             .padding(8)
-            .background(OrionTheme.bgSurface.opacity(0.94))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+            .background(OrionTheme.bgSurface.opacity(0.96))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 8)
-        .background(OrionTheme.bgTerminal.opacity(0.98))
+        .background(OrionTheme.bgPrimary.opacity(0.98))
         .simultaneousGesture(keyboardDismissGesture)
     }
 
@@ -852,7 +870,7 @@ struct CodexChatView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(assistantColor.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Capsule())
     }
 
     private var canSend: Bool {
@@ -1064,7 +1082,8 @@ struct CodexChatView: View {
             if !row.text.isEmpty {
                 Text(row.text)
                     .font(.system(size: 15))
-                    .foregroundStyle(row.type == "error" ? OrionTheme.accentRed : OrionTheme.textPrimary)
+                    .fontWeight(row.type == "user" ? .medium : .regular)
+                    .foregroundStyle(row.type == "user" ? Color(hex: 0x0B1B3D) : row.type == "error" ? OrionTheme.accentRed : OrionTheme.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1099,8 +1118,8 @@ struct CodexChatView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: 320, alignment: .leading)
         .background(rowBackground(row.type))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(rowBorder(row.type), lineWidth: 0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: row.type == "user" ? 18 : 14, style: .continuous).stroke(rowBorder(row.type), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: row.type == "user" ? 18 : 14, style: .continuous))
     }
 
     private func attachmentList(_ attachments: [ChatAttachmentPayload]) -> some View {
@@ -1181,7 +1200,7 @@ struct CodexChatView: View {
 
     private func rowBackground(_ type: String) -> Color {
         switch type {
-        case "user": return OrionTheme.accentBlue.opacity(0.16)
+        case "user": return OrionTheme.accentBlue
         case "permission_request": return OrionTheme.accentYellow.opacity(0.08)
         default: return OrionTheme.bgSurface
         }
