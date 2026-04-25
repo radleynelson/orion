@@ -60,6 +60,15 @@ actor OrionClient {
         let _: [String: String] = try await post("/api/claude-chat/message", body: ["sessionId": sessionId, "text": text])
     }
 
+    func getChangedFiles(workspacePath: String, base: String = "") async throws -> [GitChangedFile] {
+        try await get("/api/git/changes", query: ["workspace": workspacePath, "base": base])
+    }
+
+    func getUnifiedDiff(workspacePath: String, base: String = "", filePath: String) async throws -> String {
+        let response: GitDiffResponse = try await get("/api/git/diff", query: ["workspace": workspacePath, "base": base, "file": filePath])
+        return response.diff
+    }
+
     // Server management
     func getServerStatuses(root: String, workspace: String) async throws -> [ServerStatus] {
         try await get("/api/servers", query: ["root": root, "workspace": workspace])

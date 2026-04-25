@@ -23,6 +23,7 @@ import (
 	"orion/internal/chatattachments"
 	"orion/internal/claudechat"
 	"orion/internal/codexchat"
+	oriongit "orion/internal/git"
 	"orion/internal/server"
 	"orion/internal/state"
 	"orion/internal/terminal"
@@ -54,6 +55,8 @@ type AppAPI interface {
 	StopServers(workspacePath string) error
 	GetServerStatuses(repoRoot string, workspacePath string) []server.ServerStatus
 	GetAgentNames(repoRoot string) []AgentType
+	GetChangedFilesAgainst(workspacePath string, base string) ([]oriongit.ChangedFile, error)
+	GetUnifiedDiff(workspacePath string, base string, filePath string) (string, error)
 	EmitSessionCreated(tmuxSession string, sessionType string, label string, workspacePath string)
 	EmitSessionCreatedInfo(session state.SessionInfo)
 }
@@ -123,6 +126,8 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/servers", s.authMiddleware(s.handleServers))
 	mux.HandleFunc("/api/servers/start", s.authMiddleware(s.handleServersStart))
 	mux.HandleFunc("/api/servers/stop", s.authMiddleware(s.handleServersStop))
+	mux.HandleFunc("/api/git/changes", s.authMiddleware(s.handleGitChanges))
+	mux.HandleFunc("/api/git/diff", s.authMiddleware(s.handleGitDiff))
 	mux.HandleFunc("/api/kill-session", s.authMiddleware(s.handleKillSession))
 
 	// Voice mode routes
@@ -787,6 +792,46 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		agents = []AgentType{}
 	}
 	writeJSON(w, agents)
+}
+
+func (s *Server) handleGitChanges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspacePath := r.URL.Query().Get("workspace")
+	if workspacePath == "" {
+		http.Error(w, "workspace parameter required", http.StatusBadRequest)
+		return
+	}
+	files, err := s.app.GetChangedFilesAgainst(workspacePath, r.URL.Query().Get("base"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if files == nil {
+		files = []oriongit.ChangedFile{}
+	}
+	writeJSON(w, files)
+}
+
+func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspacePath := r.URL.Query().Get("workspace")
+	filePath := r.URL.Query().Get("file")
+	if workspacePath == "" || filePath == "" {
+		http.Error(w, "workspace and file parameters required", http.StatusBadRequest)
+		return
+	}
+	diff, err := s.app.GetUnifiedDiff(workspacePath, r.URL.Query().Get("base"), filePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"diff": diff})
 }
 
 func (s *Server) handleLaunchAgent(w http.ResponseWriter, r *http.Request) {

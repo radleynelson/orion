@@ -17,6 +17,17 @@ struct Workspace: Codable, Identifiable {
     let hasAgent: Bool
 }
 
+struct GitChangedFile: Codable, Identifiable {
+    var id: String { path }
+    let path: String
+    let status: String
+    let statusText: String
+}
+
+struct GitDiffResponse: Codable {
+    let diff: String
+}
+
 struct SessionInfo: Codable, Identifiable {
     var id: String { runtimeSessionId ?? threadId ?? tmuxName }
     let tmuxName: String

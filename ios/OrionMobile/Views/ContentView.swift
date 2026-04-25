@@ -97,6 +97,9 @@ struct MainView: View {
         .sheet(isPresented: Binding(get: { state.showSettings }, set: { state.showSettings = $0 })) {
             SettingsView().presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: Binding(get: { state.showDiffReview }, set: { state.showDiffReview = $0 })) {
+            DiffReviewSheet().presentationDetents([.large]).presentationDragIndicator(.visible)
+        }
         .confirmationDialog(
             state.pendingKillSession.map { "Close \($0.label)?" } ?? "Close Session?",
             isPresented: Binding(
@@ -164,6 +167,9 @@ struct HeaderBar: View {
                 Text(state.isConnected ? "Live" : "Off")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(state.isConnected ? OrionTheme.textSecondary : OrionTheme.textDim)
+            }
+            Button { state.showDiffReview = true } label: {
+                Image(systemName: "doc.text.magnifyingglass").font(.system(size: 15)).foregroundStyle(OrionTheme.textSecondary)
             }
             Button { state.showSettings = true } label: {
                 Image(systemName: "gearshape").font(.system(size: 16)).foregroundStyle(OrionTheme.textSecondary)
@@ -588,6 +594,266 @@ private struct NewWorktreeSheet: View {
     }
 }
 
+private struct DiffReviewSheet: View {
+    @Environment(AppState.self) private var state
+    @State private var files: [GitChangedFile] = []
+    @State private var selectedIndex = 0
+    @State private var rawDiff = ""
+    @State private var loading = false
+    @State private var baseMode = "uncommitted"
+
+    private var baseRef: String {
+        baseMode == "main" ? (state.projectInfo?.mainBranch ?? "main") : ""
+    }
+
+    private var selectedFile: GitChangedFile? {
+        guard !files.isEmpty else { return nil }
+        return files[min(selectedIndex, files.count - 1)]
+    }
+
+    private var diffLines: [MobileDiffLine] {
+        parseMobileDiff(rawDiff)
+    }
+
+    private var counts: (added: Int, removed: Int) {
+        diffLines.reduce((0, 0)) { partial, line in
+            switch line.kind {
+            case .add: return (partial.0 + 1, partial.1)
+            case .delete: return (partial.0, partial.1 + 1)
+            default: return partial
+            }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Review base", selection: $baseMode) {
+                    Text("Uncommitted").tag("uncommitted")
+                    Text("vs \(state.projectInfo?.mainBranch ?? "main")").tag("main")
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+
+                if files.isEmpty && !loading {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 30))
+                            .foregroundStyle(OrionTheme.accentGreen)
+                        Text("No changes")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                        Text(state.activeWorkspace.map(workspaceReviewSubtitle) ?? "Pick a workspace to review.")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                    Spacer()
+                } else {
+                    diffHeader
+                    fileStrip
+                    diffBody
+                    diffFooter
+                }
+            }
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Diff review")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { state.showDiffReview = false }
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await loadFiles() } } label: {
+                        if loading {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .foregroundStyle(OrionTheme.accentBlue)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .task { await loadFiles() }
+            .onChange(of: baseMode) { _, _ in Task { await loadFiles() } }
+        }
+    }
+
+    private var diffHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(files.isEmpty ? "0 files" : "\(min(selectedIndex + 1, files.count)) of \(files.count) files")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .textCase(.uppercase)
+                    Text(selectedFile?.path ?? "Loading")
+                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                HStack(spacing: 7) {
+                    Text("+\(counts.added)").foregroundStyle(OrionTheme.accentGreen)
+                    Text("-\(counts.removed)").foregroundStyle(OrionTheme.accentRed)
+                }
+                .font(.system(size: 12, design: .monospaced))
+            }
+
+            HStack(spacing: 10) {
+                AgentSigilView("codex-chat", size: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(baseMode == "main" ? "Branch review" : "Workspace changes")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(state.activeWorkspace.map(workspaceReviewSubtitle) ?? "Active workspace")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(selectedFile?.statusText ?? "")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .foregroundStyle(statusColor(selectedFile?.status ?? ""))
+                    .background(statusColor(selectedFile?.status ?? "").opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+
+    private var fileStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(files.enumerated()), id: \.element.path) { index, file in
+                    Button {
+                        selectedIndex = index
+                        Task { await loadDiff(file: file) }
+                    } label: {
+                        HStack(spacing: 7) {
+                            Text(file.status)
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(statusColor(file.status))
+                            Text((file.path as NSString).lastPathComponent)
+                                .font(.system(size: 12, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(index == selectedIndex ? OrionTheme.accentBlue.opacity(0.16) : OrionTheme.bgSurface)
+                        .foregroundStyle(index == selectedIndex ? OrionTheme.textPrimary : OrionTheme.textSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(index == selectedIndex ? OrionTheme.accentBlue.opacity(0.5) : OrionTheme.borderDim, lineWidth: 0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+        }
+    }
+
+    private var diffBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if loading {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 28)
+                } else if diffLines.isEmpty {
+                    Text("(no textual diff)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                } else {
+                    ForEach(Array(diffLines.enumerated()), id: \.offset) { _, line in
+                        diffLine(line)
+                    }
+                }
+            }
+            .background(OrionTheme.bgTerminal)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var diffFooter: some View {
+        HStack(spacing: 10) {
+            Button("Previous") {
+                let nextIndex = max(selectedIndex - 1, 0)
+                selectedIndex = nextIndex
+                Task { await loadDiff(file: files[nextIndex]) }
+            }
+            .disabled(selectedIndex == 0)
+            Spacer()
+            Button("Next file") {
+                let nextIndex = min(selectedIndex + 1, max(files.count - 1, 0))
+                selectedIndex = nextIndex
+                Task { await loadDiff(file: files[nextIndex]) }
+            }
+            .disabled(files.isEmpty || selectedIndex >= files.count - 1)
+            .buttonStyle(.borderedProminent)
+            .tint(OrionTheme.accentBlue)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 18)
+        .background(OrionTheme.bgSecondary)
+        .overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
+    }
+
+    private func diffLine(_ line: MobileDiffLine) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(line.kind.sign)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: 22)
+                .foregroundStyle(line.kind.foreground)
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(line.kind == .context ? OrionTheme.textSecondary : OrionTheme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(nil)
+        }
+        .padding(.vertical, line.kind == .hunk ? 7 : 2)
+        .padding(.horizontal, 8)
+        .background(line.kind.background)
+    }
+
+    private func loadFiles() async {
+        loading = true
+        defer { loading = false }
+        do {
+            files = try await state.changedFiles(base: baseRef)
+            selectedIndex = min(selectedIndex, max(files.count - 1, 0))
+            await loadDiff()
+        } catch {
+            files = []
+            rawDiff = ""
+            state.showTransientError("Failed to load diff: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadDiff(file explicitFile: GitChangedFile? = nil) async {
+        guard let file = explicitFile ?? selectedFile else {
+            rawDiff = ""
+            return
+        }
+        do {
+            rawDiff = try await state.unifiedDiff(for: file, base: baseRef)
+        } catch {
+            rawDiff = ""
+        }
+    }
+}
+
 private struct CodexLaunchOptionsSheet: View {
     let workspaceName: String
     @Binding var options: CodexLaunchOptions
@@ -757,6 +1023,80 @@ private func normalizedWorktreeName(_ name: String) -> String {
         }
     }
     return output.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+}
+
+private func workspaceReviewSubtitle(_ workspace: Workspace) -> String {
+    if workspace.isMain { return "Main workspace" }
+    if !workspace.branch.isEmpty { return workspace.branch }
+    return workspace.name
+}
+
+private struct MobileDiffLine {
+    let kind: MobileDiffKind
+    let text: String
+}
+
+private enum MobileDiffKind: Equatable {
+    case add
+    case delete
+    case context
+    case hunk
+
+    var sign: String {
+        switch self {
+        case .add: return "+"
+        case .delete: return "-"
+        case .hunk: return "@"
+        case .context: return " "
+        }
+    }
+
+    var foreground: Color {
+        switch self {
+        case .add: return OrionTheme.accentGreen
+        case .delete: return OrionTheme.accentRed
+        case .hunk: return OrionTheme.accentBlue
+        case .context: return OrionTheme.textDim
+        }
+    }
+
+    var background: Color {
+        switch self {
+        case .add: return OrionTheme.accentGreen.opacity(0.10)
+        case .delete: return OrionTheme.accentRed.opacity(0.10)
+        case .hunk: return OrionTheme.bgSecondary
+        case .context: return .clear
+        }
+    }
+}
+
+private func parseMobileDiff(_ raw: String) -> [MobileDiffLine] {
+    raw.split(separator: "\n", omittingEmptySubsequences: false).compactMap { part in
+        let line = String(part)
+        if line.hasPrefix("diff --git") || line.hasPrefix("index ") || line.hasPrefix("--- ") || line.hasPrefix("+++ ") {
+            return nil
+        }
+        if line.hasPrefix("@@") {
+            return MobileDiffLine(kind: .hunk, text: line)
+        }
+        if line.hasPrefix("+") {
+            return MobileDiffLine(kind: .add, text: String(line.dropFirst()))
+        }
+        if line.hasPrefix("-") {
+            return MobileDiffLine(kind: .delete, text: String(line.dropFirst()))
+        }
+        return MobileDiffLine(kind: .context, text: line.hasPrefix(" ") ? String(line.dropFirst()) : line)
+    }
+}
+
+private func statusColor(_ status: String) -> Color {
+    switch status {
+    case "A": return OrionTheme.accentGreen
+    case "D": return OrionTheme.accentRed
+    case "R": return OrionTheme.accentBlue
+    case "M": return OrionTheme.accentYellow
+    default: return OrionTheme.textDim
+    }
 }
 
 func sessionColor(_ type: String) -> Color {

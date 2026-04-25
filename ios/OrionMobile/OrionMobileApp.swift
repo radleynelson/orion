@@ -62,6 +62,7 @@ final class AppState {
     var lastVoiceText: String?
     var showWorkspaces = false
     var showSettings = false
+    var showDiffReview = false
     var connectionError: String?
     /// Transient error message shown as a toast at the top of the main view.
     /// Cleared automatically after 4 seconds.
@@ -233,6 +234,16 @@ final class AppState {
         }
 
         return workspace
+    }
+
+    func changedFiles(base: String = "") async throws -> [GitChangedFile] {
+        guard let client, let workspacePath = activeWorkspacePath else { return [] }
+        return try await client.getChangedFiles(workspacePath: workspacePath, base: base)
+    }
+
+    func unifiedDiff(for file: GitChangedFile, base: String = "") async throws -> String {
+        guard let client, let workspacePath = activeWorkspacePath else { return "" }
+        return try await client.getUnifiedDiff(workspacePath: workspacePath, base: base, filePath: file.path)
     }
 
     func refreshSessions() async {
