@@ -44,6 +44,8 @@ type ChatRow = ChatMessage & {
   resultText?: string;
   resultDetails?: string;
   toolStatus?: 'running' | 'complete';
+  permissionState?: 'waiting' | 'submitted' | 'answered';
+  planState?: 'waiting' | 'approved';
 };
 
 type LiveActivityItem = {
@@ -116,6 +118,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answerStates, setAnswerStates] = useState<Record<string, 'submitting' | 'submitted' | 'error'>>({});
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<ChatMessage | null>(null);
   const [approvingPlanId, setApprovingPlanId] = useState<string | null>(null);
@@ -218,11 +221,28 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   const answer = async (toolUseId: string) => {
     const text = (answers[toolUseId] || '').trim();
     if (!text) return;
-    setAnswers((prev) => ({ ...prev, [toolUseId]: '' }));
+    setAnswerStates((prev) => ({ ...prev, [toolUseId]: 'submitting' }));
     try {
       await config.answerRequest(sessionId, toolUseId, text);
+      setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[toolUseId];
+        return next;
+      });
+      setAnswerStates((prev) => ({ ...prev, [toolUseId]: 'submitted' }));
     } catch (err) {
       console.error(`Failed to answer ${config.displayName} chat request:`, err);
+      setAnswerStates((prev) => ({ ...prev, [toolUseId]: 'error' }));
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `local-answer-error-${Date.now()}`,
+          sessionId,
+          type: 'error',
+          text: err instanceof Error ? err.message : String(err),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
     }
   };
 
@@ -281,6 +301,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
           {rows.map((msg) => renderRow(
             msg,
             answers,
+            answerStates,
             setAnswers,
             answer,
             config.displayName,
@@ -361,6 +382,18 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
   const rows: ChatRow[] = [];
   for (const msg of messages) {
     if (msg.type === 'status') continue;
+    if (msg.type === 'permission_submitted') {
+      updatePermissionRow(rows, msg, 'submitted');
+      continue;
+    }
+    if (msg.type === 'permission_resolved') {
+      updatePermissionRow(rows, msg, 'answered');
+      continue;
+    }
+    if (msg.type === 'plan_resolved') {
+      updatePlanRow(rows);
+      continue;
+    }
     if (shouldHideMessage(msg)) continue;
     if (msg.type === 'stream_delta') {
       const last = rows[rows.length - 1];
@@ -396,9 +429,40 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
       rows.push({ ...msg, toolStatus: 'running' });
       continue;
     }
+    if (msg.type === 'permission_request') {
+      rows.push({ ...msg, permissionState: 'waiting' });
+      continue;
+    }
+    if (msg.type === 'plan') {
+      rows.push({ ...msg, planState: 'waiting' });
+      continue;
+    }
     rows.push({ ...msg });
   }
   return rows;
+}
+
+function updatePermissionRow(rows: ChatRow[], update: ChatMessage, state: 'submitted' | 'answered') {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.type !== 'permission_request') continue;
+    if (update.toolUseId && row.toolUseId !== update.toolUseId) continue;
+    rows[i] = {
+      ...row,
+      permissionState: state,
+      resultText: update.text || row.resultText,
+    };
+    return;
+  }
+}
+
+function updatePlanRow(rows: ChatRow[]) {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.type !== 'plan') continue;
+    rows[i] = { ...row, planState: 'approved' };
+    return;
+  }
 }
 
 function findOpenToolRow(rows: ChatRow[], result: ChatMessage): number {
@@ -534,6 +598,7 @@ function reasoningTitle(value?: string): string {
 function renderRow(
   msg: ChatRow,
   answers: Record<string, string>,
+  answerStates: Record<string, 'submitting' | 'submitted' | 'error'>,
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>,
   answer: (toolUseId: string) => Promise<void>,
   assistantName: string,
@@ -572,6 +637,7 @@ function renderRow(
         key={msg.id}
         msg={msg}
         answers={answers}
+        answerStates={answerStates}
         setAnswers={setAnswers}
         answer={answer}
         assistantName={assistantName}
@@ -789,6 +855,7 @@ function ReasoningCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
 function PermissionCard({
   msg,
   answers,
+  answerStates,
   setAnswers,
   answer,
   assistantName,
@@ -796,17 +863,24 @@ function PermissionCard({
 }: {
   msg: ChatRow;
   answers: Record<string, string>;
+  answerStates: Record<string, 'submitting' | 'submitted' | 'error'>;
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>;
   answer: (toolUseId: string) => Promise<void>;
   assistantName: string;
   agentId: string;
 }) {
   const prompt = permissionPrompt(msg);
+  const toolUseId = msg.toolUseId || '';
+  const localState = toolUseId ? answerStates[toolUseId] : undefined;
+  const state = msg.permissionState === 'answered' ? 'answered' : (localState || msg.permissionState || 'waiting');
+  const waiting = state === 'waiting' || state === 'error';
+  const disabled = state === 'submitting' || state === 'submitted' || state === 'answered';
+  const statusLabel = permissionStatusLabel(state);
   return (
-    <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-permission">
+    <div className={`codex-chat-message codex-chat-message-assistant codex-chat-message-permission codex-chat-message-permission-${state}`}>
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
-        <div className="codex-chat-message-meta">{assistantName} needs input</div>
+        <div className="codex-chat-message-meta">{state === 'answered' ? `${assistantName} answered` : `${assistantName} needs input`}</div>
         <div className="codex-permission-card">
           <div className="codex-permission-header">
             <span className="codex-permission-icon">?</span>
@@ -814,17 +888,25 @@ function PermissionCard({
               <div className="codex-permission-title">{msg.toolName || 'Question'}</div>
               <div className="codex-permission-subtitle">{msg.text || 'The session is waiting for your answer.'}</div>
             </div>
+            <span className={`codex-permission-state codex-permission-state-${state}`}>{statusLabel}</span>
           </div>
-          <div className="codex-permission-prompt">{prompt}</div>
-          {msg.toolUseId && (
+          {waiting ? <div className="codex-permission-prompt">{prompt}</div> : (
+            <div className="codex-permission-summary">
+              {state === 'answered' ? 'Answer delivered.' : 'Answer submitted. Waiting for the session to continue.'}
+            </div>
+          )}
+          {toolUseId && waiting && (
             <div className="codex-chat-answer">
               <textarea
-                value={answers[msg.toolUseId] || ''}
-                onChange={(e) => setAnswers((prev) => ({ ...prev, [msg.toolUseId!]: e.target.value }))}
+                value={answers[toolUseId] || ''}
+                onChange={(e) => setAnswers((prev) => ({ ...prev, [toolUseId]: e.target.value }))}
                 placeholder={`Answer ${assistantName}...`}
+                disabled={disabled}
                 rows={2}
               />
-              <button onClick={() => answer(msg.toolUseId!)}>Send Answer</button>
+              <button onClick={() => answer(toolUseId)} disabled={disabled || !(answers[toolUseId] || '').trim()}>
+                {state === 'error' ? 'Retry Answer' : 'Send Answer'}
+              </button>
             </div>
           )}
         </div>
@@ -842,7 +924,7 @@ function PlanCard({
   onApprove,
   approving,
 }: {
-  plan: ChatMessage;
+  plan: ChatRow;
   assistantName: string;
   agentId: string;
   onReview: () => void;
@@ -853,6 +935,7 @@ function PlanCard({
   const markdown = plan.details || plan.text || '';
   const insights = planInsights(markdown);
   const sections = planSections(markdown);
+  const approved = plan.planState === 'approved';
   return (
     <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-plan" key={plan.id}>
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
@@ -861,11 +944,11 @@ function PlanCard({
         <div className="codex-plan-card">
           <div className="codex-plan-card-header">
             <div>
-              <div className="codex-plan-kicker">Plan · waiting for you</div>
+              <div className="codex-plan-kicker">Plan · {approved ? 'approved' : 'waiting for you'}</div>
               <div className="codex-plan-title">{plan.text || planTitle(markdown)}</div>
             </div>
             <div className="codex-plan-badges">
-              <span className="codex-plan-badge">Plan</span>
+              <span className="codex-plan-badge">{approved ? 'Approved' : 'Plan'}</span>
               {insights.sections > 0 && <span className="codex-plan-badge muted">{insights.sections} sections</span>}
               {insights.steps > 0 && <span className="codex-plan-badge muted">{insights.steps} steps</span>}
             </div>
@@ -879,7 +962,9 @@ function PlanCard({
           <div className="codex-plan-actions">
             <button type="button" onClick={onReview}>Review plan</button>
             <button type="button" onClick={onReviewDiff}>Review diff</button>
-            {onApprove && (
+            {approved ? (
+              <span className="codex-plan-approved">Plan approved</span>
+            ) : onApprove && (
               <button type="button" className="codex-plan-primary" onClick={onApprove} disabled={approving}>
                 {approving ? 'Approving' : 'Approve & run'}
               </button>
@@ -949,6 +1034,7 @@ function detailsBlock(details: string, label = 'Details') {
 
 function shouldHideMessage(msg: ChatMessage): boolean {
   if (msg.type === 'permission_resolved') return true;
+  if (msg.type === 'permission_submitted') return true;
   if (msg.type === 'plan_resolved') return true;
   if (msg.type === 'result') {
     const value = (msg.subtype || msg.text || '').toLowerCase();
@@ -1115,6 +1201,16 @@ function permissionPrompt(msg: ChatMessage): string {
   if (msg.details) return msg.details;
   if (msg.text) return msg.text;
   return 'Choose how Orion should continue.';
+}
+
+function permissionStatusLabel(state: 'waiting' | 'submitting' | 'submitted' | 'answered' | 'error'): string {
+  switch (state) {
+    case 'submitting': return 'sending';
+    case 'submitted': return 'submitted';
+    case 'answered': return 'answered';
+    case 'error': return 'retry needed';
+    default: return 'waiting';
+  }
 }
 
 function shortID(id: string): string {

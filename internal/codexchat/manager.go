@@ -308,6 +308,7 @@ type pendingInput struct {
 	requestID   string
 	toolUseID   string
 	questionIDs []string
+	submitted   bool
 }
 
 type rpcResponse struct {
@@ -432,9 +433,6 @@ func (s *Session) Answer(toolUseID string, result string) error {
 
 	s.pendingInputsMu.Lock()
 	pending, ok := s.pendingInputs[toolUseID]
-	if ok {
-		delete(s.pendingInputs, toolUseID)
-	}
 	s.pendingInputsMu.Unlock()
 	if !ok {
 		return fmt.Errorf("pending user input not found: %s", toolUseID)
@@ -448,10 +446,16 @@ func (s *Session) Answer(toolUseID string, result string) error {
 		answers["answer"] = map[string]any{"answers": []string{result}}
 	}
 
+	s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answer submitted"})
 	if err := s.respond(pending.requestID, map[string]any{"answers": answers}); err != nil {
 		return err
 	}
-	s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answered"})
+	s.pendingInputsMu.Lock()
+	if current, ok := s.pendingInputs[toolUseID]; ok {
+		current.submitted = true
+		s.pendingInputs[toolUseID] = current
+	}
+	s.pendingInputsMu.Unlock()
 	s.setStatus("running")
 	return nil
 }
@@ -767,11 +771,31 @@ func (s *Session) handleNotification(method string, params map[string]any) {
 			s.processItemCompleted(item)
 		}
 	case "serverRequest/resolved":
-		toolUseID := stringFrom(params, "itemId", "approvalId", "requestId")
+		toolUseID := s.resolvePendingInput(stringFrom(params, "requestId", "itemId", "approvalId"))
 		if toolUseID != "" {
-			s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, Text: "Resolved"})
+			s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answered"})
 		}
 	}
+}
+
+func (s *Session) resolvePendingInput(requestIDOrToolUseID string) string {
+	requestIDOrToolUseID = strings.TrimSpace(requestIDOrToolUseID)
+	if requestIDOrToolUseID == "" {
+		return ""
+	}
+	s.pendingInputsMu.Lock()
+	defer s.pendingInputsMu.Unlock()
+	if pending, ok := s.pendingInputs[requestIDOrToolUseID]; ok {
+		delete(s.pendingInputs, requestIDOrToolUseID)
+		return pending.toolUseID
+	}
+	for toolUseID, pending := range s.pendingInputs {
+		if pending.requestID == requestIDOrToolUseID || pending.toolUseID == requestIDOrToolUseID {
+			delete(s.pendingInputs, toolUseID)
+			return pending.toolUseID
+		}
+	}
+	return requestIDOrToolUseID
 }
 
 func (s *Session) handleTurnCompleted(params map[string]any) {
@@ -793,7 +817,13 @@ func (s *Session) handleTurnCompleted(params map[string]any) {
 	s.emit(Message{Type: "result", Subtype: status, Text: status})
 
 	s.pendingInputsMu.Lock()
-	hasPendingInput := len(s.pendingInputs) > 0
+	hasPendingInput := false
+	for _, pending := range s.pendingInputs {
+		if !pending.submitted {
+			hasPendingInput = true
+			break
+		}
+	}
 	s.pendingInputsMu.Unlock()
 	if hasPendingInput {
 		s.setStatus("waiting_input")
