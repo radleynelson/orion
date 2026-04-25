@@ -48,6 +48,10 @@ actor OrionClient {
         return try await post("/api/codex-chat", body: body)
     }
 
+    func getCodexHistory(workspacePath: String, limit: Int = 20) async throws -> [CodexHistoryThread] {
+        try await get("/api/codex-chat/history", query: ["workspace": workspacePath, "limit": String(limit)])
+    }
+
     func launchClaudeChat(repoRoot: String, workspacePath: String) async throws -> LaunchClaudeChatResponse {
         try await post("/api/claude-chat", body: ["repoRoot": repoRoot, "workspacePath": workspacePath])
     }

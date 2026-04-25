@@ -169,6 +169,16 @@ struct LaunchCodexChatResponse: Codable {
 
 typealias LaunchClaudeChatResponse = LaunchCodexChatResponse
 
+struct CodexHistoryThread: Codable, Identifiable {
+    var id: String { threadId }
+    let threadId: String
+    let workspacePath: String?
+    let model: String?
+    let updatedAt: String
+    let messageCount: Int
+    let preview: String?
+}
+
 struct CodexLaunchOptions: Codable, Equatable {
     var model = "gpt-5.4"
     var reasoningEffort = "xhigh"

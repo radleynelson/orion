@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +119,7 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/claude-chat", s.authMiddleware(s.handleClaudeChat))
 	mux.HandleFunc("/api/claude-chat/message", s.authMiddleware(s.handleClaudeChatMessage))
 	mux.HandleFunc("/api/claude-chat/answer", s.authMiddleware(s.handleClaudeChatAnswer))
+	mux.HandleFunc("/api/codex-chat/history", s.authMiddleware(s.handleCodexChatHistory))
 	mux.HandleFunc("/api/codex-chat", s.authMiddleware(s.handleCodexChat))
 	mux.HandleFunc("/api/codex-chat/message", s.authMiddleware(s.handleCodexChatMessage))
 	mux.HandleFunc("/api/codex-chat/answer", s.authMiddleware(s.handleCodexChatAnswer))
@@ -646,6 +648,20 @@ func (s *Server) handleClaudeChatAnswer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, map[string]string{"status": "answered"})
+}
+
+func (s *Server) handleCodexChatHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	writeJSON(w, codexchat.ListHistory(r.URL.Query().Get("workspace"), limit))
 }
 
 func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {

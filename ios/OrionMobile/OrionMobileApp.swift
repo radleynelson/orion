@@ -239,8 +239,8 @@ final class AppState {
         return workspace
     }
 
-    func changedFiles(base: String = "") async throws -> [GitChangedFile] {
-        guard let client, let workspacePath = activeWorkspacePath else { return [] }
+    func changedFiles(workspacePath explicitWorkspacePath: String? = nil, base: String = "") async throws -> [GitChangedFile] {
+        guard let client, let workspacePath = explicitWorkspacePath ?? activeWorkspacePath else { return [] }
         return try await client.getChangedFiles(workspacePath: workspacePath, base: base)
     }
 
@@ -335,9 +335,9 @@ final class AppState {
     }
 
     @discardableResult
-    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions = CodexLaunchOptions()) async throws -> SessionInfo {
+    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions = CodexLaunchOptions(), threadId: String? = nil) async throws -> SessionInfo {
         guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
-        let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, options: options)
+        let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, threadId: threadId, options: options)
         let session = SessionInfo(
             tmuxName: resp.threadId ?? resp.id,
             type: resp.type,
@@ -363,6 +363,11 @@ final class AppState {
             try await activateSession(session)
             return session
         }
+    }
+
+    @discardableResult
+    func resumeCodexChat(workspacePath: String, threadId: String) async throws -> SessionInfo {
+        try await launchCodexChat(workspacePath: workspacePath, threadId: threadId)
     }
 
     @discardableResult
@@ -501,6 +506,12 @@ final class AppState {
             try await client.sendCodexChatMessage(sessionId: session.chatConnectionId, text: trimmed)
         }
         return session
+    }
+
+    func codexHistory(workspace: Workspace, limit: Int = 20) async -> [CodexHistoryThread] {
+        guard let client else { return [] }
+        do { return try await client.getCodexHistory(workspacePath: workspace.path, limit: limit) }
+        catch { return [] }
     }
 
     // MARK: - Kill Session

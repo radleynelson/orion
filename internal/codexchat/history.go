@@ -42,6 +42,15 @@ type codexEventPayload struct {
 	LocalImages []any  `json:"local_images"`
 }
 
+type HistoryThread struct {
+	ThreadID      string `json:"threadId"`
+	WorkspacePath string `json:"workspacePath,omitempty"`
+	Model         string `json:"model,omitempty"`
+	UpdatedAt     string `json:"updatedAt"`
+	MessageCount  int    `json:"messageCount"`
+	Preview       string `json:"preview,omitempty"`
+}
+
 // LoadHistory reads Codex's persisted JSONL transcript for a thread and returns
 // chat-shaped user and assistant messages. Runtime events remain in memory; this
 // is only the durable baseline for restored chat sessions.
@@ -101,6 +110,41 @@ func LatestThreadIDForWorkspace(workspacePath string) string {
 		}
 	}
 	return ""
+}
+
+func ListHistory(workspacePath string, limit int) []HistoryThread {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if limit <= 0 {
+		limit = 20
+	}
+	var out []HistoryThread
+	seen := map[string]bool{}
+	for _, file := range codexSessionFiles() {
+		meta, ok := readSessionMeta(file.path)
+		if !ok || strings.TrimSpace(meta.ID) == "" {
+			continue
+		}
+		if workspacePath != "" && !samePath(meta.CWD, workspacePath) {
+			continue
+		}
+		if seen[meta.ID] {
+			continue
+		}
+		messages := loadHistoryFromFile(file.path, meta.ID, meta.CWD)
+		out = append(out, HistoryThread{
+			ThreadID:      meta.ID,
+			WorkspacePath: meta.CWD,
+			Model:         meta.Model,
+			UpdatedAt:     file.modTime.UTC().Format(time.RFC3339Nano),
+			MessageCount:  len(messages),
+			Preview:       historyPreview(messages),
+		})
+		seen[meta.ID] = true
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func ParseResumeIDs(command string) []string {
@@ -343,6 +387,20 @@ func historyTimestamp(value string) string {
 		return value
 	}
 	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func historyPreview(messages []Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		text := strings.Join(strings.Fields(messages[i].Text), " ")
+		if text == "" {
+			continue
+		}
+		if len(text) > 180 {
+			return text[:177] + "..."
+		}
+		return text
+	}
+	return ""
 }
 
 func shortHash(value string) string {

@@ -233,6 +233,7 @@ private struct MobileHomeView: View {
     @State private var changedFiles: [GitChangedFile] = []
     @State private var loadingHome = false
     @State private var showQuickAsk = false
+    @State private var detailWorkspace: Workspace?
 
     private var projectSubtitle: String {
         let projectCount = state.workspaces.count
@@ -279,6 +280,15 @@ private struct MobileHomeView: View {
                     showQuickAsk = false
                     Task { await loadHome() }
                 }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $detailWorkspace) { workspace in
+            WorkspaceDetailSheet(
+                workspace: workspace,
+                onClose: { detailWorkspace = nil },
+                onRefresh: { await loadHome() }
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -411,6 +421,7 @@ private struct MobileHomeView: View {
                     workspace: workspace,
                     sessions: state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" },
                     servers: serverStatusesByWorkspace[workspace.path] ?? [],
+                    onOpenDetail: { detailWorkspace = workspace },
                     onRefresh: { await loadHome() }
                 )
             }
@@ -476,6 +487,7 @@ private struct MobileWorkspaceCard: View {
     let workspace: Workspace
     let sessions: [SessionInfo]
     let servers: [ServerStatus]
+    let onOpenDetail: () -> Void
     let onRefresh: () async -> Void
     @State private var showingCodexOptions = false
     @State private var codexOptions = CodexLaunchOptions()
@@ -488,7 +500,7 @@ private struct MobileWorkspaceCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Button {
-                Task { await state.activateWorkspace(workspace.path) }
+                onOpenDetail()
             } label: {
                 HStack(alignment: .center, spacing: 10) {
                     Circle()
@@ -842,6 +854,471 @@ private struct QuickAskSheet: View {
             launching = false
             state.showTransientError("Failed to start chat: \(error.localizedDescription)")
         }
+    }
+}
+
+private struct WorkspaceDetailSheet: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+    let onClose: () -> Void
+    let onRefresh: () async -> Void
+    @State private var serverStatuses: [ServerStatus] = []
+    @State private var history: [CodexHistoryThread] = []
+    @State private var changedFiles: [GitChangedFile] = []
+    @State private var loading = false
+    @State private var serverBusy = false
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
+
+    private var sessions: [SessionInfo] {
+        state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" }
+    }
+
+    private var runningServers: [ServerStatus] {
+        serverStatuses.filter(\.running)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    summaryGrid
+                    primaryActions
+                    liveSessionsSection
+                    recentHistorySection
+                }
+                .padding(16)
+                .padding(.bottom, 28)
+            }
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Workspace")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close", action: onClose)
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await load() } } label: {
+                        if loading {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .foregroundStyle(OrionTheme.accentBlue)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .task { await load() }
+            .sheet(isPresented: $showingCodexOptions) {
+                CodexLaunchOptionsSheet(
+                    workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                    options: $codexOptions,
+                    onCancel: { showingCodexOptions = false },
+                    onLaunch: {
+                        let selected = codexOptions
+                        showingCodexOptions = false
+                        Task {
+                            do {
+                                _ = try await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                                await onRefresh()
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to start Codex: \(error.localizedDescription)")
+                            }
+                        }
+                    }
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            OrionMarkView(size: 46)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(workspace.name)
+                        .font(.system(size: 25, weight: .bold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(1)
+                    if workspace.isMain {
+                        Text("MAIN")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.accentBlue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(OrionTheme.accentBlue.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+                }
+                Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+    }
+
+    private var summaryGrid: some View {
+        HStack(spacing: 10) {
+            WorkspaceSummaryTile(value: "\(sessions.count)", label: "sessions", tint: sessions.isEmpty ? OrionTheme.textDim : OrionTheme.accentBlue)
+            WorkspaceSummaryTile(value: "\(runningServers.count)", label: "servers", tint: runningServers.isEmpty ? OrionTheme.textDim : OrionTheme.accentGreen)
+            WorkspaceSummaryTile(value: "\(changedFiles.count)", label: "files", tint: changedFiles.isEmpty ? OrionTheme.textDim : OrionTheme.accentYellow)
+        }
+    }
+
+    private var primaryActions: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    if let preferred = sessions.first {
+                        Task {
+                            do {
+                                try await state.activateSession(preferred)
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to open session: \(error.localizedDescription)")
+                            }
+                        }
+                    } else {
+                        showingCodexOptions = true
+                    }
+                } label: {
+                    Label(sessions.isEmpty ? "Start Codex" : "Open latest", systemImage: sessions.isEmpty ? "plus" : "arrow.up.forward")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 38)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(OrionTheme.accentBlue)
+
+                Button {
+                    Task {
+                        await state.activateWorkspace(workspace.path)
+                        state.showDiffReview = true
+                        onClose()
+                    }
+                } label: {
+                    Label("Diff", systemImage: "doc.text.magnifyingglass")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 38)
+                }
+                .buttonStyle(.bordered)
+                .tint(OrionTheme.accentBlue)
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    Button { showingCodexOptions = true } label: {
+                        Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    Button {
+                        Task {
+                            do {
+                                _ = try await state.launchClaudeChat(workspacePath: workspace.path)
+                                await onRefresh()
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to start Claude: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
+                    }
+                    Button {
+                        Task {
+                            do {
+                                try await state.launchShell(workspacePath: workspace.path)
+                                await onRefresh()
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
+                    }
+                    if !state.agentTypes.isEmpty {
+                        Divider()
+                        ForEach(state.agentTypes) { agent in
+                            Button {
+                                Task {
+                                    do {
+                                        try await state.launchAgent(workspacePath: workspace.path, agentType: agent.name)
+                                        await onRefresh()
+                                        onClose()
+                                    } catch {
+                                        state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
+                                    }
+                                }
+                            } label: {
+                                Label(agent.label, systemImage: agentIcon(agent.name))
+                            }
+                        }
+                    }
+                } label: {
+                    Label("New session", systemImage: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                }
+                .buttonStyle(.bordered)
+                .tint(OrionTheme.textSecondary)
+
+                if !serverStatuses.isEmpty {
+                    Button {
+                        Task {
+                            serverBusy = true
+                            if runningServers.isEmpty {
+                                await state.startServers(workspace: workspace)
+                            } else {
+                                await state.stopServers(workspace: workspace)
+                            }
+                            await load()
+                            await onRefresh()
+                            serverBusy = false
+                        }
+                    } label: {
+                        if serverBusy {
+                            ProgressView().controlSize(.mini)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 36)
+                        } else {
+                            Label(runningServers.isEmpty ? "Start servers" : "Stop servers", systemImage: runningServers.isEmpty ? "play.fill" : "stop.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 36)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(runningServers.isEmpty ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                    .disabled(serverBusy)
+                }
+            }
+        }
+    }
+
+    private var liveSessionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Live sessions", count: sessions.count)
+            if sessions.isEmpty {
+                EmptyDetailRow(icon: "codex-chat", title: "No live sessions", subtitle: "Start or resume an agent from this workspace.")
+            } else {
+                ForEach(Array(sessions.prefix(3))) { session in
+                    Button {
+                        Task {
+                            do {
+                                try await state.activateSession(session)
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to open session: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        DetailSessionRow(session: session, isActive: state.activeSession?.id == session.id)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if sessions.count > 3 {
+                    Text("+ \(sessions.count - 3) more session\(sessions.count - 3 == 1 ? "" : "s")")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 2)
+                }
+            }
+        }
+    }
+
+    private var recentHistorySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Recent Codex threads", count: history.count)
+            if history.isEmpty {
+                EmptyDetailRow(icon: "codex-chat", title: "No saved Codex threads", subtitle: "Completed Codex chats for this workspace will appear here.")
+            } else {
+                ForEach(history) { thread in
+                    DetailHistoryRow(
+                        thread: thread,
+                        liveSession: liveSession(for: thread),
+                        onOpen: { open(thread) }
+                    )
+                }
+            }
+        }
+    }
+
+    private func sectionTitle(_ title: String, count: Int) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(OrionTheme.textDim)
+            Spacer()
+            Text("\(count)")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+        }
+    }
+
+    private func load() async {
+        loading = true
+        defer { loading = false }
+        await state.refreshSessions()
+        async let loadedServers = state.getServerStatuses(workspace: workspace)
+        async let loadedHistory = state.codexHistory(workspace: workspace)
+        let loadedChanges = (try? await state.changedFiles(workspacePath: workspace.path)) ?? []
+        serverStatuses = await loadedServers
+        history = await loadedHistory
+        changedFiles = loadedChanges
+    }
+
+    private func liveSession(for thread: CodexHistoryThread) -> SessionInfo? {
+        sessions.first { $0.threadId == thread.threadId || $0.tmuxName == thread.threadId }
+    }
+
+    private func open(_ thread: CodexHistoryThread) {
+        Task {
+            do {
+                if let live = liveSession(for: thread) {
+                    try await state.activateSession(live)
+                } else {
+                    _ = try await state.resumeCodexChat(workspacePath: workspace.path, threadId: thread.threadId)
+                }
+                await onRefresh()
+                onClose()
+            } catch {
+                state.showTransientError("Failed to resume thread: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+private struct WorkspaceSummaryTile: View {
+    let value: String
+    let label: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(value)
+                .font(.system(size: 19, weight: .bold, design: .monospaced))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+private struct DetailSessionRow: View {
+    let session: SessionInfo
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 11) {
+            AgentSigilView(session.type, size: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.label)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(sessionLabel(session.type))
+                    if let model = session.model, !model.isEmpty { Text(modelLabel(model)) }
+                    if let reasoning = session.reasoningEffort, !reasoning.isEmpty { Text(reasoningLabel(reasoning)) }
+                }
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .lineLimit(1)
+            }
+            Spacer()
+            Text(isActive ? "Active" : "Open")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+        }
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isActive ? OrionTheme.accentBlue.opacity(0.32) : OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+private struct DetailHistoryRow: View {
+    let thread: CodexHistoryThread
+    let liveSession: SessionInfo?
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            AgentSigilView("codex-chat", size: 30)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(shortThreadLabel(thread.threadId))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(relativeTimeLabel(thread.updatedAt))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                }
+                Text(thread.preview?.isEmpty == false ? thread.preview! : "No preview")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    if let model = thread.model, !model.isEmpty {
+                        Text(modelLabel(model))
+                    }
+                    Text("\(thread.messageCount) msg\(thread.messageCount == 1 ? "" : "s")")
+                }
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+            }
+            Spacer()
+            Button(liveSession == nil ? "Resume" : "Open", action: onOpen)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OrionTheme.accentBlue)
+        }
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+private struct EmptyDetailRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(spacing: 11) {
+            AgentSigilView(icon, size: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                Text(subtitle)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
     }
 }
 
@@ -1671,6 +2148,23 @@ private func workspaceReviewSubtitle(_ workspace: Workspace) -> String {
     if workspace.isMain { return "Main workspace" }
     if !workspace.branch.isEmpty { return workspace.branch }
     return workspace.name
+}
+
+private func shortThreadLabel(_ threadId: String) -> String {
+    let trimmed = threadId.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.count <= 12 { return trimmed }
+    return String(trimmed.prefix(8))
+}
+
+private func relativeTimeLabel(_ value: String) -> String {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let standard = ISO8601DateFormatter()
+    let date = fractional.date(from: value) ?? standard.date(from: value)
+    guard let date else { return "" }
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter.localizedString(for: date, relativeTo: Date())
 }
 
 private struct MobileDiffLine {
