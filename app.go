@@ -405,6 +405,18 @@ func (a *App) LaunchCodexChat(repoRoot string, workspacePath string) (*codexchat
 	return a.codexMgr.Start(workspacePath, "Codex Chat")
 }
 
+func (a *App) LaunchCodexChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
+	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
+		WorkspacePath:     workspacePath,
+		Label:             "Codex Chat",
+		Model:             model,
+		ReasoningEffort:   reasoningEffort,
+		ApprovalPolicy:    approvalPolicy,
+		SandboxMode:       sandboxMode,
+		CollaborationMode: collaborationMode,
+	})
+}
+
 func (a *App) ResumeCodexChat(repoRoot string, workspacePath string, threadID string) (*codexchat.SessionInfo, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
@@ -434,18 +446,19 @@ func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 	sessions := make([]state.SessionInfo, 0, len(infos))
 	for _, info := range infos {
 		sessions = append(sessions, state.SessionInfo{
-			TmuxName:         info.ID,
-			Type:             codexchat.SessionType,
-			Label:            info.Label,
-			WorkspacePath:    info.WorkspacePath,
-			Provider:         codexchat.Provider,
-			ViewMode:         codexchat.ViewModeChat,
-			RuntimeSessionID: info.ID,
-			ThreadID:         info.ThreadID,
-			Model:            info.Model,
-			ReasoningEffort:  info.ReasoningEffort,
-			ApprovalPolicy:   info.ApprovalPolicy,
-			SandboxMode:      info.SandboxMode,
+			TmuxName:          info.ID,
+			Type:              codexchat.SessionType,
+			Label:             info.Label,
+			WorkspacePath:     info.WorkspacePath,
+			Provider:          codexchat.Provider,
+			ViewMode:          codexchat.ViewModeChat,
+			RuntimeSessionID:  info.ID,
+			ThreadID:          info.ThreadID,
+			Model:             info.Model,
+			ReasoningEffort:   info.ReasoningEffort,
+			ApprovalPolicy:    info.ApprovalPolicy,
+			SandboxMode:       info.SandboxMode,
+			CollaborationMode: info.CollaborationMode,
 		})
 	}
 	return sessions
@@ -627,18 +640,19 @@ func (a *App) EmitSessionCreated(tmuxSession string, sessionType string, label s
 
 func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 	wailsRuntime.EventsEmit(a.ctx, "mobile:session-created", map[string]string{
-		"tmuxSession":      session.TmuxName,
-		"type":             session.Type,
-		"label":            session.Label,
-		"workspacePath":    session.WorkspacePath,
-		"provider":         session.Provider,
-		"viewMode":         session.ViewMode,
-		"runtimeSessionId": session.RuntimeSessionID,
-		"threadId":         session.ThreadID,
-		"model":            session.Model,
-		"reasoningEffort":  session.ReasoningEffort,
-		"approvalPolicy":   session.ApprovalPolicy,
-		"sandboxMode":      session.SandboxMode,
+		"tmuxSession":       session.TmuxName,
+		"type":              session.Type,
+		"label":             session.Label,
+		"workspacePath":     session.WorkspacePath,
+		"provider":          session.Provider,
+		"viewMode":          session.ViewMode,
+		"runtimeSessionId":  session.RuntimeSessionID,
+		"threadId":          session.ThreadID,
+		"model":             session.Model,
+		"reasoningEffort":   session.ReasoningEffort,
+		"approvalPolicy":    session.ApprovalPolicy,
+		"sandboxMode":       session.SandboxMode,
+		"collaborationMode": session.CollaborationMode,
 	})
 }
 

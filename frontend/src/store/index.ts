@@ -40,6 +40,7 @@ export interface Tab {
   reasoningEffort?: string;
   approvalPolicy?: string;
   sandboxMode?: string;
+  collaborationMode?: string;
 }
 
 interface ProjectState {

@@ -99,6 +99,8 @@ export function LaunchClaudeChat(arg1:string,arg2:string):Promise<claudechat.Ses
 
 export function LaunchCodexChat(arg1:string,arg2:string):Promise<codexchat.SessionInfo>;
 
+export function LaunchCodexChatWithOptions(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<codexchat.SessionInfo>;
+
 export function LaunchShell(arg1:string,arg2:string):Promise<string>;
 
 export function ListClaudeChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;

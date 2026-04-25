@@ -158,6 +158,7 @@ function App() {
               reasoningEffort: session.reasoningEffort || saved.reasoningEffort,
               approvalPolicy: session.approvalPolicy || saved.approvalPolicy,
               sandboxMode: session.sandboxMode || saved.sandboxMode,
+              collaborationMode: session.collaborationMode || saved.collaborationMode,
             });
             restoredSessions.add(saved.threadId);
             continue;
@@ -178,6 +179,7 @@ function App() {
             reasoningEffort: saved.reasoningEffort,
             approvalPolicy: saved.approvalPolicy,
             sandboxMode: saved.sandboxMode,
+            collaborationMode: saved.collaborationMode,
           });
           restoredSessions.add(saved.tmuxSession);
         } catch {}
@@ -206,6 +208,7 @@ function App() {
               reasoningEffort: sess.reasoningEffort,
               approvalPolicy: sess.approvalPolicy,
               sandboxMode: sess.sandboxMode,
+              collaborationMode: sess.collaborationMode,
             };
             if (sess.type === 'server') {
               useStore.getState().addServerTab(tab);
@@ -443,6 +446,7 @@ function App() {
           reasoningEffort: tab.reasoningEffort,
           approvalPolicy: tab.approvalPolicy,
           sandboxMode: tab.sandboxMode,
+          collaborationMode: tab.collaborationMode,
         });
         removeTab(tab.id);
       } catch (err) {
@@ -497,6 +501,7 @@ function App() {
           reasoningEffort: session.reasoningEffort || tab.reasoningEffort,
           approvalPolicy: session.approvalPolicy || tab.approvalPolicy,
           sandboxMode: session.sandboxMode || tab.sandboxMode,
+          collaborationMode: session.collaborationMode || tab.collaborationMode,
         });
         removeTab(tab.id);
       } catch (err) {
@@ -528,6 +533,7 @@ function App() {
               reasoningEffort: tab.reasoningEffort || '',
               approvalPolicy: tab.approvalPolicy || '',
               sandboxMode: tab.sandboxMode || '',
+              collaborationMode: tab.collaborationMode || '',
             });
           }
           continue;
@@ -548,6 +554,7 @@ function App() {
               reasoningEffort: tab.reasoningEffort || '',
               approvalPolicy: tab.approvalPolicy || '',
               sandboxMode: tab.sandboxMode || '',
+              collaborationMode: tab.collaborationMode || '',
             });
           }
           continue;
@@ -570,6 +577,7 @@ function App() {
               reasoningEffort: tab.reasoningEffort || '',
               approvalPolicy: tab.approvalPolicy || '',
               sandboxMode: tab.sandboxMode || '',
+              collaborationMode: tab.collaborationMode || '',
             });
           }
         }
@@ -760,6 +768,7 @@ function App() {
             reasoningEffort: data.reasoningEffort,
             approvalPolicy: data.approvalPolicy,
             sandboxMode: data.sandboxMode,
+            collaborationMode: data.collaborationMode,
           });
           return;
         }

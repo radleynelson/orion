@@ -275,9 +275,9 @@ final class AppState {
         }
     }
 
-    func launchCodexChat(workspacePath: String) async throws {
+    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions = CodexLaunchOptions()) async throws {
         guard let client, let root = selectedProject else { return }
-        let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath)
+        let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, options: options)
         let session = SessionInfo(
             tmuxName: resp.threadId ?? resp.id,
             type: resp.type,
@@ -290,7 +290,8 @@ final class AppState {
             model: resp.model,
             reasoningEffort: resp.reasoningEffort,
             approvalPolicy: resp.approvalPolicy,
-            sandboxMode: resp.sandboxMode
+            sandboxMode: resp.sandboxMode,
+            collaborationMode: resp.collaborationMode
         )
         phoneLaunchedSessions[session.id] = session
         await refreshSessions()
@@ -369,7 +370,8 @@ final class AppState {
                 model: resp.model,
                 reasoningEffort: resp.reasoningEffort,
                 approvalPolicy: resp.approvalPolicy,
-                sandboxMode: resp.sandboxMode
+                sandboxMode: resp.sandboxMode,
+                collaborationMode: resp.collaborationMode
             )
             if activeConnection?.tmuxSession == session.tmuxName {
                 disconnectActiveTerminal()

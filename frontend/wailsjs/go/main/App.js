@@ -174,6 +174,10 @@ export function LaunchCodexChat(arg1, arg2) {
   return window['go']['main']['App']['LaunchCodexChat'](arg1, arg2);
 }
 
+export function LaunchCodexChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['LaunchCodexChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function LaunchShell(arg1, arg2) {
   return window['go']['main']['App']['LaunchShell'](arg1, arg2);
 }

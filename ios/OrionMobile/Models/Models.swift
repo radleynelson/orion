@@ -31,6 +31,7 @@ struct SessionInfo: Codable, Identifiable {
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let collaborationMode: String?
 
     var isChat: Bool { type == "codex-chat" || type == "claude-chat" }
     var isClaude: Bool { type == "claude" || type == "claude-chat" }
@@ -49,7 +50,8 @@ struct SessionInfo: Codable, Identifiable {
         model: String? = nil,
         reasoningEffort: String? = nil,
         approvalPolicy: String? = nil,
-        sandboxMode: String? = nil
+        sandboxMode: String? = nil,
+        collaborationMode: String? = nil
     ) {
         self.tmuxName = tmuxName
         self.type = type
@@ -63,6 +65,7 @@ struct SessionInfo: Codable, Identifiable {
         self.reasoningEffort = reasoningEffort
         self.approvalPolicy = approvalPolicy
         self.sandboxMode = sandboxMode
+        self.collaborationMode = collaborationMode
     }
 }
 
@@ -150,9 +153,18 @@ struct LaunchCodexChatResponse: Codable {
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let collaborationMode: String?
 }
 
 typealias LaunchClaudeChatResponse = LaunchCodexChatResponse
+
+struct CodexLaunchOptions: Codable, Equatable {
+    var model = "gpt-5.4"
+    var reasoningEffort = "xhigh"
+    var approvalPolicy = "never"
+    var sandboxMode = "danger-full-access"
+    var collaborationMode = "default"
+}
 
 struct StartServersRequest: Codable {
     let repoRoot: String

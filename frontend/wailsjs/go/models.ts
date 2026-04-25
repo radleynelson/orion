@@ -291,7 +291,7 @@ export namespace config {
 }
 
 export namespace diag {
-	
+
 	export class GoStats {
 	    heapAllocMB: number;
 	    heapSysMB: number;
@@ -299,11 +299,11 @@ export namespace diag {
 	    sysMB: number;
 	    numGC: number;
 	    numGoroutine: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GoStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.heapAllocMB = source["heapAllocMB"];
@@ -320,11 +320,11 @@ export namespace diag {
 	    helpersMB: number;
 	    sessionsMB: number;
 	    grandMB: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Totals(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.orionMB = source["orionMB"];
@@ -340,11 +340,11 @@ export namespace diag {
 	    panePID: number;
 	    processes: ProcessStats[];
 	    totalRSSMB: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SessionMem(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sessionName = source["sessionName"];
@@ -353,7 +353,7 @@ export namespace diag {
 	        this.processes = this.convertValues(source["processes"], ProcessStats);
 	        this.totalRSSMB = source["totalRSSMB"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -378,11 +378,11 @@ export namespace diag {
 	    name: string;
 	    rssMB: number;
 	    cpuPct: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProcessStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pid = source["pid"];
@@ -400,11 +400,11 @@ export namespace diag {
 	    sessions: SessionMem[];
 	    totals: Totals;
 	    timestamp: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new MemorySnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.go = this.convertValues(source["go"], GoStats);
@@ -415,7 +415,7 @@ export namespace diag {
 	        this.totals = this.convertValues(source["totals"], Totals);
 	        this.timestamp = source["timestamp"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -434,8 +434,8 @@ export namespace diag {
 		    return a;
 		}
 	}
-	
-	
+
+
 
 }
 
@@ -610,6 +610,7 @@ export namespace state {
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
 	    sandboxMode?: string;
+	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SavedTab(source);
@@ -629,6 +630,7 @@ export namespace state {
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
 	        this.sandboxMode = source["sandboxMode"];
+	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}
 	export class SessionInfo {
@@ -644,6 +646,7 @@ export namespace state {
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
 	    sandboxMode?: string;
+	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -663,6 +666,7 @@ export namespace state {
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
 	        this.sandboxMode = source["sandboxMode"];
+	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}
 

@@ -7,7 +7,7 @@ import {
   DeleteWorkspace,
   LaunchAgent,
   LaunchClaudeChat,
-  LaunchCodexChat,
+  LaunchCodexChatWithOptions,
   CreateAttachedTerminal,
   CreateTerminalInDir,
   CloseTerminal,
@@ -24,6 +24,56 @@ import {
 } from '../../wailsjs/go/main/App';
 import AgentSigil from './AgentSigil';
 import OrionMark from './OrionMark';
+
+type CodexLaunchOptions = {
+  model: string;
+  reasoningEffort: string;
+  approvalPolicy: string;
+  sandboxMode: string;
+  collaborationMode: string;
+};
+
+const DEFAULT_CODEX_OPTIONS: CodexLaunchOptions = {
+  model: 'gpt-5.4',
+  reasoningEffort: 'xhigh',
+  approvalPolicy: 'never',
+  sandboxMode: 'danger-full-access',
+  collaborationMode: 'default',
+};
+
+const CODEX_MODELS = [
+  { value: 'gpt-5.5', label: 'GPT-5.5' },
+  { value: 'gpt-5.4', label: 'GPT-5.4' },
+  { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+  { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+  { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+  { value: 'gpt-5.2', label: 'GPT-5.2' },
+];
+
+const REASONING_EFFORTS = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra high' },
+];
+
+const APPROVAL_POLICIES = [
+  { value: 'never', label: 'Full access' },
+  { value: 'on-request', label: 'Ask first' },
+  { value: 'on-failure', label: 'On failure' },
+  { value: 'untrusted', label: 'Untrusted' },
+];
+
+const SANDBOX_MODES = [
+  { value: 'danger-full-access', label: 'Workspace + network' },
+  { value: 'workspace-write', label: 'Workspace write' },
+  { value: 'read-only', label: 'Read only' },
+];
+
+const COLLABORATION_MODES = [
+  { value: 'default', label: 'Default' },
+  { value: 'plan', label: 'Plan first' },
+];
 
 export default function Sidebar() {
   const {
@@ -50,6 +100,8 @@ export default function Sidebar() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [envVisible, setEnvVisible] = useState(false);
+  const [codexLaunch, setCodexLaunch] = useState<{ workspacePath: string; options: CodexLaunchOptions } | null>(null);
+  const [launchingCodexChat, setLaunchingCodexChat] = useState(false);
 
   // Init is handled by App.tsx (which never unmounts)
 
@@ -218,10 +270,26 @@ export default function Sidebar() {
     }
   }, [project, agentTypes, addTab]);
 
-  const handleLaunchCodexChat = useCallback(async (wsPath: string) => {
+  const updateCodexLaunchOption = useCallback((key: keyof CodexLaunchOptions, value: string) => {
+    setCodexLaunch((current) => current ? {
+      ...current,
+      options: { ...current.options, [key]: value },
+    } : current);
+  }, []);
+
+  const handleLaunchCodexChat = useCallback(async (wsPath: string, options: CodexLaunchOptions = DEFAULT_CODEX_OPTIONS) => {
     if (!project) return;
+    setLaunchingCodexChat(true);
     try {
-      const session = await LaunchCodexChat(project.root, wsPath);
+      const session = await LaunchCodexChatWithOptions(
+        project.root,
+        wsPath,
+        options.model,
+        options.reasoningEffort,
+        options.approvalPolicy,
+        options.sandboxMode,
+        options.collaborationMode,
+      );
       addTab({
         id: generateId('tab'),
         label: session?.label || 'Codex Chat',
@@ -236,9 +304,13 @@ export default function Sidebar() {
         reasoningEffort: session.reasoningEffort,
         approvalPolicy: session.approvalPolicy,
         sandboxMode: session.sandboxMode,
+        collaborationMode: session.collaborationMode,
       });
+      setCodexLaunch(null);
     } catch (err) {
       console.error('Failed to launch Codex chat:', err);
+    } finally {
+      setLaunchingCodexChat(false);
     }
   }, [project, addTab]);
 
@@ -468,7 +540,7 @@ export default function Sidebar() {
                         <AgentSigil id={agent.name} size={16} /> {agent.label}
                       </span>
                     ))}
-                    <span className="sidebar-action" onClick={() => handleLaunchCodexChat(ws.path)}>
+                    <span className="sidebar-action" onClick={() => setCodexLaunch({ workspacePath: ws.path, options: DEFAULT_CODEX_OPTIONS })}>
                       <AgentSigil id="codex" size={16} /> Codex Chat
                     </span>
                     <span className="sidebar-action" onClick={() => handleLaunchClaudeChat(ws.path)}>
@@ -565,7 +637,82 @@ export default function Sidebar() {
             />
           </div>
         )}
+
+        {codexLaunch && (
+          <div className="codex-launch-overlay" onMouseDown={() => setCodexLaunch(null)}>
+            <div className="codex-launch-sheet" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="codex-launch-header">
+                <div className="codex-launch-title">
+                  <AgentSigil id="codex" size={28} strong />
+                  <div>
+                    <div>Start Codex Chat</div>
+                    <span>{workspaceLabel(workspaces.find((ws) => ws.path === codexLaunch.workspacePath))}</span>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setCodexLaunch(null)}>×</button>
+              </div>
+
+              <div className="codex-launch-grid">
+                <label>
+                  <span>Model</span>
+                  <select value={codexLaunch.options.model} onChange={(e) => updateCodexLaunchOption('model', e.target.value)}>
+                    {CODEX_MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Reasoning</span>
+                  <select value={codexLaunch.options.reasoningEffort} onChange={(e) => updateCodexLaunchOption('reasoningEffort', e.target.value)}>
+                    {REASONING_EFFORTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Approvals</span>
+                  <select value={codexLaunch.options.approvalPolicy} onChange={(e) => updateCodexLaunchOption('approvalPolicy', e.target.value)}>
+                    {APPROVAL_POLICIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Sandbox</span>
+                  <select value={codexLaunch.options.sandboxMode} onChange={(e) => updateCodexLaunchOption('sandboxMode', e.target.value)}>
+                    {SANDBOX_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="codex-launch-wide">
+                  <span>Mode</span>
+                  <select value={codexLaunch.options.collaborationMode} onChange={(e) => updateCodexLaunchOption('collaborationMode', e.target.value)}>
+                    {COLLABORATION_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="codex-launch-summary">
+                <span>{codexLaunch.options.model}</span>
+                <span>{codexLaunch.options.reasoningEffort}</span>
+                <span>{codexLaunch.options.approvalPolicy === 'never' ? 'full access' : codexLaunch.options.approvalPolicy}</span>
+                <span>{codexLaunch.options.sandboxMode === 'danger-full-access' ? 'workspace + network' : codexLaunch.options.sandboxMode}</span>
+                <span>{codexLaunch.options.collaborationMode}</span>
+              </div>
+
+              <div className="codex-launch-actions">
+                <button type="button" onClick={() => setCodexLaunch(null)}>Cancel</button>
+                <button
+                  type="button"
+                  className="codex-launch-primary"
+                  disabled={launchingCodexChat}
+                  onClick={() => handleLaunchCodexChat(codexLaunch.workspacePath, codexLaunch.options)}
+                >
+                  {launchingCodexChat ? 'Starting' : 'Start chat'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function workspaceLabel(ws?: { name?: string; branch?: string; path?: string }): string {
+  if (!ws) return 'Active workspace';
+  return ws.branch || ws.name || ws.path || 'Active workspace';
 }

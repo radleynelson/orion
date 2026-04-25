@@ -33,10 +33,15 @@ actor OrionClient {
         try await post("/api/agent", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "agentType": agentType])
     }
 
-    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil) async throws -> LaunchCodexChatResponse {
+    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: CodexLaunchOptions = CodexLaunchOptions()) async throws -> LaunchCodexChatResponse {
         var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        body["model"] = options.model
+        body["reasoningEffort"] = options.reasoningEffort
+        body["approvalPolicy"] = options.approvalPolicy
+        body["sandboxMode"] = options.sandboxMode
+        body["collaborationMode"] = options.collaborationMode
         return try await post("/api/codex-chat", body: body)
     }
 

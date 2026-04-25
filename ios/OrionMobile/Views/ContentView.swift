@@ -246,6 +246,8 @@ struct WorkspaceSection: View {
     let workspace: Workspace
     @State private var serverStatuses: [ServerStatus] = []
     @State private var loadingServers = false
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
 
     // Non-server sessions only (shells, agents)
     private var sessions: [SessionInfo] {
@@ -324,10 +326,7 @@ struct WorkspaceSection: View {
                     }
 
                     Button {
-                        Task {
-                            try? await state.launchCodexChat(workspacePath: workspace.path)
-                            state.showWorkspaces = false
-                        }
+                        showingCodexOptions = true
                     } label: {
                         Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
                     }
@@ -426,6 +425,78 @@ struct WorkspaceSection: View {
             .buttonStyle(.plain)
         }
         .onAppear { Task { serverStatuses = await state.getServerStatuses(workspace: workspace) } }
+        .sheet(isPresented: $showingCodexOptions) {
+            CodexLaunchOptionsSheet(
+                workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                options: $codexOptions,
+                onCancel: { showingCodexOptions = false },
+                onLaunch: {
+                    let selected = codexOptions
+                    showingCodexOptions = false
+                    Task {
+                        try? await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                        state.showWorkspaces = false
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+private struct CodexLaunchOptionsSheet: View {
+    let workspaceName: String
+    @Binding var options: CodexLaunchOptions
+    let onCancel: () -> Void
+    let onLaunch: () -> Void
+
+    private let models = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+    private let efforts = ["low", "medium", "high", "xhigh"]
+    private let approvals = ["never", "on-request", "on-failure", "untrusted"]
+    private let sandboxes = ["danger-full-access", "workspace-write", "read-only"]
+    private let modes = ["default", "plan"]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Model", selection: $options.model) {
+                        ForEach(models, id: \.self) { Text(modelLabel($0)).tag($0) }
+                    }
+                    Picker("Reasoning", selection: $options.reasoningEffort) {
+                        ForEach(efforts, id: \.self) { Text(reasoningLabel($0)).tag($0) }
+                    }
+                    Picker("Approvals", selection: $options.approvalPolicy) {
+                        ForEach(approvals, id: \.self) { Text(approvalPickerLabel($0)).tag($0) }
+                    }
+                    Picker("Sandbox", selection: $options.sandboxMode) {
+                        ForEach(sandboxes, id: \.self) { Text(sandboxPickerLabel($0)).tag($0) }
+                    }
+                    Picker("Mode", selection: $options.collaborationMode) {
+                        ForEach(modes, id: \.self) { Text($0 == "plan" ? "Plan first" : "Default").tag($0) }
+                    }
+                } header: {
+                    Text(workspaceName)
+                } footer: {
+                    Text("These options are sent when the Codex app-server thread starts.")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Codex Chat")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Start", action: onLaunch)
+                        .fontWeight(.semibold)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+        }
     }
 }
 
@@ -1801,6 +1872,40 @@ private func sandboxLabel(_ value: String?) -> String? {
     guard let value, !value.isEmpty else { return nil }
     if value == "danger-full-access" { return "workspace + network" }
     return value.replacingOccurrences(of: "-", with: " ")
+}
+
+private func modelLabel(_ value: String) -> String {
+    switch value {
+    case "gpt-5.4-mini": return "GPT-5.4 Mini"
+    case "gpt-5.3-codex": return "GPT-5.3 Codex"
+    case "gpt-5.3-codex-spark": return "GPT-5.3 Codex Spark"
+    default: return value.uppercased()
+    }
+}
+
+private func reasoningLabel(_ value: String) -> String {
+    switch value {
+    case "xhigh": return "Extra high"
+    default: return value.capitalized
+    }
+}
+
+private func approvalPickerLabel(_ value: String) -> String {
+    switch value {
+    case "never": return "Full access"
+    case "on-request": return "Ask first"
+    case "on-failure": return "On failure"
+    default: return value.capitalized
+    }
+}
+
+private func sandboxPickerLabel(_ value: String) -> String {
+    switch value {
+    case "danger-full-access": return "Workspace + network"
+    case "workspace-write": return "Workspace write"
+    case "read-only": return "Read only"
+    default: return value
+    }
 }
 
 private func toolLooksLikeCommand(_ toolName: String) -> Bool {

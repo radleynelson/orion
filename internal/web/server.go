@@ -632,10 +632,15 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.codexMgr.List(paths))
 	case http.MethodPost:
 		var req struct {
-			RepoRoot      string `json:"repoRoot"`
-			WorkspacePath string `json:"workspacePath"`
-			ThreadID      string `json:"threadId"`
-			TmuxSession   string `json:"tmuxSession"`
+			RepoRoot          string `json:"repoRoot"`
+			WorkspacePath     string `json:"workspacePath"`
+			ThreadID          string `json:"threadId"`
+			TmuxSession       string `json:"tmuxSession"`
+			Model             string `json:"model"`
+			ReasoningEffort   string `json:"reasoningEffort"`
+			ApprovalPolicy    string `json:"approvalPolicy"`
+			SandboxMode       string `json:"sandboxMode"`
+			CollaborationMode string `json:"collaborationMode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -654,27 +659,33 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		info, err := s.codexMgr.StartWithOptions(codexchat.StartOptions{
-			WorkspacePath: req.WorkspacePath,
-			Label:         "Codex Chat",
-			ThreadID:      threadID,
+			WorkspacePath:     req.WorkspacePath,
+			Label:             "Codex Chat",
+			ThreadID:          threadID,
+			Model:             req.Model,
+			ReasoningEffort:   req.ReasoningEffort,
+			ApprovalPolicy:    req.ApprovalPolicy,
+			SandboxMode:       req.SandboxMode,
+			CollaborationMode: req.CollaborationMode,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		s.app.EmitSessionCreatedInfo(state.SessionInfo{
-			TmuxName:         info.ID,
-			Type:             codexchat.SessionType,
-			Label:            info.Label,
-			WorkspacePath:    info.WorkspacePath,
-			Provider:         codexchat.Provider,
-			ViewMode:         codexchat.ViewModeChat,
-			RuntimeSessionID: info.ID,
-			ThreadID:         info.ThreadID,
-			Model:            info.Model,
-			ReasoningEffort:  info.ReasoningEffort,
-			ApprovalPolicy:   info.ApprovalPolicy,
-			SandboxMode:      info.SandboxMode,
+			TmuxName:          info.ID,
+			Type:              codexchat.SessionType,
+			Label:             info.Label,
+			WorkspacePath:     info.WorkspacePath,
+			Provider:          codexchat.Provider,
+			ViewMode:          codexchat.ViewModeChat,
+			RuntimeSessionID:  info.ID,
+			ThreadID:          info.ThreadID,
+			Model:             info.Model,
+			ReasoningEffort:   info.ReasoningEffort,
+			ApprovalPolicy:    info.ApprovalPolicy,
+			SandboxMode:       info.SandboxMode,
+			CollaborationMode: info.CollaborationMode,
 		})
 		writeJSON(w, info)
 	default:

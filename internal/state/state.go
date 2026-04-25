@@ -12,34 +12,36 @@ import (
 
 // SessionInfo represents a recovered tmux session matched to a workspace.
 type SessionInfo struct {
-	TmuxName         string `json:"tmuxName"`
-	Type             string `json:"type"`
-	Label            string `json:"label"`
-	WorkspacePath    string `json:"workspacePath"`
-	Provider         string `json:"provider,omitempty"`
-	ViewMode         string `json:"viewMode,omitempty"`
-	RuntimeSessionID string `json:"runtimeSessionId,omitempty"`
-	ThreadID         string `json:"threadId,omitempty"`
-	Model            string `json:"model,omitempty"`
-	ReasoningEffort  string `json:"reasoningEffort,omitempty"`
-	ApprovalPolicy   string `json:"approvalPolicy,omitempty"`
-	SandboxMode      string `json:"sandboxMode,omitempty"`
+	TmuxName          string `json:"tmuxName"`
+	Type              string `json:"type"`
+	Label             string `json:"label"`
+	WorkspacePath     string `json:"workspacePath"`
+	Provider          string `json:"provider,omitempty"`
+	ViewMode          string `json:"viewMode,omitempty"`
+	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
+	ThreadID          string `json:"threadId,omitempty"`
+	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
+	SandboxMode       string `json:"sandboxMode,omitempty"`
+	CollaborationMode string `json:"collaborationMode,omitempty"`
 }
 
 // SavedTab represents a tab that can be restored on next launch.
 type SavedTab struct {
-	Label            string `json:"label"`
-	TabType          string `json:"tabType"`
-	TmuxSession      string `json:"tmuxSession"`
-	WorkspacePath    string `json:"workspacePath"`
-	Provider         string `json:"provider,omitempty"`
-	ViewMode         string `json:"viewMode,omitempty"`
-	RuntimeSessionID string `json:"runtimeSessionId,omitempty"`
-	ThreadID         string `json:"threadId,omitempty"`
-	Model            string `json:"model,omitempty"`
-	ReasoningEffort  string `json:"reasoningEffort,omitempty"`
-	ApprovalPolicy   string `json:"approvalPolicy,omitempty"`
-	SandboxMode      string `json:"sandboxMode,omitempty"`
+	Label             string `json:"label"`
+	TabType           string `json:"tabType"`
+	TmuxSession       string `json:"tmuxSession"`
+	WorkspacePath     string `json:"workspacePath"`
+	Provider          string `json:"provider,omitempty"`
+	ViewMode          string `json:"viewMode,omitempty"`
+	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
+	ThreadID          string `json:"threadId,omitempty"`
+	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
+	SandboxMode       string `json:"sandboxMode,omitempty"`
+	CollaborationMode string `json:"collaborationMode,omitempty"`
 }
 
 // --- Global State (shared across instances) ---
