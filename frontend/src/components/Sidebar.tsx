@@ -249,6 +249,12 @@ export default function Sidebar() {
     setCreating(true);
   }, [project?.mainBranch, workspaces]);
 
+  useEffect(() => {
+    const handler = () => openNewWorkspace();
+    window.addEventListener('orion:new-workspace', handler);
+    return () => window.removeEventListener('orion:new-workspace', handler);
+  }, [openNewWorkspace]);
+
   const updateNewWorkspaceDraft = useCallback(<K extends keyof NewWorkspaceDraft>(key: K, value: NewWorkspaceDraft[K]) => {
     setNewWorkspaceDraft((current) => ({ ...current, [key]: value }));
   }, []);

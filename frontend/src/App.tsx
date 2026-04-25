@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, DragEvent } from 'react';
+import { useEffect, useCallback, useMemo, useState, DragEvent } from 'react';
 import './App.css';
 import SplitPane from './components/SplitPane';
 import Sidebar from './components/Sidebar';
@@ -7,13 +7,16 @@ import FileExplorer from './components/FileExplorer';
 import GlobalSearch from './components/GlobalSearch';
 import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
+import CommandPalette, { CommandPaletteItem } from './components/CommandPalette';
 import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
 import AgentSigil from './components/AgentSigil';
 import OrionMark from './components/OrionMark';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+import { main } from '../wailsjs/go/models';
 import {
+  AllocatePorts,
   ConvertChatToTerminal,
   AttachClaudeChat,
   CreateTerminalInDir,
@@ -28,6 +31,7 @@ import {
   SetActiveProject,
   ListWorkspaces,
   NewWindow,
+  OpenProjectDialog,
   GetAgentTypes,
   GetSavedTabs,
   GetTmuxSession,
@@ -35,8 +39,21 @@ import {
   RevealInFinder,
   StopClaudeChat,
   StopCodexChat,
+  LaunchClaudeChat,
+  LaunchCodexChatWithOptions,
   LaunchAgent,
+  StartServers,
+  StopServers,
+  OpenBrowser,
 } from '../wailsjs/go/main/App';
+
+const DEFAULT_CODEX_CHAT_OPTIONS = {
+  model: 'gpt-5.4',
+  reasoningEffort: 'xhigh',
+  approvalPolicy: 'never',
+  sandboxMode: 'danger-full-access',
+  collaborationMode: 'default',
+};
 
 function App() {
   const {
@@ -66,12 +83,14 @@ function App() {
     activeServerTabId,
     serverPaneVisible,
     serverPaneHeight,
+    addServerTab,
     setActiveServerTab,
     removeServerTab,
     setServerPaneVisible,
     setServerPaneHeight,
     sidebarMode,
     setSidebarMode,
+    workspaceActive,
     codeReviewVisible,
     codeReviewWidth,
     toggleCodeReview,
@@ -269,7 +288,9 @@ function App() {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
+  const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
   const [newTabPickerVisible, setNewTabPickerVisible] = useState(false);
+  const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
@@ -279,6 +300,20 @@ function App() {
   useEffect(() => {
     localStorage.setItem('orion.sidebarWidth', String(sidebarWidth));
   }, [sidebarWidth]);
+
+  const openCommandPalette = useCallback(() => {
+    setSearchEverywhereVisible(false);
+    setNewTabPickerVisible(false);
+    setCommandPaletteVisible(true);
+  }, []);
+
+  useEffect(() => {
+    if (!project) {
+      setAgentTypes([]);
+      return;
+    }
+    GetAgentTypes(project.root).then(setAgentTypes).catch(() => setAgentTypes([]));
+  }, [project]);
 
   // Double-shift detection for Search Everywhere (like JetBrains)
   useEffect(() => {
@@ -338,6 +373,59 @@ function App() {
     }
   }, [project, activeWorkspacePath, addTab]);
 
+  const launchCodexChatTab = useCallback(async () => {
+    if (!project || !activeWorkspacePath) return;
+    try {
+      const session = await LaunchCodexChatWithOptions(
+        project.root,
+        activeWorkspacePath,
+        DEFAULT_CODEX_CHAT_OPTIONS.model,
+        DEFAULT_CODEX_CHAT_OPTIONS.reasoningEffort,
+        DEFAULT_CODEX_CHAT_OPTIONS.approvalPolicy,
+        DEFAULT_CODEX_CHAT_OPTIONS.sandboxMode,
+        DEFAULT_CODEX_CHAT_OPTIONS.collaborationMode,
+      );
+      addTab({
+        id: generateId('tab'),
+        label: session?.label || 'Codex Chat',
+        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
+        tabType: 'codex-chat',
+        workspacePath: activeWorkspacePath,
+        provider: 'codex',
+        viewMode: 'chat',
+        runtimeSessionId: session.id,
+        threadId: session.threadId,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        approvalPolicy: session.approvalPolicy,
+        sandboxMode: session.sandboxMode,
+        collaborationMode: session.collaborationMode,
+      });
+    } catch (err) {
+      console.error('Failed to launch Codex chat:', err);
+    }
+  }, [project, activeWorkspacePath, addTab]);
+
+  const launchClaudeChatTab = useCallback(async () => {
+    if (!project || !activeWorkspacePath) return;
+    try {
+      const session = await LaunchClaudeChat(project.root, activeWorkspacePath);
+      addTab({
+        id: generateId('tab'),
+        label: session?.label || 'Claude Chat',
+        rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
+        tabType: 'claude-chat',
+        workspacePath: activeWorkspacePath,
+        provider: 'claude',
+        viewMode: 'chat',
+        runtimeSessionId: session.id,
+        threadId: session.threadId,
+      });
+    } catch (err) {
+      console.error('Failed to launch Claude chat:', err);
+    }
+  }, [project, activeWorkspacePath, addTab]);
+
   const handleNewTabPick = useCallback((choice: NewTabChoice) => {
     if (choice.kind === 'shell') createNewShell();
     else launchAgentTab(choice.name, choice.label);
@@ -365,6 +453,74 @@ function App() {
       workspacePath: activeWorkspacePath,
     });
   }, [activeWorkspacePath, addTab]);
+
+  const openProjectDialog = useCallback(async () => {
+    try {
+      const info = await OpenProjectDialog();
+      if (info) await loadProject(info);
+    } catch (err) {
+      console.error('Failed to open project:', err);
+    }
+  }, [loadProject]);
+
+  const openNewWorkspaceFlow = useCallback(() => {
+    setSidebarMode('workspaces');
+    window.setTimeout(() => window.dispatchEvent(new Event('orion:new-workspace')), 0);
+  }, [setSidebarMode]);
+
+  const openActiveWorkspaceInBrowser = useCallback(async () => {
+    if (!project || !activeWorkspacePath) return;
+    try {
+      await OpenBrowser(project.root, activeWorkspacePath);
+    } catch (err) {
+      console.error('Failed to open browser:', err);
+    }
+  }, [project, activeWorkspacePath]);
+
+  const startServersForActiveWorkspace = useCallback(async () => {
+    if (!project || !activeWorkspacePath) return;
+    const workspace = workspaces.find((ws) => ws.path === activeWorkspacePath);
+    try {
+      const statuses = await StartServers(project.root, activeWorkspacePath, workspace?.isMain || false);
+      const existingServerTabs = useStore.getState().serverTabs;
+      for (const srv of statuses || []) {
+        if (!srv.running || !srv.tmuxSession) continue;
+        const exists = existingServerTabs.some((tab) =>
+          tab.workspacePath === activeWorkspacePath &&
+          tab.label.toLowerCase() === srv.name.toLowerCase(),
+        );
+        if (exists) continue;
+        const termId = generateId('term');
+        await CreateAttachedTerminal(termId, srv.tmuxSession);
+        addServerTab({
+          id: generateId('tab'),
+          label: srv.name.charAt(0).toUpperCase() + srv.name.slice(1),
+          rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
+          tabType: 'server',
+          workspacePath: activeWorkspacePath,
+        });
+      }
+      setServerPaneVisible(true);
+    } catch (err) {
+      console.error('Failed to start servers:', err);
+    }
+  }, [project, activeWorkspacePath, workspaces, addServerTab, setServerPaneVisible]);
+
+  const stopServersForActiveWorkspace = useCallback(async () => {
+    if (!activeWorkspacePath) return;
+    try {
+      await StopServers(activeWorkspacePath);
+      const tabsToClose = useStore.getState().serverTabs.filter((tab) => tab.workspacePath === activeWorkspacePath);
+      for (const tab of tabsToClose) {
+        for (const termId of useStore.getState().getAllTerminalIds(tab)) {
+          try { await CloseTerminal(termId); } catch {}
+        }
+        removeServerTab(tab.id);
+      }
+    } catch (err) {
+      console.error('Failed to stop servers:', err);
+    }
+  }, [activeWorkspacePath, removeServerTab]);
 
   const diagnosticsActive = !!tabs.find(
     (t) => t.tabType === 'diagnostics' && t.id === activeTabId,
@@ -591,6 +747,18 @@ function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (commandPaletteVisible && e.key === 'Escape') {
+        e.preventDefault();
+        setCommandPaletteVisible(false);
+        return;
+      }
+      // Cmd+K / Cmd+Shift+P: command palette
+      if (e.metaKey && ((!e.shiftKey && e.key.toLowerCase() === 'k') || (e.shiftKey && e.key.toLowerCase() === 'p'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCommandPalette();
+        return;
+      }
       // Cmd+T: open New Tab picker (pick shell / claude / codex)
       if (e.metaKey && !e.shiftKey && e.key === 't') {
         e.preventDefault();
@@ -724,18 +892,35 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true } as any);
-  }, [activeTabs, activeTabId, createNewShell, handleClosePane, handleSplit, navigatePane, setActiveTab]);
+  }, [
+    activeTabId,
+    activeTabs,
+    activeWorkspacePath,
+    commandPaletteVisible,
+    detachPane,
+    handleClosePane,
+    handleSplit,
+    navigatePane,
+    openCommandPalette,
+    rotateSplit,
+    serverPaneVisible,
+    setActiveTab,
+    setActiveWorkspace,
+    setServerPaneVisible,
+    setSidebarMode,
+    sidebarMode,
+    swapPane,
+    toggleCodeReview,
+    workspaces,
+    zoomIn,
+    zoomOut,
+    zoomReset,
+  ]);
 
   // Listen for native menu bar events from Go
   useEffect(() => {
     const cancels = [
-      EventsOn('menu:open-project', async () => {
-        try {
-          const { OpenProjectDialog } = await import('../wailsjs/go/main/App');
-          const info = await OpenProjectDialog();
-          if (info) await loadProject(info);
-        } catch {}
-      }),
+      EventsOn('menu:open-project', () => openProjectDialog()),
       EventsOn('menu:new-terminal', () => setNewTabPickerVisible(true)),
       EventsOn('menu:close-tab', () => handleClosePane()),
       EventsOn('menu:toggle-sidebar', () => setSidebarMode(sidebarMode ? null : 'workspaces')),
@@ -815,7 +1000,7 @@ function App() {
       }),
     ];
     return () => cancels.forEach((c) => c());
-  }, [sidebarMode, createNewShell, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab]);
+  }, [sidebarMode, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab, openProjectDialog, toggleCodeReview]);
 
   const activeWorkspace = workspaces.find((w) => w.path === activeWorkspacePath);
 
@@ -825,6 +1010,269 @@ function App() {
     return getAllTerminalIds(tab).length;
   };
   const paneCount = countPanes(activeTab);
+
+  const commandPaletteCommands = useMemo<CommandPaletteItem[]>(() => {
+    const activeWorkspaceName = activeWorkspace
+      ? (activeWorkspace.isMain ? 'main' : activeWorkspace.branch || activeWorkspace.name)
+      : 'No workspace selected';
+    const hasActiveWorkspace = Boolean(project && activeWorkspacePath);
+
+    const commands: CommandPaletteItem[] = [
+      {
+        id: 'new-tab',
+        title: 'New Tab',
+        subtitle: 'Pick Shell, Claude, Codex, or another configured agent',
+        group: 'Create',
+        icon: 'shell',
+        shortcut: '⌘T',
+        keywords: ['terminal', 'agent', 'picker'],
+        disabled: !hasActiveWorkspace,
+        run: () => setNewTabPickerVisible(true),
+      },
+      {
+        id: 'new-shell',
+        title: 'New Shell',
+        subtitle: activeWorkspaceName,
+        group: 'Create',
+        icon: 'shell',
+        shortcut: '⌘T',
+        keywords: ['terminal', 'zsh'],
+        disabled: !hasActiveWorkspace,
+        run: createNewShell,
+      },
+      {
+        id: 'new-codex-chat',
+        title: 'Start Codex Chat',
+        subtitle: 'Default rich chat with model/reasoning metadata',
+        group: 'Agents',
+        icon: 'codex',
+        keywords: ['chat', 'codex', 'plan', 'assistant'],
+        disabled: !hasActiveWorkspace,
+        run: launchCodexChatTab,
+      },
+      {
+        id: 'new-claude-chat',
+        title: 'Start Claude Chat',
+        subtitle: 'Attach Claude Code to the active workspace',
+        group: 'Agents',
+        icon: 'claude',
+        keywords: ['chat', 'claude', 'plan', 'assistant'],
+        disabled: !hasActiveWorkspace,
+        run: launchClaudeChatTab,
+      },
+      ...agentTypes.map((agent) => ({
+        id: `agent:${agent.name}`,
+        title: `Start ${agent.label}`,
+        subtitle: activeWorkspaceName,
+        group: 'Agents',
+        icon: agent.name,
+        keywords: ['terminal', 'agent', agent.name, agent.label],
+        disabled: !hasActiveWorkspace,
+        run: () => launchAgentTab(agent.name, agent.label),
+      })),
+      {
+        id: 'new-workspace',
+        title: 'New Workspace',
+        subtitle: 'Create a worktree and optionally start an agent',
+        group: 'Project',
+        icon: 'editor',
+        shortcut: '⌘N',
+        keywords: ['worktree', 'branch'],
+        disabled: !project,
+        run: openNewWorkspaceFlow,
+      },
+      {
+        id: 'open-project',
+        title: 'Open Project',
+        subtitle: project?.root || 'Choose a repository',
+        group: 'Project',
+        icon: 'editor',
+        keywords: ['repo', 'switch'],
+        run: openProjectDialog,
+      },
+      {
+        id: 'new-window',
+        title: 'New Orion Window',
+        subtitle: 'Open a separate desktop window',
+        group: 'Project',
+        icon: 'editor',
+        shortcut: '⌘⇧N',
+        keywords: ['window'],
+        run: () => NewWindow(),
+      },
+      {
+        id: 'start-servers',
+        title: 'Start Servers',
+        subtitle: activeWorkspaceName,
+        group: 'Workspace',
+        icon: 'server',
+        keywords: ['run', 'ports', 'dev server'],
+        disabled: !hasActiveWorkspace,
+        run: startServersForActiveWorkspace,
+      },
+      {
+        id: 'stop-servers',
+        title: 'Stop Servers',
+        subtitle: activeWorkspaceName,
+        group: 'Workspace',
+        icon: 'server',
+        keywords: ['kill', 'ports', 'dev server'],
+        disabled: !hasActiveWorkspace,
+        run: stopServersForActiveWorkspace,
+      },
+      {
+        id: 'open-browser',
+        title: 'Open Workspace Browser',
+        subtitle: activeWorkspaceName,
+        group: 'Workspace',
+        icon: 'server',
+        shortcut: '⌘⇧B',
+        keywords: ['localhost', 'preview'],
+        disabled: !hasActiveWorkspace,
+        run: openActiveWorkspaceInBrowser,
+      },
+      {
+        id: 'reveal-workspace',
+        title: 'Reveal Workspace in Finder',
+        subtitle: activeWorkspacePath || '',
+        group: 'Workspace',
+        icon: 'editor',
+        keywords: ['finder', 'path'],
+        disabled: !activeWorkspacePath,
+        run: () => { if (activeWorkspacePath) RevealInFinder(activeWorkspacePath); },
+      },
+      {
+        id: 'show-workspaces',
+        title: 'Show Workspaces',
+        subtitle: 'Open the left workspace dashboard',
+        group: 'View',
+        icon: 'editor',
+        shortcut: '⌘B',
+        keywords: ['sidebar'],
+        run: () => setSidebarMode('workspaces'),
+      },
+      {
+        id: 'show-files',
+        title: 'Show File Explorer',
+        subtitle: activeWorkspaceName,
+        group: 'View',
+        icon: 'editor',
+        shortcut: '⌘⇧E',
+        keywords: ['files', 'sidebar'],
+        disabled: !hasActiveWorkspace,
+        run: () => setSidebarMode('files'),
+      },
+      {
+        id: 'search-files',
+        title: 'Search Files by Name',
+        subtitle: activeWorkspaceName,
+        group: 'Search',
+        icon: 'editor',
+        keywords: ['fuzzy', 'finder'],
+        disabled: !hasActiveWorkspace,
+        run: () => setSearchEverywhereVisible(true),
+      },
+      {
+        id: 'search-contents',
+        title: 'Search Workspace Contents',
+        subtitle: activeWorkspaceName,
+        group: 'Search',
+        icon: 'editor',
+        shortcut: '⌘⇧F',
+        keywords: ['grep', 'ripgrep'],
+        disabled: !hasActiveWorkspace,
+        run: () => setSidebarMode('search'),
+      },
+      {
+        id: 'toggle-review',
+        title: codeReviewVisible ? 'Hide Code Review' : 'Show Code Review',
+        subtitle: 'Diff viewer and review panel',
+        group: 'View',
+        icon: 'reviewer',
+        shortcut: '⌘⇧G',
+        keywords: ['diff', 'changes', 'git'],
+        run: toggleCodeReview,
+      },
+      {
+        id: 'toggle-server-pane',
+        title: serverPaneVisible ? 'Hide Server Pane' : 'Show Server Pane',
+        subtitle: `${activeServerTabs.length} server tab${activeServerTabs.length === 1 ? '' : 's'}`,
+        group: 'View',
+        icon: 'server',
+        shortcut: '⌘J',
+        keywords: ['bottom panel'],
+        disabled: activeServerTabs.length === 0,
+        run: () => setServerPaneVisible(!serverPaneVisible),
+      },
+      {
+        id: 'open-diagnostics',
+        title: 'Open Diagnostics',
+        subtitle: 'Memory and runtime health',
+        group: 'View',
+        icon: 'diagnostics',
+        keywords: ['health', 'debug'],
+        run: openDiagnostics,
+      },
+    ];
+
+    for (const ws of sortWorkspaces(workspaces, workspaceActive)) {
+      commands.push({
+        id: `workspace:${ws.path}`,
+        title: `Switch to ${ws.isMain ? 'main' : ws.branch || ws.name}`,
+        subtitle: ws.path,
+        group: 'Workspaces',
+        icon: 'editor',
+        keywords: ['workspace', 'worktree', ws.branch || '', ws.name],
+        run: () => {
+          setActiveWorkspace(ws.path);
+          if (project) AllocatePorts(project.root, ws.path, ws.isMain).catch(() => {});
+        },
+      });
+    }
+
+    for (const tab of tabs) {
+      commands.push({
+        id: `tab:${tab.id}`,
+        title: `Switch to ${tab.label}`,
+        subtitle: workspaces.find((ws) => ws.path === tab.workspacePath)?.branch || tab.workspacePath,
+        group: 'Tabs',
+        icon: tab.tabType,
+        keywords: ['tab', tab.tabType, tab.provider || '', tab.threadId || ''],
+        run: () => {
+          if (tab.workspacePath !== activeWorkspacePath) setActiveWorkspace(tab.workspacePath);
+          setActiveTab(tab.id);
+        },
+      });
+    }
+
+    return commands;
+  }, [
+    activeServerTabs.length,
+    activeWorkspace,
+    activeWorkspacePath,
+    agentTypes,
+    codeReviewVisible,
+    createNewShell,
+    launchAgentTab,
+    launchClaudeChatTab,
+    launchCodexChatTab,
+    openActiveWorkspaceInBrowser,
+    openDiagnostics,
+    openNewWorkspaceFlow,
+    openProjectDialog,
+    project,
+    serverPaneVisible,
+    setActiveTab,
+    setActiveWorkspace,
+    setServerPaneVisible,
+    setSidebarMode,
+    startServersForActiveWorkspace,
+    stopServersForActiveWorkspace,
+    tabs,
+    toggleCodeReview,
+    workspaceActive,
+    workspaces,
+  ]);
 
   return (
     <div className="app">
@@ -1134,6 +1582,13 @@ function App() {
       <SearchEverywhere
         visible={searchEverywhereVisible}
         onClose={() => setSearchEverywhereVisible(false)}
+      />
+
+      {/* Command palette (⌘K / ⌘⇧P) */}
+      <CommandPalette
+        visible={commandPaletteVisible}
+        commands={commandPaletteCommands}
+        onClose={() => setCommandPaletteVisible(false)}
       />
 
       {/* New tab picker (⌘T) */}
