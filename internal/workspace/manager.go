@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -253,6 +255,11 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	if sessionType == "" {
 		sessionType = sessionTypeForCommand(agentCmd)
 	}
+	if sessionType == "claude" && !strings.Contains(agentCmd, "--resume") && !strings.Contains(agentCmd, "--session-id") {
+		if sessionID := randomUUID(); sessionID != "" {
+			agentCmd = strings.TrimSpace(agentCmd + " --session-id " + shellQuote(sessionID))
+		}
+	}
 
 	// Install notification hooks for Claude so Orion sees Stop/Notification events.
 	if agentType == "claude" {
@@ -446,6 +453,27 @@ func labelForType(sessionType string) string {
 	default:
 		return "Shell"
 	}
+}
+
+func randomUUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	hexValue := hex.EncodeToString(b[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hexValue[:8], hexValue[8:12], hexValue[12:16], hexValue[16:20], hexValue[20:32])
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n'\"\\$`!*?[]{}()<>|&;") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func sendKeys(name, keys string) error {

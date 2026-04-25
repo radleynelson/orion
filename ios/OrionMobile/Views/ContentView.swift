@@ -373,13 +373,15 @@ private struct MobileHomeView: View {
             }
             Spacer(minLength: 8)
             Button {
-                if changedFiles.isEmpty {
+                if let session {
+                    Task { try? await state.activateSession(session) }
+                } else if changedFiles.isEmpty {
                     showQuickAsk = true
                 } else {
                     state.showDiffReview = true
                 }
             } label: {
-                Text(changedFiles.isEmpty ? "Ask" : "Review")
+                Text(session == nil && changedFiles.isEmpty ? "Ask" : "Review")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color(hex: 0x18233A))
                     .padding(.horizontal, 17)
@@ -2259,6 +2261,8 @@ private struct CodexChatRow: Identifiable {
     var resultText: String?
     var resultDetails: String?
     var toolStatus: String?
+    var permissionState: String? = nil
+    var answerText: String? = nil
 }
 
 private struct ChatSessionMetadata: Decodable {
@@ -2268,6 +2272,7 @@ private struct ChatSessionMetadata: Decodable {
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let permissionMode: String?
     let collaborationMode: String?
     let threadId: String?
 }
@@ -2296,6 +2301,7 @@ struct CodexChatView: View {
     let connection: CodexChatConnection
     @State private var input = ""
     @State private var answers: [String: String] = [:]
+    @State private var submittedAnswers: [String: String] = [:]
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pendingImages: [PendingChatImage] = []
     @State private var isLoadingPhotos = false
@@ -2471,7 +2477,7 @@ struct CodexChatView: View {
             ("reasoning", metadata.reasoningEffort),
             ("approvals", approvalLabel(metadata.approvalPolicy)),
             ("sandbox", sandboxLabel(metadata.sandboxMode)),
-            ("mode", metadata.collaborationMode)
+            ("mode", metadata.permissionMode ?? metadata.collaborationMode)
         ]
         let visible = items.compactMap { item -> (String, String)? in
             let (label, value) = item
@@ -2668,7 +2674,7 @@ struct CodexChatView: View {
     }
 
     private func loadingRow(_ row: CodexChatRow) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        return HStack(alignment: .bottom, spacing: 8) {
             AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text(assistantName)
@@ -2814,68 +2820,115 @@ struct CodexChatView: View {
     }
 
     private func permissionRow(_ row: CodexChatRow) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        let state = row.permissionState ?? "waiting"
+        let resolved = state == "submitted" || state == "answered"
+        let accent = resolved ? OrionTheme.accentGreen : OrionTheme.accentYellow
+        let questionText = row.text.isEmpty ? (row.details ?? "") : row.text
+        let answerDisplay: String = {
+            if let id = row.toolUseId, let optimistic = submittedAnswers[id], !optimistic.isEmpty {
+                return optimistic
+            }
+            if let stored = row.answerText, !stored.isEmpty { return stored }
+            return state == "answered" ? "Answer delivered." : "Waiting for the session to continue."
+        }()
+        return HStack(alignment: .bottom, spacing: 8) {
             AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
-                Text("\(assistantName) needs input")
+                Text(resolved ? "\(assistantName) answered" : "\(assistantName) needs input")
                     .font(.system(size: 11))
                     .foregroundStyle(OrionTheme.textDim)
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
-                        Text("?")
+                        Text(resolved ? "✓" : "?")
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
-                            .foregroundStyle(OrionTheme.accentYellow)
+                            .foregroundStyle(accent)
                             .frame(width: 28, height: 28)
-                            .background(OrionTheme.accentYellow.opacity(0.13))
-                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentYellow.opacity(0.34), lineWidth: 0.5))
+                            .background(accent.opacity(0.13))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(accent.opacity(0.34), lineWidth: 0.5))
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.label.isEmpty ? "Question" : row.label)
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(OrionTheme.textPrimary)
-                            Text(row.text.isEmpty ? "The session is waiting for your answer." : row.text)
-                                .font(.system(size: 11))
-                                .foregroundStyle(OrionTheme.textDim)
-                                .lineLimit(2)
-                        }
-                    }
-                    Text(row.details ?? row.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(OrionTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let toolUseId = row.toolUseId {
-                        HStack(alignment: .bottom, spacing: 8) {
-                            TextField("Answer \(assistantName)...", text: Binding(
-                                get: { answers[toolUseId] ?? "" },
-                                set: { answers[toolUseId] = $0 }
-                            ), axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 14))
-                            .foregroundStyle(OrionTheme.textPrimary)
-                            .padding(8)
-                            .background(OrionTheme.bgPrimary)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
-
-                            Button("Send") {
-                                let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !text.isEmpty else { return }
-                                answers[toolUseId] = ""
-                                connection.answer(toolUseId: toolUseId, text: text)
+                            if !resolved {
+                                Text(questionText.isEmpty ? "The session is waiting for your answer." : questionText)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(OrionTheme.textDim)
+                                    .lineLimit(2)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(OrionTheme.accentBlue)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    if resolved {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !questionText.isEmpty {
+                                qaBlock(label: "Question", text: questionText, color: OrionTheme.textSecondary, accent: nil)
+                            }
+                            qaBlock(label: "Your answer", text: answerDisplay, color: OrionTheme.textPrimary, accent: accent)
+                        }
+                    } else {
+                        Text(row.details ?? row.text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let toolUseId = row.toolUseId {
+                            HStack(alignment: .bottom, spacing: 8) {
+                                TextField("Answer \(assistantName)...", text: Binding(
+                                    get: { answers[toolUseId] ?? "" },
+                                    set: { answers[toolUseId] = $0 }
+                                ), axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 14))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                                .padding(8)
+                                .background(OrionTheme.bgPrimary)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
+
+                                Button("Send") {
+                                    let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !text.isEmpty else { return }
+                                    submittedAnswers[toolUseId] = text
+                                    answers[toolUseId] = ""
+                                    connection.answer(toolUseId: toolUseId, text: text)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(OrionTheme.accentBlue)
+                            }
                         }
                     }
                 }
                 .padding(12)
                 .frame(maxWidth: 340, alignment: .leading)
-                .background(OrionTheme.accentYellow.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentYellow.opacity(0.42), lineWidth: 0.7))
+                .background(accent.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(accent.opacity(0.42), lineWidth: 0.7))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             Spacer(minLength: 22)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func qaBlock(label: String, text: String, color: Color, accent: Color?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .tracking(0.4)
+            HStack(alignment: .top, spacing: 8) {
+                if let accent {
+                    Rectangle()
+                        .fill(accent.opacity(0.55))
+                        .frame(width: 2)
+                        .frame(maxHeight: .infinity)
+                }
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 
     private var composer: some View {
@@ -3213,6 +3266,7 @@ struct CodexChatView: View {
                     Button("Send") {
                         let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !text.isEmpty else { return }
+                        submittedAnswers[toolUseId] = text
                         answers[toolUseId] = ""
                         connection.answer(toolUseId: toolUseId, text: text)
                     }
@@ -3435,6 +3489,14 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
     var rows: [CodexChatRow] = []
     for message in messages {
         if message.type == "status" { continue }
+        if message.type == "permission_submitted" {
+            updatePermissionRow(&rows, update: message, state: "submitted")
+            continue
+        }
+        if message.type == "permission_resolved" {
+            updatePermissionRow(&rows, update: message, state: "answered")
+            continue
+        }
         if shouldHideChatMessage(message) { continue }
         if message.type == "stream_delta" {
             if let lastIndex = rows.indices.last, rows[lastIndex].type == "assistant", rows[lastIndex].id.hasPrefix("assistant-stream") {
@@ -3476,6 +3538,23 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             ))
             continue
         }
+        if message.type == "permission_request" {
+            rows.append(CodexChatRow(
+                id: message.id,
+                type: message.type,
+                label: chatLabel(message, assistantName: assistantName),
+                text: message.text ?? "",
+                details: message.details,
+                toolUseId: message.toolUseId,
+                planPath: message.planPath,
+                attachments: message.attachments ?? [],
+                resultText: nil,
+                resultDetails: nil,
+                toolStatus: nil,
+                permissionState: "waiting"
+            ))
+            continue
+        }
         rows.append(CodexChatRow(
             id: message.id,
             type: message.type,
@@ -3491,6 +3570,23 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
         ))
     }
     return rows
+}
+
+private func updatePermissionRow(_ rows: inout [CodexChatRow], update: CodexChatMessage, state: String) {
+    for index in rows.indices.reversed() {
+        guard rows[index].type == "permission_request" else { continue }
+        if let toolUseId = update.toolUseId, rows[index].toolUseId != toolUseId { continue }
+        rows[index].permissionState = state
+        if let text = update.text, !text.isEmpty, !isGenericPermissionAnswer(text) {
+            rows[index].answerText = text
+        }
+        return
+    }
+}
+
+private func isGenericPermissionAnswer(_ text: String) -> Bool {
+    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "answered" || normalized == "answer submitted"
 }
 
 private func findOpenToolRow(_ rows: [CodexChatRow], result: CodexChatMessage) -> Int? {
@@ -3536,6 +3632,7 @@ private func attachmentDisplayName(_ attachment: ChatAttachmentPayload) -> Strin
 
 private func shouldHideChatMessage(_ message: CodexChatMessage) -> Bool {
     if message.type == "permission_resolved" { return true }
+    if message.type == "permission_submitted" { return true }
     if message.type == "plan_resolved" { return true }
     if message.type == "result" {
         let value = (message.subtype ?? message.text ?? "").lowercased()
@@ -3602,10 +3699,24 @@ private func cleanPlanPreviewLine(_ line: String) -> String {
 }
 
 private func chatSessionMetadata(_ messages: [CodexChatMessage]) -> ChatSessionMetadata? {
+    let planApproved = messages.contains { $0.type == "plan_resolved" }
     for message in messages.reversed() where message.type == "system" {
         guard let details = message.details, let data = details.data(using: .utf8) else { continue }
         if let metadata = try? JSONDecoder().decode(ChatSessionMetadata.self, from: data) {
-            if metadata.model != nil || metadata.reasoningEffort != nil || metadata.approvalPolicy != nil || metadata.sandboxMode != nil || metadata.threadId != nil {
+            if metadata.model != nil || metadata.reasoningEffort != nil || metadata.approvalPolicy != nil || metadata.sandboxMode != nil || metadata.permissionMode != nil || metadata.collaborationMode != nil || metadata.threadId != nil {
+                if planApproved && (metadata.permissionMode == "plan" || metadata.collaborationMode == "plan") {
+                    return ChatSessionMetadata(
+                        provider: metadata.provider,
+                        viewMode: metadata.viewMode,
+                        model: metadata.model,
+                        reasoningEffort: metadata.reasoningEffort,
+                        approvalPolicy: metadata.approvalPolicy,
+                        sandboxMode: metadata.sandboxMode,
+                        permissionMode: "approved",
+                        collaborationMode: metadata.collaborationMode,
+                        threadId: metadata.threadId
+                    )
+                }
                 return metadata
             }
         }

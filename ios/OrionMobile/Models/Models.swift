@@ -42,6 +42,7 @@ struct SessionInfo: Codable, Identifiable {
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let permissionMode: String?
     let collaborationMode: String?
 
     var isChat: Bool { type == "codex-chat" || type == "claude-chat" }
@@ -62,6 +63,7 @@ struct SessionInfo: Codable, Identifiable {
         reasoningEffort: String? = nil,
         approvalPolicy: String? = nil,
         sandboxMode: String? = nil,
+        permissionMode: String? = nil,
         collaborationMode: String? = nil
     ) {
         self.tmuxName = tmuxName
@@ -76,6 +78,7 @@ struct SessionInfo: Codable, Identifiable {
         self.reasoningEffort = reasoningEffort
         self.approvalPolicy = approvalPolicy
         self.sandboxMode = sandboxMode
+        self.permissionMode = permissionMode
         self.collaborationMode = collaborationMode
     }
 }
@@ -164,6 +167,7 @@ struct LaunchCodexChatResponse: Codable {
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let permissionMode: String?
     let collaborationMode: String?
 }
 

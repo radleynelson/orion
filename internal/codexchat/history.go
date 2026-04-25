@@ -66,6 +66,94 @@ func LoadHistory(threadID string, workspacePath string) []Message {
 	return loadHistoryFromFile(path, threadID, workspacePath)
 }
 
+// LoadCachedMessages reads Orion's normalized chat event cache. Codex's own
+// history is text-centric, so this preserves rich cards across Orion restarts.
+func LoadCachedMessages(threadID string, workspacePath string) []Message {
+	path, ok := cachePath(threadID)
+	if !ok {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var out []Message
+	seen := map[string]bool{}
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 16*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var msg Message
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+		if msg.ID == "" || seen[msg.ID] || msg.Type == "status" {
+			continue
+		}
+		seen[msg.ID] = true
+		msg.SessionID = ""
+		if msg.ThreadID == "" {
+			msg.ThreadID = threadID
+		}
+		out = append(out, msg)
+	}
+	if len(out) > 1000 {
+		out = out[len(out)-1000:]
+	}
+	return out
+}
+
+func AppendCachedMessage(msg Message) {
+	if !shouldCacheMessage(msg) {
+		return
+	}
+	path, ok := cachePath(msg.ThreadID)
+	if !ok {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	msg.SessionID = ""
+	if data, err := json.Marshal(msg); err == nil {
+		_, _ = f.Write(append(data, '\n'))
+	}
+}
+
+func shouldCacheMessage(msg Message) bool {
+	if strings.TrimSpace(msg.ThreadID) == "" || strings.TrimSpace(msg.ID) == "" {
+		return false
+	}
+	switch msg.Type {
+	case "system", "user", "assistant", "tool", "tool_result", "permission_request", "permission_submitted", "permission_resolved", "plan", "plan_resolved", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func cachePath(threadID string) (string, bool) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return "", false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(home, ".orion", "chat-cache", "codex", shortHash(threadID)+".jsonl"), true
+}
+
 func FindSessionFile(threadID string) string {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {

@@ -19,11 +19,12 @@ import {
   AllocatePorts,
   ConvertChatToTerminal,
   AttachClaudeChat,
+  ResumeClaudeChat,
   CreateTerminalInDir,
   CreateAttachedTerminal,
   CloseTerminal,
-  DetachTerminal,
-  ResumeCodexChat,
+  ResumeCodexChatWithOptions,
+  ConvertTerminalToClaudeChat,
   ConvertTerminalToCodexChat,
   SaveTabs,
   GetLastProject,
@@ -146,7 +147,9 @@ function App() {
       for (const saved of savedTabs) {
         try {
           if (saved.tabType === 'claude-chat') {
-            const session = await AttachClaudeChat(saved.tmuxSession, saved.workspacePath);
+            const session = saved.threadId
+              ? await ResumeClaudeChat(info.root, saved.workspacePath, saved.threadId)
+              : await AttachClaudeChat(saved.tmuxSession, saved.workspacePath);
             addTab({
               id: generateId('tab'),
               label: saved.label,
@@ -157,12 +160,26 @@ function App() {
               viewMode: 'chat',
               runtimeSessionId: session.id,
               threadId: session.threadId || saved.threadId,
+              model: session.model || saved.model,
+              reasoningEffort: session.reasoningEffort || saved.reasoningEffort,
+              approvalPolicy: session.approvalPolicy || saved.approvalPolicy,
+              sandboxMode: session.sandboxMode || saved.sandboxMode,
+              permissionMode: session.permissionMode || saved.permissionMode,
             });
-            restoredSessions.add(saved.tmuxSession);
+            restoredSessions.add(saved.threadId || saved.tmuxSession);
             continue;
           }
           if (saved.tabType === 'codex-chat' && saved.threadId) {
-            const session = await ResumeCodexChat(info.root, saved.workspacePath, saved.threadId);
+            const session = await ResumeCodexChatWithOptions(
+              info.root,
+              saved.workspacePath,
+              saved.threadId,
+              saved.model || '',
+              saved.reasoningEffort || '',
+              saved.approvalPolicy || '',
+              saved.sandboxMode || '',
+              saved.collaborationMode || '',
+            );
             addTab({
               id: generateId('tab'),
               label: saved.label || 'Codex Chat',
@@ -198,6 +215,7 @@ function App() {
             reasoningEffort: saved.reasoningEffort,
             approvalPolicy: saved.approvalPolicy,
             sandboxMode: saved.sandboxMode,
+            permissionMode: saved.permissionMode,
             collaborationMode: saved.collaborationMode,
           });
           restoredSessions.add(saved.tmuxSession);
@@ -227,6 +245,7 @@ function App() {
               reasoningEffort: sess.reasoningEffort,
               approvalPolicy: sess.approvalPolicy,
               sandboxMode: sess.sandboxMode,
+              permissionMode: sess.permissionMode,
               collaborationMode: sess.collaborationMode,
             };
             if (sess.type === 'server') {
@@ -420,6 +439,11 @@ function App() {
         viewMode: 'chat',
         runtimeSessionId: session.id,
         threadId: session.threadId,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        approvalPolicy: session.approvalPolicy,
+        sandboxMode: session.sandboxMode,
+        permissionMode: session.permissionMode,
       });
     } catch (err) {
       console.error('Failed to launch Claude chat:', err);
@@ -602,6 +626,7 @@ function App() {
           reasoningEffort: tab.reasoningEffort,
           approvalPolicy: tab.approvalPolicy,
           sandboxMode: tab.sandboxMode,
+          permissionMode: tab.permissionMode,
           collaborationMode: tab.collaborationMode,
         });
         removeTab(tab.id);
@@ -619,8 +644,10 @@ function App() {
           if (!termId) return;
           const tmuxSession = await GetTmuxSession(termId);
           if (!tmuxSession) return;
-          const session = await AttachClaudeChat(tmuxSession, tab.workspacePath);
-          await DetachTerminal(termId);
+          const session = await ConvertTerminalToClaudeChat(project.root, tab.workspacePath, tmuxSession);
+          for (const termId of getAllTerminalIds(tab)) {
+            try { await CloseTerminal(termId); } catch {}
+          }
           addTab({
             id: generateId('tab'),
             label: session?.label ? `${session.label} Chat` : 'Claude Chat',
@@ -631,6 +658,11 @@ function App() {
             viewMode: 'chat',
             runtimeSessionId: session.id,
             threadId: session.threadId || tab.threadId,
+            model: session.model || tab.model,
+            reasoningEffort: session.reasoningEffort || tab.reasoningEffort,
+            approvalPolicy: session.approvalPolicy || tab.approvalPolicy,
+            sandboxMode: session.sandboxMode || tab.sandboxMode,
+            permissionMode: session.permissionMode || tab.permissionMode,
           });
           removeTab(tab.id);
           return;
@@ -689,6 +721,7 @@ function App() {
               reasoningEffort: tab.reasoningEffort || '',
               approvalPolicy: tab.approvalPolicy || '',
               sandboxMode: tab.sandboxMode || '',
+              permissionMode: tab.permissionMode || '',
               collaborationMode: tab.collaborationMode || '',
             });
           }
@@ -710,6 +743,7 @@ function App() {
               reasoningEffort: tab.reasoningEffort || '',
               approvalPolicy: tab.approvalPolicy || '',
               sandboxMode: tab.sandboxMode || '',
+              permissionMode: tab.permissionMode || '',
               collaborationMode: tab.collaborationMode || '',
             });
           }
@@ -733,6 +767,7 @@ function App() {
               reasoningEffort: tab.reasoningEffort || '',
               approvalPolicy: tab.approvalPolicy || '',
               sandboxMode: tab.sandboxMode || '',
+              permissionMode: tab.permissionMode || '',
               collaborationMode: tab.collaborationMode || '',
             });
           }
@@ -953,6 +988,7 @@ function App() {
             reasoningEffort: data.reasoningEffort,
             approvalPolicy: data.approvalPolicy,
             sandboxMode: data.sandboxMode,
+            permissionMode: data.permissionMode,
             collaborationMode: data.collaborationMode,
           });
           return;
@@ -1001,6 +1037,41 @@ function App() {
     ];
     return () => cancels.forEach((c) => c());
   }, [sidebarMode, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab, openProjectDialog, toggleCodeReview]);
+
+  useEffect(() => {
+    const syncChatMetadata = (kind: 'claude' | 'codex', msg: any) => {
+      const sessionId = msg?.sessionId;
+      if (!sessionId) return;
+      const details = parseChatMetadata(msg);
+      const nextThreadId = details.threadId || msg.threadId;
+      if (!nextThreadId && !details.model && !details.reasoningEffort && !details.approvalPolicy && !details.sandboxMode && !details.permissionMode && !details.collaborationMode) {
+        return;
+      }
+      useStore.setState((state) => ({
+        tabs: state.tabs.map((tab) => {
+          if (tab.tabType !== `${kind}-chat`) return tab;
+          if (!chatPaneHasSession(tab.rootPane, sessionId)) return tab;
+          return {
+            ...tab,
+            threadId: nextThreadId || tab.threadId,
+            model: details.model || tab.model,
+            reasoningEffort: details.reasoningEffort || tab.reasoningEffort,
+            approvalPolicy: details.approvalPolicy || tab.approvalPolicy,
+            sandboxMode: details.sandboxMode || tab.sandboxMode,
+            permissionMode: details.permissionMode || tab.permissionMode,
+            collaborationMode: details.collaborationMode || tab.collaborationMode,
+            rootPane: updateChatPaneThreadId(tab.rootPane, sessionId, nextThreadId || tab.threadId),
+          };
+        }),
+      }));
+    };
+
+    const cancels = [
+      EventsOn('claude-chat:message', (msg: any) => syncChatMetadata('claude', msg)),
+      EventsOn('codex-chat:message', (msg: any) => syncChatMetadata('codex', msg)),
+    ];
+    return () => cancels.forEach((cancel) => cancel());
+  }, []);
 
   const activeWorkspace = workspaces.find((w) => w.path === activeWorkspacePath);
 
@@ -1652,6 +1723,46 @@ function App() {
       </div>
     </div>
   );
+}
+
+function parseChatMetadata(msg: any): { threadId?: string; model?: string; reasoningEffort?: string; approvalPolicy?: string; sandboxMode?: string; permissionMode?: string; collaborationMode?: string } {
+  if (!msg || msg.type !== 'system' || !msg.details) {
+    return {};
+  }
+  try {
+    return JSON.parse(msg.details);
+  } catch {
+    return {};
+  }
+}
+
+function chatPaneHasSession(pane: Pane, sessionId: string): boolean {
+  if (pane.type === 'chat') {
+    return pane.chatSessionId === sessionId;
+  }
+  if (!('children' in pane)) {
+    return false;
+  }
+  return pane.children.some((child) => chatPaneHasSession(child, sessionId));
+}
+
+function updateChatPaneThreadId(pane: Pane, sessionId: string, threadId?: string): Pane {
+  if (!threadId) {
+    return pane;
+  }
+  if (pane.type === 'chat') {
+    if (pane.chatSessionId !== sessionId) {
+      return pane;
+    }
+    return { ...pane, chatThreadId: threadId };
+  }
+  if (!('children' in pane)) {
+    return pane;
+  }
+  return {
+    ...pane,
+    children: pane.children.map((child) => updateChatPaneThreadId(child, sessionId, threadId)),
+  };
 }
 
 export default App;

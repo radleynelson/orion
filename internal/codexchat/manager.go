@@ -181,7 +181,10 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		collaborationMode: collaborationMode,
 	}
 	if session.threadID != "" {
-		session.messages = LoadHistory(session.threadID, workspacePath)
+		session.messages = LoadCachedMessages(session.threadID, workspacePath)
+		if len(session.messages) == 0 {
+			session.messages = LoadHistory(session.threadID, workspacePath)
+		}
 		for i := range session.messages {
 			session.messages[i].SessionID = session.id
 			if session.messages[i].ThreadID == "" {
@@ -435,7 +438,12 @@ func (s *Session) Answer(toolUseID string, result string) error {
 	pending, ok := s.pendingInputs[toolUseID]
 	s.pendingInputsMu.Unlock()
 	if !ok {
-		return fmt.Errorf("pending user input not found: %s", toolUseID)
+		result = strings.TrimSpace(result)
+		if result == "" || s.threadID == "" {
+			return fmt.Errorf("pending user input not found: %s", toolUseID)
+		}
+		s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: result})
+		return s.Send("Answer to the pending AskUserQuestion: "+result, nil)
 	}
 
 	answers := make(map[string]any)
@@ -446,7 +454,7 @@ func (s *Session) Answer(toolUseID string, result string) error {
 		answers["answer"] = map[string]any{"answers": []string{result}}
 	}
 
-	s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answer submitted"})
+	s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: result})
 	if err := s.respond(pending.requestID, map[string]any{"answers": answers}); err != nil {
 		return err
 	}
@@ -958,6 +966,7 @@ func (s *Session) emit(msg Message) {
 		s.messages = s.messages[len(s.messages)-1000:]
 	}
 	s.messagesMu.Unlock()
+	AppendCachedMessage(msg)
 
 	s.subscribersMu.Lock()
 	for ch := range s.subscribers {

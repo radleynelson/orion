@@ -369,6 +369,11 @@ export default function Sidebar() {
         viewMode: 'chat',
         runtimeSessionId: session.id,
         threadId: session.threadId,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        approvalPolicy: session.approvalPolicy,
+        sandboxMode: session.sandboxMode,
+        permissionMode: session.permissionMode,
       });
       return session;
     } catch (err) {

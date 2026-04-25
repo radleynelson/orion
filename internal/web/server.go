@@ -22,7 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"orion/internal/chatattachments"
-	"orion/internal/claudechat"
+	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
 	oriongit "orion/internal/git"
 	"orion/internal/server"
@@ -50,6 +50,8 @@ type AppAPI interface {
 	LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error)
 	ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error)
 	LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error)
+	ResumeClaudeChat(repoRoot string, workspacePath string, threadID string) (*claudechat.SessionInfo, error)
+	ConvertTerminalToClaudeChat(repoRoot string, workspacePath string, tmuxSession string) (*claudechat.SessionInfo, error)
 	ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo
 	ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 	StartServers(repoRoot string, workspacePath string, isMain bool) ([]server.ServerStatus, error)
@@ -572,7 +574,18 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "repoRoot required", http.StatusBadRequest)
 			return
 		}
-		info, err := s.app.LaunchClaudeChat(req.RepoRoot, req.WorkspacePath)
+		var (
+			info *claudechat.SessionInfo
+			err  error
+		)
+		switch {
+		case strings.TrimSpace(req.ThreadID) != "":
+			info, err = s.app.ResumeClaudeChat(req.RepoRoot, req.WorkspacePath, req.ThreadID)
+		case strings.TrimSpace(req.TmuxSession) != "":
+			info, err = s.app.ConvertTerminalToClaudeChat(req.RepoRoot, req.WorkspacePath, req.TmuxSession)
+		default:
+			info, err = s.app.LaunchClaudeChat(req.RepoRoot, req.WorkspacePath)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -586,6 +599,11 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			ViewMode:         "chat",
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
+			Model:            info.Model,
+			ReasoningEffort:  info.ReasoningEffort,
+			ApprovalPolicy:   info.ApprovalPolicy,
+			SandboxMode:      info.SandboxMode,
+			PermissionMode:   info.PermissionMode,
 		})
 		writeJSON(w, info)
 	default:
@@ -1303,8 +1321,19 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 	}
 	session, ok := s.claudeMgr.Get(sessionID)
 	if !ok {
-		workspacePath := tmuxCurrentPath(sessionID)
-		info, err := s.claudeMgr.Attach(sessionID, workspacePath, "Claude")
+		workspacePath := firstNonEmpty(r.URL.Query().Get("workspacePath"), r.URL.Query().Get("workspace"))
+		if workspacePath == "" {
+			workspacePath = tmuxCurrentPath(sessionID)
+		}
+		var (
+			info *claudechat.SessionInfo
+			err  error
+		)
+		if strings.HasPrefix(sessionID, "orion-") {
+			info, err = s.claudeMgr.Attach(sessionID, workspacePath, "Claude")
+		} else {
+			info, err = s.claudeMgr.Resume(workspacePath, "Claude Chat", sessionID)
+		}
 		if err != nil {
 			http.Error(w, "claude chat session not found", http.StatusNotFound)
 			return
@@ -1315,6 +1344,7 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	runtimeSessionID := session.Info().ID
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -1379,11 +1409,11 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 			conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 			switch msg.Type {
 			case "input":
-				attachments, err := chatattachments.Resolve(sessionID, msg.Attachments)
+				attachments, err := chatattachments.Resolve(runtimeSessionID, msg.Attachments)
 				if err != nil {
 					writeJSONMessage(claudechat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1393,7 +1423,7 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 				if err := session.Send(msg.Text, attachments); err != nil {
 					writeJSONMessage(claudechat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1403,7 +1433,7 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 				if err := session.Answer(msg.ToolUseID, msg.Text); err != nil {
 					writeJSONMessage(claudechat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1413,7 +1443,7 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 				if msg.Action != "approve" {
 					writeJSONMessage(claudechat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      "unsupported plan action",
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1423,7 +1453,7 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 				if err := session.ApprovePlan(); err != nil {
 					writeJSONMessage(claudechat.Message{
 						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						SessionID: sessionID,
+						SessionID: runtimeSessionID,
 						Type:      "error",
 						Text:      err.Error(),
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -1637,12 +1667,14 @@ func reconcileSessionInfo(existing state.SessionInfo, incoming state.SessionInfo
 			out.ReasoningEffort = ""
 			out.ApprovalPolicy = ""
 			out.SandboxMode = ""
+			out.PermissionMode = ""
 		} else {
 			out.ThreadID = firstNonEmpty(out.ThreadID, incoming.ThreadID)
 			out.Model = firstNonEmpty(out.Model, incoming.Model)
 			out.ReasoningEffort = firstNonEmpty(out.ReasoningEffort, incoming.ReasoningEffort)
 			out.ApprovalPolicy = firstNonEmpty(out.ApprovalPolicy, incoming.ApprovalPolicy)
 			out.SandboxMode = firstNonEmpty(out.SandboxMode, incoming.SandboxMode)
+			out.PermissionMode = firstNonEmpty(out.PermissionMode, incoming.PermissionMode)
 		}
 		return out
 	}

@@ -52,8 +52,11 @@ actor OrionClient {
         try await get("/api/codex-chat/history", query: ["workspace": workspacePath, "limit": String(limit)])
     }
 
-    func launchClaudeChat(repoRoot: String, workspacePath: String) async throws -> LaunchClaudeChatResponse {
-        try await post("/api/claude-chat", body: ["repoRoot": repoRoot, "workspacePath": workspacePath])
+    func launchClaudeChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil) async throws -> LaunchClaudeChatResponse {
+        var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
+        if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
+        if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        return try await post("/api/claude-chat", body: body)
     }
 
     func sendCodexChatMessage(sessionId: String, text: String) async throws {

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import {
   AnswerClaudeChatRequest,
   AnswerCodexChatRequest,
@@ -10,9 +10,9 @@ import {
   OpenChatAttachmentDialog,
   SendClaudeChatMessage,
   SendCodexChatMessage,
-} from '../../wailsjs/go/main/App';
-import { useStore } from '../store';
-import AgentSigil from './AgentSigil';
+} from "../../wailsjs/go/main/App";
+import { useStore } from "../store";
+import AgentSigil from "./AgentSigil";
 
 type ChatAttachment = {
   id?: string;
@@ -43,14 +43,15 @@ type ChatRow = ChatMessage & {
   merged?: boolean;
   resultText?: string;
   resultDetails?: string;
-  toolStatus?: 'running' | 'complete';
-  permissionState?: 'waiting' | 'submitted' | 'answered';
-  planState?: 'waiting' | 'approved';
+  toolStatus?: "running" | "complete";
+  permissionState?: "waiting" | "submitted" | "answered";
+  answerText?: string;
+  planState?: "waiting" | "approved";
 };
 
 type LiveActivityItem = {
   id: string;
-  kind: 'status' | 'tool' | 'reasoning' | 'plan' | 'stream' | 'question';
+  kind: "status" | "tool" | "reasoning" | "plan" | "stream" | "question";
   label: string;
   value?: string;
 };
@@ -62,6 +63,7 @@ type SessionMetadata = {
   reasoningEffort?: string;
   approvalPolicy?: string;
   sandboxMode?: string;
+  permissionMode?: string;
   collaborationMode?: string;
   threadId?: string;
 };
@@ -72,7 +74,7 @@ interface CodexChatProps {
   kind?: ChatKind;
 }
 
-type ChatKind = 'codex' | 'claude';
+type ChatKind = "codex" | "claude";
 
 type ChatConfig = {
   displayName: string;
@@ -80,45 +82,62 @@ type ChatConfig = {
   sigil: string;
   eventPrefix: string;
   getMessages: (sessionID: string) => Promise<any>;
-  sendMessage: (sessionID: string, text: string, attachments: ChatAttachment[]) => Promise<void>;
-  answerRequest: (sessionID: string, toolUseID: string, result: string) => Promise<void>;
+  sendMessage: (
+    sessionID: string,
+    text: string,
+    attachments: ChatAttachment[],
+  ) => Promise<void>;
+  answerRequest: (
+    sessionID: string,
+    toolUseID: string,
+    result: string,
+  ) => Promise<void>;
   approvePlan?: (sessionID: string) => Promise<void>;
   emptyText: string;
 };
 
 const CHAT_CONFIG: Record<ChatKind, ChatConfig> = {
   codex: {
-    displayName: 'Codex',
-    avatar: 'C',
-    sigil: 'codex',
-    eventPrefix: 'codex-chat',
+    displayName: "Codex",
+    avatar: "C",
+    sigil: "codex",
+    eventPrefix: "codex-chat",
     getMessages: GetCodexChatMessages,
     sendMessage: SendCodexChatMessage,
     answerRequest: AnswerCodexChatRequest,
-    emptyText: 'Ask Codex to inspect, edit, or explain this workspace.',
+    emptyText: "Ask Codex to inspect, edit, or explain this workspace.",
   },
   claude: {
-    displayName: 'Claude',
-    avatar: '◆',
-    sigil: 'claude',
-    eventPrefix: 'claude-chat',
+    displayName: "Claude",
+    avatar: "◆",
+    sigil: "claude",
+    eventPrefix: "claude-chat",
     getMessages: GetClaudeChatMessages,
     sendMessage: SendClaudeChatMessage,
     answerRequest: AnswerClaudeChatRequest,
     approvePlan: ApproveClaudePlan,
-    emptyText: 'Ask Claude to inspect, edit, or explain this workspace.',
+    emptyText: "Ask Claude to inspect, edit, or explain this workspace.",
   },
 };
 
-export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexChatProps) {
+export default function CodexChat({
+  sessionId,
+  visible,
+  kind = "codex",
+}: CodexChatProps) {
   const config = CHAT_CONFIG[kind];
   const setCodeReviewVisible = useStore((s) => s.setCodeReviewVisible);
   const setCodeReviewBase = useStore((s) => s.setCodeReviewBase);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [answerStates, setAnswerStates] = useState<Record<string, 'submitting' | 'submitted' | 'error'>>({});
+  const [submittedAnswers, setSubmittedAnswers] = useState<
+    Record<string, string>
+  >({});
+  const [answerStates, setAnswerStates] = useState<
+    Record<string, "submitting" | "submitted" | "error">
+  >({});
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<ChatMessage | null>(null);
   const [approvingPlanId, setApprovingPlanId] = useState<string | null>(null);
@@ -132,13 +151,19 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
         const existing = await config.getMessages(sessionId);
         if (!cancelled) setMessages((existing || []) as ChatMessage[]);
       } catch (err) {
-        console.error(`Failed to load ${config.displayName} chat messages:`, err);
+        console.error(
+          `Failed to load ${config.displayName} chat messages:`,
+          err,
+        );
       }
     })();
 
-    const cancel = EventsOn(`${config.eventPrefix}:message:${sessionId}`, (msg: ChatMessage) => {
-      setMessages((prev) => [...prev, msg]);
-    });
+    const cancel = EventsOn(
+      `${config.eventPrefix}:message:${sessionId}`,
+      (msg: ChatMessage) => {
+        setMessages((prev) => [...prev, msg]);
+      },
+    );
 
     return () => {
       cancelled = true;
@@ -158,13 +183,25 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
     inputRef.current?.focus();
   }, [visible, sessionId]);
 
-  const rows = useMemo(() => mergeRows(messages, config.displayName), [messages, config.displayName]);
+  const rows = useMemo(
+    () => mergeRows(messages, config.displayName),
+    [messages, config.displayName],
+  );
   const metadata = useMemo(() => sessionMetadata(messages), [messages]);
-  const lastStatusMessage = [...messages].reverse().find((m) => m.type === 'status');
-  const lastStatus = lastStatusMessage?.status || 'idle';
-  const isRunning = lastStatus === 'running';
+  const lastStatusMessage = [...messages]
+    .reverse()
+    .find((m) => m.type === "status");
+  const lastStatus = lastStatusMessage?.status || "idle";
+  const isRunning = lastStatus === "running";
   const liveActivity = useMemo(
-    () => liveActivityItems(messages, rows, lastStatus, config.displayName, lastStatusMessage?.text),
+    () =>
+      liveActivityItems(
+        messages,
+        rows,
+        lastStatus,
+        config.displayName,
+        lastStatusMessage?.text,
+      ),
     [messages, rows, lastStatus, lastStatusMessage?.text, config.displayName],
   );
 
@@ -172,7 +209,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
     const text = input.trim();
     if ((!text && attachments.length === 0) || sending) return;
     const nextAttachments = attachments;
-    setInput('');
+    setInput("");
     setAttachments([]);
     setSending(true);
     try {
@@ -186,7 +223,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
         {
           id: `local-error-${Date.now()}`,
           sessionId,
-          type: 'error',
+          type: "error",
           text: err instanceof Error ? err.message : String(err),
           createdAt: new Date().toISOString(),
         },
@@ -212,33 +249,37 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
         return merged.slice(0, 6);
       });
     } catch (err) {
-      console.error('Failed to attach image:', err);
+      console.error("Failed to attach image:", err);
     } finally {
       inputRef.current?.focus();
     }
   };
 
   const answer = async (toolUseId: string) => {
-    const text = (answers[toolUseId] || '').trim();
+    const text = (answers[toolUseId] || "").trim();
     if (!text) return;
-    setAnswerStates((prev) => ({ ...prev, [toolUseId]: 'submitting' }));
+    setAnswerStates((prev) => ({ ...prev, [toolUseId]: "submitting" }));
     try {
       await config.answerRequest(sessionId, toolUseId, text);
+      setSubmittedAnswers((prev) => ({ ...prev, [toolUseId]: text }));
       setAnswers((prev) => {
         const next = { ...prev };
         delete next[toolUseId];
         return next;
       });
-      setAnswerStates((prev) => ({ ...prev, [toolUseId]: 'submitted' }));
+      setAnswerStates((prev) => ({ ...prev, [toolUseId]: "submitted" }));
     } catch (err) {
-      console.error(`Failed to answer ${config.displayName} chat request:`, err);
-      setAnswerStates((prev) => ({ ...prev, [toolUseId]: 'error' }));
+      console.error(
+        `Failed to answer ${config.displayName} chat request:`,
+        err,
+      );
+      setAnswerStates((prev) => ({ ...prev, [toolUseId]: "error" }));
       setMessages((prev) => [
         ...prev,
         {
           id: `local-answer-error-${Date.now()}`,
           sessionId,
-          type: 'error',
+          type: "error",
           text: err instanceof Error ? err.message : String(err),
           createdAt: new Date().toISOString(),
         },
@@ -259,7 +300,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
         {
           id: `local-plan-error-${Date.now()}`,
           sessionId,
-          type: 'error',
+          type: "error",
           text: err instanceof Error ? err.message : String(err),
           createdAt: new Date().toISOString(),
         },
@@ -270,7 +311,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   };
 
   const reviewDiff = () => {
-    setCodeReviewBase('uncommitted');
+    setCodeReviewBase("uncommitted");
     setCodeReviewVisible(true);
   };
 
@@ -282,10 +323,18 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
             <AgentSigil id={config.sigil} size={34} strong />
             <div>
               <div className="codex-chat-title">{config.displayName} Chat</div>
-              <div className="codex-chat-subtitle">{statusLabel(lastStatus, config.displayName, lastStatusMessage?.text)}</div>
+              <div className="codex-chat-subtitle">
+                {statusLabel(
+                  lastStatus,
+                  config.displayName,
+                  lastStatusMessage?.text,
+                )}
+              </div>
             </div>
           </div>
-          <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>{statusLabelShort(lastStatus)}</div>
+          <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>
+            {statusLabelShort(lastStatus)}
+          </div>
         </div>
         {metadata && <SessionModeStrip metadata={metadata} kind={kind} />}
         {liveActivity.length > 0 && <LiveActivityStrip items={liveActivity} />}
@@ -294,23 +343,24 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
       <div ref={scrollerRef} className="codex-chat-messages">
         <div className="codex-chat-thread">
           {rows.length === 0 && (
-            <div className="codex-chat-empty">
-              {config.emptyText}
-            </div>
+            <div className="codex-chat-empty">{config.emptyText}</div>
           )}
-          {rows.map((msg) => renderRow(
-            msg,
-            answers,
-            answerStates,
-            setAnswers,
-            answer,
-            config.displayName,
-            config.sigil,
-            setExpandedPlan,
-            reviewDiff,
-            config.approvePlan ? approvePlan : undefined,
-            approvingPlanId === msg.id,
-          ))}
+          {rows.map((msg) =>
+            renderRow(
+              msg,
+              answers,
+              answerStates,
+              submittedAnswers,
+              setAnswers,
+              answer,
+              config.displayName,
+              config.sigil,
+              setExpandedPlan,
+              reviewDiff,
+              config.approvePlan ? approvePlan : undefined,
+              approvingPlanId === msg.id,
+            ),
+          )}
         </div>
       </div>
 
@@ -323,7 +373,9 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
             reviewDiff();
             setExpandedPlan(null);
           }}
-          onApprove={config.approvePlan ? () => approvePlan(expandedPlan) : undefined}
+          onApprove={
+            config.approvePlan ? () => approvePlan(expandedPlan) : undefined
+          }
           approving={approvingPlanId === expandedPlan.id}
         />
       )}
@@ -340,38 +392,43 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
               <AttachmentChip
                 key={attachment.id || attachment.path || index}
                 attachment={attachment}
-                onRemove={() => setAttachments((prev) => prev.filter((_, i) => i !== index))}
+                onRemove={() =>
+                  setAttachments((prev) => prev.filter((_, i) => i !== index))
+                }
               />
             ))}
           </div>
         )}
         <div className="codex-chat-input-row">
-        <button
-          type="button"
-          className="codex-chat-icon-button"
-          onClick={chooseAttachments}
-          title="Attach image"
-          aria-label="Attach image"
-          disabled={sending}
-        >
-          +
-        </button>
-        <textarea
-          ref={inputRef}
-          value={input}
-          placeholder={`Message ${config.displayName}...`}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          rows={3}
-        />
-        <button onClick={send} disabled={sending || (!input.trim() && attachments.length === 0)}>
-          {sending ? 'Sending' : 'Send'}
-        </button>
+          <button
+            type="button"
+            className="codex-chat-icon-button"
+            onClick={chooseAttachments}
+            title="Attach image"
+            aria-label="Attach image"
+            disabled={sending}
+          >
+            +
+          </button>
+          <textarea
+            ref={inputRef}
+            value={input}
+            placeholder={`Message ${config.displayName}...`}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={3}
+          />
+          <button
+            onClick={send}
+            disabled={sending || (!input.trim() && attachments.length === 0)}
+          >
+            {sending ? "Sending" : "Send"}
+          </button>
         </div>
       </div>
     </div>
@@ -381,60 +438,66 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
 function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
   const rows: ChatRow[] = [];
   for (const msg of messages) {
-    if (msg.type === 'status') continue;
-    if (msg.type === 'permission_submitted') {
-      updatePermissionRow(rows, msg, 'submitted');
+    if (msg.type === "status") continue;
+    if (msg.type === "permission_submitted") {
+      updatePermissionRow(rows, msg, "submitted");
       continue;
     }
-    if (msg.type === 'permission_resolved') {
-      updatePermissionRow(rows, msg, 'answered');
+    if (msg.type === "permission_resolved") {
+      updatePermissionRow(rows, msg, "answered");
       continue;
     }
-    if (msg.type === 'plan_resolved') {
+    if (msg.type === "plan_resolved") {
       updatePlanRow(rows);
       continue;
     }
     if (shouldHideMessage(msg)) continue;
-    if (msg.type === 'stream_delta') {
+    if (msg.type === "stream_delta") {
       const last = rows[rows.length - 1];
-      if (last?.type === 'assistant' && last.merged) {
-        last.text = `${last.text || ''}${msg.text || ''}`;
+      if (last?.type === "assistant" && last.merged) {
+        last.text = `${last.text || ""}${msg.text || ""}`;
       } else {
-        rows.push({ ...msg, id: `assistant-stream-${msg.id}`, type: 'assistant', role: 'assistant', merged: true });
+        rows.push({
+          ...msg,
+          id: `assistant-stream-${msg.id}`,
+          type: "assistant",
+          role: "assistant",
+          merged: true,
+        });
       }
       continue;
     }
-    if (msg.type === 'thinking_delta') {
+    if (msg.type === "thinking_delta") {
       const last = rows[rows.length - 1];
-      if (last?.type === 'thinking_delta') {
-        last.text = `${last.text || ''}${msg.text || ''}`;
+      if (last?.type === "thinking_delta") {
+        last.text = `${last.text || ""}${msg.text || ""}`;
       } else {
         rows.push({ ...msg });
       }
       continue;
     }
-    if (msg.type === 'tool_result') {
+    if (msg.type === "tool_result") {
       const toolIndex = findOpenToolRow(rows, msg);
       if (toolIndex >= 0) {
         rows[toolIndex] = {
           ...rows[toolIndex],
           resultText: msg.text,
           resultDetails: msg.details,
-          toolStatus: 'complete',
+          toolStatus: "complete",
         };
         continue;
       }
     }
-    if (msg.type === 'tool') {
-      rows.push({ ...msg, toolStatus: 'running' });
+    if (msg.type === "tool") {
+      rows.push({ ...msg, toolStatus: "running" });
       continue;
     }
-    if (msg.type === 'permission_request') {
-      rows.push({ ...msg, permissionState: 'waiting' });
+    if (msg.type === "permission_request") {
+      rows.push({ ...msg, permissionState: "waiting" });
       continue;
     }
-    if (msg.type === 'plan') {
-      rows.push({ ...msg, planState: 'waiting' });
+    if (msg.type === "plan") {
+      rows.push({ ...msg, planState: "waiting" });
       continue;
     }
     rows.push({ ...msg });
@@ -442,25 +505,38 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
   return rows;
 }
 
-function updatePermissionRow(rows: ChatRow[], update: ChatMessage, state: 'submitted' | 'answered') {
+function updatePermissionRow(
+  rows: ChatRow[],
+  update: ChatMessage,
+  state: "submitted" | "answered",
+) {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
-    if (row.type !== 'permission_request') continue;
+    if (row.type !== "permission_request") continue;
     if (update.toolUseId && row.toolUseId !== update.toolUseId) continue;
+    const answerText =
+      update.text && !isGenericPermissionAnswer(update.text)
+        ? update.text
+        : row.answerText;
     rows[i] = {
       ...row,
       permissionState: state,
-      resultText: update.text || row.resultText,
+      answerText,
     };
     return;
   }
 }
 
+function isGenericPermissionAnswer(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return normalized === "answered" || normalized === "answer submitted";
+}
+
 function updatePlanRow(rows: ChatRow[]) {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
-    if (row.type !== 'plan') continue;
-    rows[i] = { ...row, planState: 'approved' };
+    if (row.type !== "plan") continue;
+    rows[i] = { ...row, planState: "approved" };
     return;
   }
 }
@@ -468,7 +544,7 @@ function updatePlanRow(rows: ChatRow[]) {
 function findOpenToolRow(rows: ChatRow[], result: ChatMessage): number {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
-    if (row.type !== 'tool') continue;
+    if (row.type !== "tool") continue;
     if (row.resultText || row.resultDetails) continue;
     if (result.toolUseId && row.toolUseId === result.toolUseId) return i;
     if (!result.toolUseId && row.toolName === result.toolName) return i;
@@ -477,17 +553,34 @@ function findOpenToolRow(rows: ChatRow[], result: ChatMessage): number {
 }
 
 function sessionMetadata(messages: ChatMessage[]): SessionMetadata | null {
+  const planApproved = messages.some((msg) => msg.type === "plan_resolved");
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.type !== 'system' || !msg.details) continue;
+    if (msg.type !== "system" || !msg.details) continue;
     try {
       const parsed = JSON.parse(msg.details) as SessionMetadata;
-      if (parsed.model || parsed.reasoningEffort || parsed.approvalPolicy || parsed.sandboxMode || parsed.threadId) {
+      if (
+        parsed.model ||
+        parsed.reasoningEffort ||
+        parsed.approvalPolicy ||
+        parsed.sandboxMode ||
+        parsed.permissionMode ||
+        parsed.collaborationMode ||
+        parsed.threadId
+      ) {
+        if (
+          planApproved &&
+          (parsed.permissionMode === "plan" || parsed.collaborationMode === "plan")
+        ) {
+          return { ...parsed, permissionMode: "approved" };
+        }
         return parsed;
       }
     } catch {}
   }
-  const threadId = [...messages].reverse().find((msg) => msg.threadId)?.threadId;
+  const threadId = [...messages]
+    .reverse()
+    .find((msg) => msg.threadId)?.threadId;
   return threadId ? { threadId } : null;
 }
 
@@ -499,56 +592,91 @@ function liveActivityItems(
   statusText?: string,
 ): LiveActivityItem[] {
   const items: LiveActivityItem[] = [];
-  if (lastStatus === 'starting') {
-    items.push({ id: 'status-starting', kind: 'status', label: 'Starting', value: assistantName });
-  } else if (lastStatus === 'running') {
+  if (lastStatus === "starting") {
     items.push({
-      id: 'status-running',
-      kind: 'status',
-      label: 'Working',
+      id: "status-starting",
+      kind: "status",
+      label: "Starting",
+      value: assistantName,
+    });
+  } else if (lastStatus === "running") {
+    items.push({
+      id: "status-running",
+      kind: "status",
+      label: "Working",
       value: compactActivityValue(statusText || `${assistantName} is working`),
     });
-  } else if (lastStatus === 'waiting_input') {
-    items.push({ id: 'status-waiting', kind: 'question', label: 'Waiting', value: 'needs your input' });
+  } else if (lastStatus === "waiting_input") {
+    items.push({
+      id: "status-waiting",
+      kind: "question",
+      label: "Waiting",
+      value: "needs your input",
+    });
   }
 
-  const runningTools = rows.filter((row) => row.type === 'tool' && row.toolStatus === 'running');
+  const runningTools = rows.filter(
+    (row) => row.type === "tool" && row.toolStatus === "running",
+  );
   const latestTool = runningTools[runningTools.length - 1];
   if (latestTool) {
     items.push({
       id: `tool-${latestTool.id}`,
-      kind: 'tool',
-      label: 'Using',
-      value: compactActivityValue(latestTool.toolName || latestTool.text || 'tool'),
+      kind: "tool",
+      label: "Using",
+      value: compactActivityValue(
+        latestTool.toolName || latestTool.text || "tool",
+      ),
     });
     if (runningTools.length > 1) {
       items.push({
-        id: 'tool-count',
-        kind: 'tool',
+        id: "tool-count",
+        kind: "tool",
         label: `${runningTools.length} tools`,
-        value: 'active',
+        value: "active",
       });
     }
   }
 
   const lastVisibleRow = rows[rows.length - 1];
-  const lastReasoning = [...rows].reverse().find((row) => row.type === 'thinking_delta');
-  if (lastReasoning && (lastStatus === 'running' || lastVisibleRow?.id === lastReasoning.id)) {
+  const lastReasoning = [...rows]
+    .reverse()
+    .find((row) => row.type === "thinking_delta");
+  if (
+    lastReasoning &&
+    (lastStatus === "running" || lastVisibleRow?.id === lastReasoning.id)
+  ) {
     items.push({
       id: `reasoning-${lastReasoning.id}`,
-      kind: 'reasoning',
-      label: 'Reasoning',
+      kind: "reasoning",
+      label: "Reasoning",
       value: reasoningSummary(lastReasoning.text),
     });
   }
 
-  if (lastStatus === 'running' && lastVisibleRow?.type === 'assistant' && lastVisibleRow.merged) {
-    items.push({ id: `stream-${lastVisibleRow.id}`, kind: 'stream', label: 'Streaming', value: 'answer' });
+  if (
+    lastStatus === "running" &&
+    lastVisibleRow?.type === "assistant" &&
+    lastVisibleRow.merged
+  ) {
+    items.push({
+      id: `stream-${lastVisibleRow.id}`,
+      kind: "stream",
+      label: "Streaming",
+      value: "answer",
+    });
   }
 
   const planState = openPlanMessage(messages);
   if (planState) {
-    items.push({ id: `plan-${planState.id}`, kind: 'plan', label: 'Plan ready', value: compactActivityValue(planState.text || planTitle(planState.details || '')) });
+    items.push({
+      id: `plan-${planState.id}`,
+      kind: "plan",
+      label: "Plan ready",
+      value: compactActivityValue(
+        planState.text || planTitle(planState.details || ""),
+      ),
+    });
   }
 
   return uniqueActivityItems(items).slice(0, 4);
@@ -557,7 +685,7 @@ function liveActivityItems(
 function uniqueActivityItems(items: LiveActivityItem[]): LiveActivityItem[] {
   const seen = new Set<string>();
   return items.filter((item) => {
-    const key = `${item.kind}:${item.label}:${item.value || ''}`;
+    const key = `${item.kind}:${item.label}:${item.value || ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -569,10 +697,10 @@ function openPlanMessage(messages: ChatMessage[]): ChatMessage | null {
   let lastPlanIndex = -1;
   let resolvedIndex = -1;
   messages.forEach((msg, index) => {
-    if (msg.type === 'plan') {
+    if (msg.type === "plan") {
       lastPlan = msg;
       lastPlanIndex = index;
-    } else if (msg.type === 'plan_resolved') {
+    } else if (msg.type === "plan_resolved") {
       resolvedIndex = index;
     }
   });
@@ -580,25 +708,29 @@ function openPlanMessage(messages: ChatMessage[]): ChatMessage | null {
 }
 
 function compactActivityValue(value: string): string {
-  const trimmed = value.replace(/\s+/g, ' ').trim();
+  const trimmed = value.replace(/\s+/g, " ").trim();
   return trimmed.length > 48 ? `${trimmed.slice(0, 45)}...` : trimmed;
 }
 
 function reasoningSummary(value?: string): string {
-  if (!value?.trim()) return 'thinking';
-  const firstLine = value.split('\n').map((line) => line.trim()).find(Boolean);
-  return compactActivityValue(firstLine || 'thinking');
+  if (!value?.trim()) return "thinking";
+  const firstLine = value
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  return compactActivityValue(firstLine || "thinking");
 }
 
 function reasoningTitle(value?: string): string {
   const summary = reasoningSummary(value);
-  return summary === 'thinking' ? 'Thinking through the plan' : summary;
+  return summary === "thinking" ? "Thinking through the plan" : summary;
 }
 
 function renderRow(
   msg: ChatRow,
   answers: Record<string, string>,
-  answerStates: Record<string, 'submitting' | 'submitted' | 'error'>,
+  answerStates: Record<string, "submitting" | "submitted" | "error">,
+  submittedAnswers: Record<string, string>,
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>,
   answer: (toolUseId: string) => Promise<void>,
   assistantName: string,
@@ -608,7 +740,7 @@ function renderRow(
   approvePlan?: (msg: ChatMessage) => Promise<void>,
   approvingPlan?: boolean,
 ) {
-  if (msg.type === 'plan') {
+  if (msg.type === "plan") {
     return (
       <PlanCard
         key={msg.id}
@@ -622,22 +754,30 @@ function renderRow(
       />
     );
   }
-  if (msg.type === 'loading') {
-    return <LoadingRow key={msg.id} msg={msg} assistantName={assistantName} agentId={agentId} />;
+  if (msg.type === "loading") {
+    return (
+      <LoadingRow
+        key={msg.id}
+        msg={msg}
+        assistantName={assistantName}
+        agentId={agentId}
+      />
+    );
   }
-  if (msg.type === 'tool') {
+  if (msg.type === "tool") {
     return <ToolActivityCard key={msg.id} msg={msg} agentId={agentId} />;
   }
-  if (msg.type === 'thinking_delta') {
+  if (msg.type === "thinking_delta") {
     return <ReasoningCard key={msg.id} msg={msg} agentId={agentId} />;
   }
-  if (msg.type === 'permission_request') {
+  if (msg.type === "permission_request") {
     return (
       <PermissionCard
         key={msg.id}
         msg={msg}
         answers={answers}
         answerStates={answerStates}
+        submittedAnswers={submittedAnswers}
         setAnswers={setAnswers}
         answer={answer}
         assistantName={assistantName}
@@ -647,33 +787,51 @@ function renderRow(
   }
 
   const kind = rowKind(msg.type);
-  if (kind === 'activity') {
+  if (kind === "activity") {
     return (
-      <div key={msg.id} className={`codex-chat-activity codex-chat-activity-${activityClass(msg.type)}`}>
+      <div
+        key={msg.id}
+        className={`codex-chat-activity codex-chat-activity-${activityClass(msg.type)}`}
+      >
         <div className="codex-chat-activity-line">
           <span className="codex-chat-activity-dot" />
-          <span className="codex-chat-activity-label">{activityLabel(msg)}</span>
-          {msg.text && <span className="codex-chat-activity-text">{msg.text}</span>}
+          <span className="codex-chat-activity-label">
+            {activityLabel(msg)}
+          </span>
+          {msg.text && (
+            <span className="codex-chat-activity-text">{msg.text}</span>
+          )}
         </div>
         {msg.details && detailsBlock(msg.details)}
       </div>
     );
   }
 
-  const isUser = msg.type === 'user';
+  const isUser = msg.type === "user";
   return (
     <div
       key={msg.id}
-      className={`codex-chat-message ${isUser ? 'codex-chat-message-user' : 'codex-chat-message-assistant'}`}
+      className={`codex-chat-message ${isUser ? "codex-chat-message-user" : "codex-chat-message-assistant"}`}
     >
-      {!isUser && <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />}
+      {!isUser && (
+        <AgentSigil
+          id={agentId}
+          size={24}
+          className="codex-chat-avatar-sigil"
+        />
+      )}
       <div className="codex-chat-message-stack">
-        <div className="codex-chat-message-meta">{rowLabel(msg, assistantName)}</div>
+        <div className="codex-chat-message-meta">
+          {rowLabel(msg, assistantName)}
+        </div>
         <div className="codex-chat-bubble">
           {msg.attachments?.length ? (
             <div className="codex-chat-attachments">
               {msg.attachments.map((attachment, index) => (
-                <AttachmentPill key={attachment.id || attachment.path || index} attachment={attachment} />
+                <AttachmentPill
+                  key={attachment.id || attachment.path || index}
+                  attachment={attachment}
+                />
               ))}
             </div>
           ) : null}
@@ -685,13 +843,22 @@ function renderRow(
   );
 }
 
-function SessionModeStrip({ metadata, kind }: { metadata: SessionMetadata; kind: ChatKind }) {
+function SessionModeStrip({
+  metadata,
+  kind,
+}: {
+  metadata: SessionMetadata;
+  kind: ChatKind;
+}) {
   const items = [
-    { label: 'model', value: metadata.model },
-    { label: 'reasoning', value: metadata.reasoningEffort },
-    { label: 'approvals', value: approvalLabel(metadata.approvalPolicy, kind) },
-    { label: 'sandbox', value: sandboxLabel(metadata.sandboxMode) },
-    { label: 'mode', value: metadata.collaborationMode },
+    { label: "model", value: metadata.model },
+    { label: "reasoning", value: metadata.reasoningEffort },
+    { label: "approvals", value: approvalLabel(metadata.approvalPolicy, kind) },
+    { label: "sandbox", value: sandboxLabel(metadata.sandboxMode) },
+    {
+      label: "mode",
+      value: metadata.permissionMode || metadata.collaborationMode,
+    },
   ].filter((item) => item.value);
 
   if (items.length === 0) return null;
@@ -712,35 +879,57 @@ function LiveActivityStrip({ items }: { items: LiveActivityItem[] }) {
   return (
     <div className="codex-chat-live-strip" aria-label="Live chat activity">
       {items.map((item) => (
-        <div className={`codex-chat-live-pill codex-chat-live-pill-${item.kind}`} key={item.id}>
+        <div
+          className={`codex-chat-live-pill codex-chat-live-pill-${item.kind}`}
+          key={item.id}
+        >
           <span className="codex-chat-live-dot" />
           <span className="codex-chat-live-label">{item.label}</span>
-          {item.value && <span className="codex-chat-live-value">{item.value}</span>}
+          {item.value && (
+            <span className="codex-chat-live-value">{item.value}</span>
+          )}
         </div>
       ))}
     </div>
   );
 }
 
-function approvalLabel(value: string | undefined, kind: ChatKind): string | undefined {
-  if (!value) return kind === 'claude' ? undefined : 'full access';
-  if (value === 'never') return 'full access';
-  if (value === 'on-request') return 'ask first';
-  return value.replaceAll('_', ' ');
+function approvalLabel(
+  value: string | undefined,
+  kind: ChatKind,
+): string | undefined {
+  if (!value) return kind === "claude" ? undefined : "full access";
+  if (value === "never") return "full access";
+  if (value === "on-request") return "ask first";
+  return value.replaceAll("_", " ");
 }
 
 function sandboxLabel(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  if (value === 'danger-full-access') return 'workspace + network';
-  return value.replaceAll('-', ' ');
+  if (value === "danger-full-access") return "workspace + network";
+  return value.replaceAll("-", " ");
 }
 
-function AttachmentChip({ attachment, onRemove }: { attachment: ChatAttachment; onRemove: () => void }) {
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: ChatAttachment;
+  onRemove: () => void;
+}) {
   return (
     <div className="codex-chat-attachment-chip">
       <span className="codex-chat-attachment-icon">img</span>
-      <span className="codex-chat-attachment-name">{attachmentName(attachment)}</span>
-      <button type="button" onClick={onRemove} aria-label={`Remove ${attachmentName(attachment)}`}>×</button>
+      <span className="codex-chat-attachment-name">
+        {attachmentName(attachment)}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${attachmentName(attachment)}`}
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -758,9 +947,9 @@ function attachmentName(attachment: ChatAttachment): string {
   if (attachment.name) return attachment.name;
   if (attachment.path) {
     const parts = attachment.path.split(/[\\/]/);
-    return parts[parts.length - 1] || 'Image';
+    return parts[parts.length - 1] || "Image";
   }
-  return 'Image';
+  return "Image";
 }
 
 function WorkingIndicator({ text }: { text: string }) {
@@ -776,14 +965,27 @@ function WorkingIndicator({ text }: { text: string }) {
   );
 }
 
-function LoadingRow({ msg, assistantName, agentId }: { msg: ChatRow; assistantName: string; agentId: string }) {
+function LoadingRow({
+  msg,
+  assistantName,
+  agentId,
+}: {
+  msg: ChatRow;
+  assistantName: string;
+  agentId: string;
+}) {
   return (
-    <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-loading" key={msg.id}>
+    <div
+      className="codex-chat-message codex-chat-message-assistant codex-chat-message-loading"
+      key={msg.id}
+    >
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
         <div className="codex-chat-message-meta">{assistantName}</div>
         <div className="codex-chat-loading-bubble">
-          <span className="codex-chat-loading-text">{msg.text || `${assistantName} is thinking`}</span>
+          <span className="codex-chat-loading-text">
+            {msg.text || `${assistantName} is thinking`}
+          </span>
           <span className="codex-chat-typing-dots" aria-hidden="true">
             <span />
             <span />
@@ -796,35 +998,46 @@ function LoadingRow({ msg, assistantName, agentId }: { msg: ChatRow; assistantNa
 }
 
 function ToolActivityCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
-  const complete = msg.toolStatus === 'complete';
-  const output = msg.resultText || msg.resultDetails || '';
+  const complete = msg.toolStatus === "complete";
+  const output = msg.resultText || msg.resultDetails || "";
   const commandLike = toolLooksLikeCommand(msg.toolName);
 
   return (
     <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-tool">
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
-        <div className="codex-chat-message-meta">{complete ? 'Tool finished' : 'Tool running'}</div>
+        <div className="codex-chat-message-meta">
+          {complete ? "Tool finished" : "Tool running"}
+        </div>
         <div className="codex-tool-card">
           <div className="codex-tool-card-header">
             <div className="codex-tool-title">
               <span className="codex-tool-icon">{toolIcon(msg.toolName)}</span>
               <div>
-                <div className="codex-tool-name">{msg.toolName || 'Tool'}</div>
-                {msg.toolUseId && <div className="codex-tool-id">{shortID(msg.toolUseId)}</div>}
+                <div className="codex-tool-name">{msg.toolName || "Tool"}</div>
+                {msg.toolUseId && (
+                  <div className="codex-tool-id">{shortID(msg.toolUseId)}</div>
+                )}
               </div>
             </div>
-            <span className={`codex-tool-status ${complete ? 'complete' : 'running'}`}>
-              {complete ? 'complete' : 'running'}
+            <span
+              className={`codex-tool-status ${complete ? "complete" : "running"}`}
+            >
+              {complete ? "complete" : "running"}
             </span>
           </div>
           {msg.text && (
-            <pre className={commandLike ? 'codex-tool-command' : 'codex-tool-text'}>{msg.text}</pre>
+            <pre
+              className={commandLike ? "codex-tool-command" : "codex-tool-text"}
+            >
+              {msg.text}
+            </pre>
           )}
-          {msg.details && detailsBlock(msg.details, commandLike ? 'Input' : 'Details')}
+          {msg.details &&
+            detailsBlock(msg.details, commandLike ? "Input" : "Details")}
           {output && (
             <details className="codex-tool-output" open={!commandLike}>
-              <summary>{commandLike ? 'Output' : 'Result'}</summary>
+              <summary>{commandLike ? "Output" : "Result"}</summary>
               <pre>{formatDetails(output)}</pre>
             </details>
           )}
@@ -845,7 +1058,7 @@ function ReasoningCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
             <span className="codex-reasoning-dot" />
             <span>{reasoningTitle(msg.text)}</span>
           </summary>
-          <div>{msg.text || 'Reasoning in progress.'}</div>
+          <div>{msg.text || "Reasoning in progress."}</div>
         </details>
       </div>
     </div>
@@ -856,6 +1069,7 @@ function PermissionCard({
   msg,
   answers,
   answerStates,
+  submittedAnswers,
   setAnswers,
   answer,
   assistantName,
@@ -863,49 +1077,100 @@ function PermissionCard({
 }: {
   msg: ChatRow;
   answers: Record<string, string>;
-  answerStates: Record<string, 'submitting' | 'submitted' | 'error'>;
+  answerStates: Record<string, "submitting" | "submitted" | "error">;
+  submittedAnswers: Record<string, string>;
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>;
   answer: (toolUseId: string) => Promise<void>;
   assistantName: string;
   agentId: string;
 }) {
   const prompt = permissionPrompt(msg);
-  const toolUseId = msg.toolUseId || '';
+  const toolUseId = msg.toolUseId || "";
   const localState = toolUseId ? answerStates[toolUseId] : undefined;
-  const state = msg.permissionState === 'answered' ? 'answered' : (localState || msg.permissionState || 'waiting');
-  const waiting = state === 'waiting' || state === 'error';
-  const disabled = state === 'submitting' || state === 'submitted' || state === 'answered';
+  const state =
+    msg.permissionState === "answered"
+      ? "answered"
+      : localState || msg.permissionState || "waiting";
+  const waiting = state === "waiting" || state === "error";
+  const disabled =
+    state === "submitting" || state === "submitted" || state === "answered";
+  const resolved = state === "submitted" || state === "answered";
+  const answerText = toolUseId
+    ? msg.answerText || submittedAnswers[toolUseId] || msg.resultText || ""
+    : msg.answerText || msg.resultText || "";
   const statusLabel = permissionStatusLabel(state);
+  const questionText = msg.text || prompt;
   return (
-    <div className={`codex-chat-message codex-chat-message-assistant codex-chat-message-permission codex-chat-message-permission-${state}`}>
+    <div
+      className={`codex-chat-message codex-chat-message-assistant codex-chat-message-permission codex-chat-message-permission-${state}`}
+    >
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
-        <div className="codex-chat-message-meta">{state === 'answered' ? `${assistantName} answered` : `${assistantName} needs input`}</div>
+        <div className="codex-chat-message-meta">
+          {resolved
+            ? `${assistantName} answered`
+            : `${assistantName} needs input`}
+        </div>
         <div className="codex-permission-card">
           <div className="codex-permission-header">
-            <span className="codex-permission-icon">?</span>
+            <span className="codex-permission-icon">
+              {resolved ? "✓" : "?"}
+            </span>
             <div>
-              <div className="codex-permission-title">{msg.toolName || 'Question'}</div>
-              <div className="codex-permission-subtitle">{msg.text || 'The session is waiting for your answer.'}</div>
+              <div className="codex-permission-title">
+                {msg.toolName || "Question"}
+              </div>
+              {!resolved && (
+                <div className="codex-permission-subtitle">
+                  {questionText || "The session is waiting for your answer."}
+                </div>
+              )}
             </div>
-            <span className={`codex-permission-state codex-permission-state-${state}`}>{statusLabel}</span>
+            <span
+              className={`codex-permission-state codex-permission-state-${state}`}
+            >
+              {statusLabel}
+            </span>
           </div>
-          {waiting ? <div className="codex-permission-prompt">{prompt}</div> : (
-            <div className="codex-permission-summary">
-              {state === 'answered' ? 'Answer delivered.' : 'Answer submitted. Waiting for the session to continue.'}
+          {waiting && <div className="codex-permission-prompt">{prompt}</div>}
+          {resolved && (
+            <div className="codex-permission-resolved">
+              {questionText && (
+                <div className="codex-permission-qa">
+                  <div className="codex-permission-qa-label">Question</div>
+                  <div className="codex-permission-qa-text">{questionText}</div>
+                </div>
+              )}
+              <div className="codex-permission-qa">
+                <div className="codex-permission-qa-label">Your answer</div>
+                <div className="codex-permission-qa-text codex-permission-qa-answer">
+                  {answerText ||
+                    (state === "answered"
+                      ? "Answer delivered."
+                      : "Waiting for the session to continue.")}
+                </div>
+              </div>
             </div>
           )}
           {toolUseId && waiting && (
             <div className="codex-chat-answer">
               <textarea
-                value={answers[toolUseId] || ''}
-                onChange={(e) => setAnswers((prev) => ({ ...prev, [toolUseId]: e.target.value }))}
+                value={answers[toolUseId] || ""}
+                onChange={(e) =>
+                  setAnswers((prev) => ({
+                    ...prev,
+                    [toolUseId]: e.target.value,
+                  }))
+                }
                 placeholder={`Answer ${assistantName}...`}
                 disabled={disabled}
                 rows={2}
               />
-              <button onClick={() => answer(toolUseId)} disabled={disabled || !(answers[toolUseId] || '').trim()}>
-                {state === 'error' ? 'Retry Answer' : 'Send Answer'}
+              <button
+                onClick={() => answer(toolUseId)}
+                disabled={disabled || !(answers[toolUseId] || "").trim()}
+              >
+                {state === "error" ? "Retry Answer" : "Send Answer"}
               </button>
             </div>
           )}
@@ -932,42 +1197,74 @@ function PlanCard({
   onApprove?: () => void;
   approving?: boolean;
 }) {
-  const markdown = plan.details || plan.text || '';
+  const markdown = plan.details || plan.text || "";
   const insights = planInsights(markdown);
   const sections = planSections(markdown);
-  const approved = plan.planState === 'approved';
+  const approved = plan.planState === "approved";
   return (
-    <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-plan" key={plan.id}>
+    <div
+      className="codex-chat-message codex-chat-message-assistant codex-chat-message-plan"
+      key={plan.id}
+    >
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
       <div className="codex-chat-message-stack">
-        <div className="codex-chat-message-meta">{assistantName} has a plan</div>
+        <div className="codex-chat-message-meta">
+          {assistantName} has a plan
+        </div>
         <div className="codex-plan-card">
           <div className="codex-plan-card-header">
             <div>
-              <div className="codex-plan-kicker">Plan · {approved ? 'approved' : 'waiting for you'}</div>
-              <div className="codex-plan-title">{plan.text || planTitle(markdown)}</div>
+              <div className="codex-plan-kicker">
+                Plan · {approved ? "approved" : "waiting for you"}
+              </div>
+              <div className="codex-plan-title">
+                {plan.text || planTitle(markdown)}
+              </div>
             </div>
             <div className="codex-plan-badges">
-              <span className="codex-plan-badge">{approved ? 'Approved' : 'Plan'}</span>
-              {insights.sections > 0 && <span className="codex-plan-badge muted">{insights.sections} sections</span>}
-              {insights.steps > 0 && <span className="codex-plan-badge muted">{insights.steps} steps</span>}
+              <span className="codex-plan-badge">
+                {approved ? "Approved" : "Plan"}
+              </span>
+              {insights.sections > 0 && (
+                <span className="codex-plan-badge muted">
+                  {insights.sections} sections
+                </span>
+              )}
+              {insights.steps > 0 && (
+                <span className="codex-plan-badge muted">
+                  {insights.steps} steps
+                </span>
+              )}
             </div>
           </div>
           {sections.length > 0 && (
             <div className="codex-plan-section-row">
-              {sections.slice(0, 4).map((section) => <span key={section}>{section}</span>)}
+              {sections.slice(0, 4).map((section) => (
+                <span key={section}>{section}</span>
+              ))}
             </div>
           )}
           <PlanPreview markdown={markdown} />
           <div className="codex-plan-actions">
-            <button type="button" onClick={onReview}>Review plan</button>
-            <button type="button" onClick={onReviewDiff}>Review diff</button>
+            <button type="button" onClick={onReview}>
+              Review plan
+            </button>
+            <button type="button" onClick={onReviewDiff}>
+              Review diff
+            </button>
             {approved ? (
               <span className="codex-plan-approved">Plan approved</span>
-            ) : onApprove && (
-              <button type="button" className="codex-plan-primary" onClick={onApprove} disabled={approving}>
-                {approving ? 'Approving' : 'Approve & run'}
-              </button>
+            ) : (
+              onApprove && (
+                <button
+                  type="button"
+                  className="codex-plan-primary"
+                  onClick={onApprove}
+                  disabled={approving}
+                >
+                  {approving ? "Approving" : "Approve & run"}
+                </button>
+              )
             )}
           </div>
         </div>
@@ -991,30 +1288,48 @@ function PlanOverlay({
   onApprove?: () => void;
   approving?: boolean;
 }) {
-  const markdown = plan.details || plan.text || '';
+  const markdown = plan.details || plan.text || "";
   const insights = planInsights(markdown);
   return (
-    <div className="codex-plan-overlay" role="dialog" aria-modal="true" aria-label={`${assistantName} plan`}>
+    <div
+      className="codex-plan-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${assistantName} plan`}
+    >
       <div className="codex-plan-panel">
         <div className="codex-plan-panel-header">
           <div>
             <div className="codex-plan-kicker">{assistantName} plan</div>
-            <div className="codex-plan-panel-title">{plan.text || planTitle(markdown)}</div>
+            <div className="codex-plan-panel-title">
+              {plan.text || planTitle(markdown)}
+            </div>
             <div className="codex-plan-panel-meta">
               <span>{insights.sections} sections</span>
               <span>{insights.steps} steps</span>
               {plan.planPath && <span>{plan.planPath}</span>}
             </div>
           </div>
-          <button type="button" className="codex-plan-close" onClick={onClose}>Minimize</button>
+          <button type="button" className="codex-plan-close" onClick={onClose}>
+            Minimize
+          </button>
         </div>
         <pre className="codex-plan-markdown">{markdown}</pre>
         <div className="codex-plan-panel-footer">
-          <button type="button" onClick={onClose}>Back to chat</button>
-          <button type="button" onClick={onReviewDiff}>Review diff</button>
+          <button type="button" onClick={onClose}>
+            Back to chat
+          </button>
+          <button type="button" onClick={onReviewDiff}>
+            Review diff
+          </button>
           {onApprove && (
-            <button type="button" className="codex-plan-primary" onClick={onApprove} disabled={approving}>
-              {approving ? 'Approving' : 'Approve & run'}
+            <button
+              type="button"
+              className="codex-plan-primary"
+              onClick={onApprove}
+              disabled={approving}
+            >
+              {approving ? "Approving" : "Approve & run"}
             </button>
           )}
         </div>
@@ -1023,7 +1338,7 @@ function PlanOverlay({
   );
 }
 
-function detailsBlock(details: string, label = 'Details') {
+function detailsBlock(details: string, label = "Details") {
   return (
     <details className="codex-chat-disclosure">
       <summary>{label}</summary>
@@ -1033,63 +1348,70 @@ function detailsBlock(details: string, label = 'Details') {
 }
 
 function shouldHideMessage(msg: ChatMessage): boolean {
-  if (msg.type === 'permission_resolved') return true;
-  if (msg.type === 'permission_submitted') return true;
-  if (msg.type === 'plan_resolved') return true;
-  if (msg.type === 'result') {
-    const value = (msg.subtype || msg.text || '').toLowerCase();
-    return value === '' || value === 'completed' || value === 'success' || value === 'ok';
+  if (msg.type === "permission_resolved") return true;
+  if (msg.type === "permission_submitted") return true;
+  if (msg.type === "plan_resolved") return true;
+  if (msg.type === "result") {
+    const value = (msg.subtype || msg.text || "").toLowerCase();
+    return (
+      value === "" ||
+      value === "completed" ||
+      value === "success" ||
+      value === "ok"
+    );
   }
-  if (msg.type === 'system') {
-    const value = (msg.text || '').toLowerCase();
-    return value.includes('codex chat ready') || value.includes('claude chat ready');
+  if (msg.type === "system") {
+    const value = (msg.text || "").toLowerCase();
+    return (
+      value.includes("codex chat ready") || value.includes("claude chat ready")
+    );
   }
   return false;
 }
 
-function rowKind(type: string): 'message' | 'activity' {
+function rowKind(type: string): "message" | "activity" {
   switch (type) {
-    case 'user':
-    case 'assistant':
-    case 'permission_request':
-    case 'loading':
-    case 'plan':
-    case 'tool':
-    case 'thinking_delta':
-      return 'message';
+    case "user":
+    case "assistant":
+    case "permission_request":
+    case "loading":
+    case "plan":
+    case "tool":
+    case "thinking_delta":
+      return "message";
     default:
-      return 'activity';
+      return "activity";
   }
 }
 
 function activityClass(type: string): string {
   switch (type) {
-    case 'tool':
-    case 'tool_result':
-      return 'tool';
-    case 'thinking_delta':
-      return 'thinking';
-    case 'error':
-      return 'error';
+    case "tool":
+    case "tool_result":
+      return "tool";
+    case "thinking_delta":
+      return "thinking";
+    case "error":
+      return "error";
     default:
-      return 'system';
+      return "system";
   }
 }
 
 function activityLabel(msg: ChatMessage): string {
   switch (msg.type) {
-    case 'tool':
-      return msg.toolName ? `Using ${msg.toolName}` : 'Using tool';
-    case 'tool_result':
-      return msg.toolName ? `${msg.toolName} finished` : 'Tool finished';
-    case 'thinking_delta':
-      return 'Thinking';
-    case 'result':
-      return msg.subtype || 'Finished';
-    case 'error':
-      return 'Error';
-    case 'system':
-      return 'System';
+    case "tool":
+      return msg.toolName ? `Using ${msg.toolName}` : "Using tool";
+    case "tool_result":
+      return msg.toolName ? `${msg.toolName} finished` : "Tool finished";
+    case "thinking_delta":
+      return "Thinking";
+    case "result":
+      return msg.subtype || "Finished";
+    case "error":
+      return "Error";
+    case "system":
+      return "System";
     default:
       return msg.type;
   }
@@ -1097,37 +1419,62 @@ function activityLabel(msg: ChatMessage): string {
 
 function rowLabel(msg: ChatMessage, assistantName: string): string {
   switch (msg.type) {
-    case 'user': return 'You';
-    case 'assistant': return assistantName;
-    case 'tool': return msg.toolName || 'Tool';
-    case 'tool_result': return `${msg.toolName || 'Tool'} result`;
-    case 'permission_request': return msg.toolName || 'Question';
-    case 'plan': return 'Plan';
-    case 'thinking_delta': return 'Thinking';
-    case 'result': return msg.subtype || 'Result';
-    case 'error': return 'Error';
-    case 'system': return 'System';
-    default: return msg.type;
+    case "user":
+      return "You";
+    case "assistant":
+      return assistantName;
+    case "tool":
+      return msg.toolName || "Tool";
+    case "tool_result":
+      return `${msg.toolName || "Tool"} result`;
+    case "permission_request":
+      return msg.toolName || "Question";
+    case "plan":
+      return "Plan";
+    case "thinking_delta":
+      return "Thinking";
+    case "result":
+      return msg.subtype || "Result";
+    case "error":
+      return "Error";
+    case "system":
+      return "System";
+    default:
+      return msg.type;
   }
 }
 
-function statusLabel(status: string, assistantName: string, text?: string): string {
+function statusLabel(
+  status: string,
+  assistantName: string,
+  text?: string,
+): string {
   switch (status) {
-    case 'starting': return `Starting ${assistantName}`;
-    case 'running': return text || `${assistantName} is working`;
-    case 'waiting_input': return 'Waiting for your answer';
-    case 'stopped': return 'Session stopped';
-    default: return 'Ready';
+    case "starting":
+      return `Starting ${assistantName}`;
+    case "running":
+      return text || `${assistantName} is working`;
+    case "waiting_input":
+      return "Waiting for your answer";
+    case "stopped":
+      return "Session stopped";
+    default:
+      return "Ready";
   }
 }
 
 function statusLabelShort(status: string): string {
   switch (status) {
-    case 'waiting_input': return 'needs input';
-    case 'running': return 'running';
-    case 'starting': return 'starting';
-    case 'stopped': return 'stopped';
-    default: return 'ready';
+    case "waiting_input":
+      return "needs input";
+    case "running":
+      return "running";
+    case "starting":
+      return "starting";
+    case "stopped":
+      return "stopped";
+    default:
+      return "ready";
   }
 }
 
@@ -1140,26 +1487,31 @@ function formatDetails(details: string): string {
 }
 
 function planTitle(markdown: string): string {
-  const line = markdown.split('\n').map((item) => item.trim()).find(Boolean);
-  return line ? line.replace(/^#+\s*/, '') : 'Plan ready';
+  const line = markdown
+    .split("\n")
+    .map((item) => item.trim())
+    .find(Boolean);
+  return line ? line.replace(/^#+\s*/, "") : "Plan ready";
 }
 
 function planPreview(markdown: string): string {
   const lines = markdown
-    .split('\n')
+    .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
-  return lines.slice(0, 4).join('\n') || 'Review the plan before changes start.';
+    .filter((line) => line && !line.startsWith("#"));
+  return (
+    lines.slice(0, 4).join("\n") || "Review the plan before changes start."
+  );
 }
 
 function PlanPreview({ markdown }: { markdown: string }) {
-  const lines = planPreview(markdown).split('\n').filter(Boolean);
+  const lines = planPreview(markdown).split("\n").filter(Boolean);
   return (
     <div className="codex-plan-preview-list">
       {lines.map((line, index) => (
         <div className="codex-plan-preview-line" key={`${line}-${index}`}>
           <span>{index + 1}</span>
-          <p>{line.replace(/^[-*]\s*/, '').replace(/^\d+\.\s*/, '')}</p>
+          <p>{line.replace(/^[-*]\s*/, "").replace(/^\d+\.\s*/, "")}</p>
         </div>
       ))}
     </div>
@@ -1167,7 +1519,10 @@ function PlanPreview({ markdown }: { markdown: string }) {
 }
 
 function planInsights(markdown: string): { sections: number; steps: number } {
-  const lines = markdown.split('\n').map((line) => line.trim()).filter(Boolean);
+  const lines = markdown
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   return {
     sections: lines.filter((line) => /^#{1,4}\s+/.test(line)).length,
     steps: lines.filter((line) => /^([-*]|\d+\.)\s+/.test(line)).length,
@@ -1176,40 +1531,51 @@ function planInsights(markdown: string): { sections: number; steps: number } {
 
 function planSections(markdown: string): string[] {
   return markdown
-    .split('\n')
+    .split("\n")
     .map((line) => line.trim())
     .filter((line) => /^#{1,4}\s+/.test(line))
-    .map((line) => line.replace(/^#{1,4}\s+/, '').trim())
+    .map((line) => line.replace(/^#{1,4}\s+/, "").trim())
     .filter(Boolean);
 }
 
 function toolLooksLikeCommand(toolName?: string): boolean {
-  const value = (toolName || '').toLowerCase();
-  return value.includes('bash') || value.includes('command') || value.includes('shell');
+  const value = (toolName || "").toLowerCase();
+  return (
+    value.includes("bash") ||
+    value.includes("command") ||
+    value.includes("shell")
+  );
 }
 
 function toolIcon(toolName?: string): string {
-  const value = (toolName || '').toLowerCase();
-  if (value.includes('bash') || value.includes('command')) return '$';
-  if (value.includes('file')) return '±';
-  if (value.includes('web')) return '⌕';
-  if (value.includes('mcp')) return '◆';
-  return '∴';
+  const value = (toolName || "").toLowerCase();
+  if (value.includes("bash") || value.includes("command")) return "$";
+  if (value.includes("file")) return "±";
+  if (value.includes("web")) return "⌕";
+  if (value.includes("mcp")) return "◆";
+  return "∴";
 }
 
 function permissionPrompt(msg: ChatMessage): string {
   if (msg.details) return msg.details;
   if (msg.text) return msg.text;
-  return 'Choose how Orion should continue.';
+  return "Choose how Orion should continue.";
 }
 
-function permissionStatusLabel(state: 'waiting' | 'submitting' | 'submitted' | 'answered' | 'error'): string {
+function permissionStatusLabel(
+  state: "waiting" | "submitting" | "submitted" | "answered" | "error",
+): string {
   switch (state) {
-    case 'submitting': return 'sending';
-    case 'submitted': return 'submitted';
-    case 'answered': return 'answered';
-    case 'error': return 'retry needed';
-    default: return 'waiting';
+    case "submitting":
+      return "sending";
+    case "submitted":
+      return "submitted";
+    case "answered":
+      return "answered";
+    case "error":
+      return "retry needed";
+    default:
+      return "waiting";
   }
 }
 

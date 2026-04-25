@@ -8,10 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"orion/internal/chatattachments"
-	"orion/internal/claudechat"
+	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
 	"orion/internal/config"
 	"orion/internal/diag"
@@ -312,11 +311,16 @@ func (a *App) LaunchShell(repoRoot string, workspacePath string) (string, error)
 func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error) {
 	switch chatKind {
 	case "claude":
+		var threadID string
 		if session, ok := a.claudeMgr.Get(sessionID); ok {
-			return session.Info().ID, nil
+			threadID = strings.TrimSpace(session.Info().ThreadID)
+			_ = session.Stop()
 		}
-		if strings.TrimSpace(sessionID) != "" {
-			return sessionID, nil
+		if threadID == "" && !strings.HasPrefix(strings.TrimSpace(sessionID), claudechat.SessionType+"-") {
+			threadID = strings.TrimSpace(sessionID)
+		}
+		if threadID != "" {
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "claude --dangerously-skip-permissions --resume "+shellQuote(threadID))
 		}
 		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
 	case "codex":
@@ -337,16 +341,50 @@ func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessi
 // --- Claude chat methods ---
 
 func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error) {
-	startedAt := time.Now().Add(-2 * time.Second)
-	tmuxSession, err := a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
-	if err != nil {
-		return nil, err
+	return a.claudeMgr.StartWithOptions(claudechat.StartOptions{
+		WorkspacePath:    workspacePath,
+		Label:            "Claude Chat",
+		Model:            "claude-opus-4-7",
+		ReasoningEffort:  "xhigh",
+		ApprovalPolicy:   "never",
+		SandboxMode:      "danger-full-access",
+		PermissionMode:   "plan",
+		ClaudeExecutable: "claude",
+	})
+}
+
+func (a *App) ResumeClaudeChat(repoRoot string, workspacePath string, threadID string) (*claudechat.SessionInfo, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, fmt.Errorf("threadId required")
 	}
-	return a.claudeMgr.AttachSince(tmuxSession, workspacePath, "Claude", startedAt)
+	return a.claudeMgr.StartWithOptions(claudechat.StartOptions{
+		WorkspacePath:    workspacePath,
+		Label:            "Claude Chat",
+		ThreadID:         threadID,
+		Model:            "claude-opus-4-7",
+		ReasoningEffort:  "xhigh",
+		ApprovalPolicy:   "never",
+		SandboxMode:      "danger-full-access",
+		PermissionMode:   "plan",
+		ClaudeExecutable: "claude",
+	})
 }
 
 func (a *App) AttachClaudeChat(tmuxSession string, workspacePath string) (*claudechat.SessionInfo, error) {
 	return a.claudeMgr.Attach(tmuxSession, workspacePath, "Claude")
+}
+
+func (a *App) ConvertTerminalToClaudeChat(repoRoot string, workspacePath string, tmuxSession string) (*claudechat.SessionInfo, error) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return nil, fmt.Errorf("tmuxSession required")
+	}
+	threadID := claudechat.ThreadIDForTmux(tmuxSession, workspacePath)
+	if threadID == "" {
+		return nil, fmt.Errorf("could not identify Claude session for tmux session %s", tmuxSession)
+	}
+	return a.ResumeClaudeChat(repoRoot, workspacePath, threadID)
 }
 
 func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -362,6 +400,11 @@ func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInf
 			ViewMode:         "chat",
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
+			Model:            info.Model,
+			ReasoningEffort:  info.ReasoningEffort,
+			ApprovalPolicy:   info.ApprovalPolicy,
+			SandboxMode:      info.SandboxMode,
+			PermissionMode:   info.PermissionMode,
 		})
 	}
 	return sessions
@@ -422,14 +465,23 @@ func (a *App) LaunchCodexChatWithOptions(repoRoot string, workspacePath string, 
 }
 
 func (a *App) ResumeCodexChat(repoRoot string, workspacePath string, threadID string) (*codexchat.SessionInfo, error) {
+	return a.ResumeCodexChatWithOptions(repoRoot, workspacePath, threadID, "", "", "", "", "")
+}
+
+func (a *App) ResumeCodexChatWithOptions(repoRoot string, workspacePath string, threadID string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, fmt.Errorf("threadId required")
 	}
 	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
-		WorkspacePath: workspacePath,
-		Label:         "Codex Chat",
-		ThreadID:      threadID,
+		WorkspacePath:     workspacePath,
+		Label:             "Codex Chat",
+		ThreadID:          threadID,
+		Model:             model,
+		ReasoningEffort:   reasoningEffort,
+		ApprovalPolicy:    approvalPolicy,
+		SandboxMode:       sandboxMode,
+		CollaborationMode: collaborationMode,
 	})
 }
 
@@ -664,6 +716,7 @@ func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 		"reasoningEffort":   session.ReasoningEffort,
 		"approvalPolicy":    session.ApprovalPolicy,
 		"sandboxMode":       session.SandboxMode,
+		"permissionMode":    session.PermissionMode,
 		"collaborationMode": session.CollaborationMode,
 	})
 }

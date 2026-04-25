@@ -23,7 +23,7 @@ export namespace chatattachments {
 
 }
 
-export namespace claudechat {
+export namespace claudesdk {
 
 	export class Message {
 	    id: string;
@@ -88,6 +88,14 @@ export namespace claudechat {
 	    workspacePath: string;
 	    status: string;
 	    threadId?: string;
+	    provider?: string;
+	    viewMode?: string;
+	    runtimeSessionId?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    permissionMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -101,6 +109,14 @@ export namespace claudechat {
 	        this.workspacePath = source["workspacePath"];
 	        this.status = source["status"];
 	        this.threadId = source["threadId"];
+	        this.provider = source["provider"];
+	        this.viewMode = source["viewMode"];
+	        this.runtimeSessionId = source["runtimeSessionId"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
 	    }
 	}
 
@@ -610,6 +626,7 @@ export namespace state {
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
 	    sandboxMode?: string;
+	    permissionMode?: string;
 	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
@@ -630,6 +647,7 @@ export namespace state {
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
 	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
 	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}
@@ -646,6 +664,7 @@ export namespace state {
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
 	    sandboxMode?: string;
+	    permissionMode?: string;
 	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
@@ -666,6 +685,7 @@ export namespace state {
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
 	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
 	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}

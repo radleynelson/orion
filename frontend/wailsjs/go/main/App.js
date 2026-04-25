@@ -30,6 +30,10 @@ export function ConvertChatToTerminal(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ConvertChatToTerminal'](arg1, arg2, arg3, arg4);
 }
 
+export function ConvertTerminalToClaudeChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ConvertTerminalToClaudeChat'](arg1, arg2, arg3);
+}
+
 export function ConvertTerminalToCodexChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ConvertTerminalToCodexChat'](arg1, arg2, arg3);
 }
@@ -234,8 +238,16 @@ export function RecoverSessions(arg1, arg2) {
   return window['go']['main']['App']['RecoverSessions'](arg1, arg2);
 }
 
+export function ResumeClaudeChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResumeClaudeChat'](arg1, arg2, arg3);
+}
+
 export function ResumeCodexChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResumeCodexChat'](arg1, arg2, arg3);
+}
+
+export function ResumeCodexChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ResumeCodexChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function RevealInFinder(arg1) {

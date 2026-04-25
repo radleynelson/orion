@@ -24,6 +24,7 @@ type SessionInfo struct {
 	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
 	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
 	SandboxMode       string `json:"sandboxMode,omitempty"`
+	PermissionMode    string `json:"permissionMode,omitempty"`
 	CollaborationMode string `json:"collaborationMode,omitempty"`
 }
 
@@ -41,6 +42,7 @@ type SavedTab struct {
 	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
 	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
 	SandboxMode       string `json:"sandboxMode,omitempty"`
+	PermissionMode    string `json:"permissionMode,omitempty"`
 	CollaborationMode string `json:"collaborationMode,omitempty"`
 }
 
@@ -180,6 +182,9 @@ func dedupeSavedTabs(tabs []SavedTab) []SavedTab {
 func savedTabIdentity(tab SavedTab) string {
 	if tab.TabType == "codex-chat" && strings.TrimSpace(tab.ThreadID) != "" {
 		return tab.WorkspacePath + "|codex-chat|" + strings.TrimSpace(tab.ThreadID)
+	}
+	if tab.TabType == "claude-chat" && strings.TrimSpace(tab.ThreadID) != "" {
+		return tab.WorkspacePath + "|claude-chat|" + strings.TrimSpace(tab.ThreadID)
 	}
 	if strings.TrimSpace(tab.TmuxSession) != "" {
 		return tab.WorkspacePath + "|tmux|" + strings.TrimSpace(tab.TmuxSession)

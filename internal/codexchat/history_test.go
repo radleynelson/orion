@@ -37,6 +37,27 @@ func TestLoadHistoryReadsCodexJSONL(t *testing.T) {
 	}
 }
 
+func TestCachedMessagesPreserveRichRows(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	threadID := "thread-rich-cache"
+
+	AppendCachedMessage(Message{ID: "status-1", ThreadID: threadID, Type: "status", Status: "running"})
+	AppendCachedMessage(Message{ID: "question-1", ThreadID: threadID, Type: "permission_request", ToolUseID: "tool-1", ToolName: "AskUserQuestion", Text: "Where should the label live?"})
+	AppendCachedMessage(Message{ID: "answer-1", ThreadID: threadID, Type: "permission_submitted", ToolUseID: "tool-1", ToolName: "AskUserQuestion", Text: "Page header"})
+
+	messages := LoadCachedMessages(threadID, "")
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 cached messages, got %d: %#v", len(messages), messages)
+	}
+	if messages[0].SessionID != "" || messages[0].Type != "permission_request" || messages[0].Text != "Where should the label live?" {
+		t.Fatalf("unexpected cached question: %#v", messages[0])
+	}
+	if messages[1].Type != "permission_submitted" || messages[1].Text != "Page header" {
+		t.Fatalf("unexpected cached answer: %#v", messages[1])
+	}
+}
+
 func TestLatestThreadIDForWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)

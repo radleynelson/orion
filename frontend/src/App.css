@@ -1882,6 +1882,51 @@
   background: color-mix(in srgb, var(--accent-green) 6%, var(--bg-surface));
 }
 
+.codex-chat-message-permission-submitted .codex-permission-icon,
+.codex-chat-message-permission-answered .codex-permission-icon {
+  border-color: color-mix(in srgb, var(--accent-green) 34%, var(--border));
+  background: color-mix(in srgb, var(--accent-green) 14%, var(--bg-active));
+  color: var(--accent-green);
+}
+
+.codex-permission-resolved {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border-dim);
+}
+
+.codex-permission-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.codex-permission-qa-label {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.codex-permission-qa-text {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.codex-permission-qa-answer {
+  color: var(--text-primary);
+  border-left: 2px solid color-mix(in srgb, var(--accent-green) 50%, var(--border));
+  padding-left: 8px;
+  max-height: 9em;
+  overflow: auto;
+}
+
 .codex-chat-message-permission-error .codex-permission-card {
   border-color: color-mix(in srgb, var(--accent-red) 42%, var(--border-dim));
   background: color-mix(in srgb, var(--accent-red) 6%, var(--bg-surface));
