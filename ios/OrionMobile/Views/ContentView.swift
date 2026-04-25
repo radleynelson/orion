@@ -2272,6 +2272,13 @@ private struct ChatSessionMetadata: Decodable {
     let threadId: String?
 }
 
+private struct MobileLiveActivityItem: Identifiable {
+    let id: String
+    let kind: String
+    let label: String
+    let value: String?
+}
+
 private struct PendingChatImage: Identifiable {
     let id = UUID()
     let name: String
@@ -2329,6 +2336,9 @@ struct CodexChatView: View {
                 }
                 if let sessionMetadata {
                     modeStrip(sessionMetadata)
+                }
+                if !liveActivityItems.isEmpty {
+                    liveActivityStrip(liveActivityItems)
                 }
             }
             .padding(.horizontal, 14)
@@ -2450,6 +2460,10 @@ struct CodexChatView: View {
         mergeChatRows(connection.messages, assistantName: assistantName)
     }
 
+    private var liveActivityItems: [MobileLiveActivityItem] {
+        liveChatActivityItems(messages: connection.messages, rows: chatRows, assistantName: assistantName)
+    }
+
     @ViewBuilder
     private func modeStrip(_ metadata: ChatSessionMetadata) -> some View {
         let items: [(String, String?)] = [
@@ -2482,6 +2496,37 @@ struct CodexChatView: View {
                         .overlay(RoundedRectangle(cornerRadius: 7).stroke(OrionTheme.borderDim, lineWidth: 0.5))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
+                }
+            }
+        }
+    }
+
+    private func liveActivityStrip(_ items: [MobileLiveActivityItem]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(items) { item in
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(liveActivityColor(item.kind))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: liveActivityColor(item.kind).opacity(0.35), radius: 4)
+                        Text(item.label)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .lineLimit(1)
+                        if let value = item.value, !value.isEmpty {
+                            Text(value)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(OrionTheme.bgPrimary.opacity(0.58))
+                    .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                    .clipShape(Capsule())
                 }
             }
         }
@@ -2751,7 +2796,7 @@ struct CodexChatView: View {
                         Circle()
                             .fill(OrionTheme.accentPurple)
                             .frame(width: 7, height: 7)
-                        Text("Thinking through the plan")
+                        Text(reasoningActivityTitle(row.text))
                             .font(.system(size: 13))
                             .foregroundStyle(OrionTheme.textSecondary)
                     }
@@ -3566,6 +3611,119 @@ private func chatSessionMetadata(_ messages: [CodexChatMessage]) -> ChatSessionM
         }
     }
     return nil
+}
+
+private func liveChatActivityItems(messages: [CodexChatMessage], rows: [CodexChatRow], assistantName: String) -> [MobileLiveActivityItem] {
+    var items: [MobileLiveActivityItem] = []
+    let statusMessage = messages.reversed().first { $0.type == "status" }
+    let status = statusMessage?.status ?? "idle"
+
+    switch status {
+    case "starting":
+        items.append(MobileLiveActivityItem(id: "status-starting", kind: "status", label: "Starting", value: assistantName))
+    case "running":
+        let value = compactActivityValue(statusMessage?.text ?? "\(assistantName) is working")
+        items.append(MobileLiveActivityItem(id: "status-running", kind: "status", label: "Working", value: value))
+    case "waiting_input":
+        items.append(MobileLiveActivityItem(id: "status-waiting", kind: "question", label: "Waiting", value: "needs your input"))
+    default:
+        break
+    }
+
+    let runningTools = rows.filter { $0.type == "tool" && $0.toolStatus == "running" }
+    if let latestTool = runningTools.last {
+        items.append(MobileLiveActivityItem(
+            id: "tool-\(latestTool.id)",
+            kind: "tool",
+            label: "Using",
+            value: compactActivityValue(latestTool.label.isEmpty ? latestTool.text : latestTool.label)
+        ))
+        if runningTools.count > 1 {
+            items.append(MobileLiveActivityItem(id: "tool-count", kind: "tool", label: "\(runningTools.count) tools", value: "active"))
+        }
+    }
+
+    let lastVisibleRow = rows.last
+    if let lastReasoning = rows.reversed().first(where: { $0.type == "thinking_delta" }),
+       status == "running" || lastVisibleRow?.id == lastReasoning.id {
+        items.append(MobileLiveActivityItem(
+            id: "reasoning-\(lastReasoning.id)",
+            kind: "reasoning",
+            label: "Reasoning",
+            value: reasoningActivitySummary(lastReasoning.text)
+        ))
+    }
+
+    if status == "running",
+       let lastVisibleRow,
+       lastVisibleRow.type == "assistant",
+       lastVisibleRow.id.hasPrefix("assistant-stream-") {
+        items.append(MobileLiveActivityItem(id: "stream-\(lastVisibleRow.id)", kind: "stream", label: "Streaming", value: "answer"))
+    }
+
+    if let plan = openPlanMessage(messages) {
+        let markdown = plan.details ?? ""
+        let title = plan.text?.isEmpty == false ? plan.text! : planTitle(markdown)
+        items.append(MobileLiveActivityItem(id: "plan-\(plan.id)", kind: "plan", label: "Plan ready", value: compactActivityValue(title)))
+    }
+
+    return Array(uniqueActivityItems(items).prefix(4))
+}
+
+private func uniqueActivityItems(_ items: [MobileLiveActivityItem]) -> [MobileLiveActivityItem] {
+    var seen = Set<String>()
+    return items.filter { item in
+        let key = "\(item.kind):\(item.label):\(item.value ?? "")"
+        guard !seen.contains(key) else { return false }
+        seen.insert(key)
+        return true
+    }
+}
+
+private func openPlanMessage(_ messages: [CodexChatMessage]) -> CodexChatMessage? {
+    var lastPlan: CodexChatMessage?
+    var lastPlanIndex = -1
+    var resolvedIndex = -1
+    for (index, message) in messages.enumerated() {
+        if message.type == "plan" {
+            lastPlan = message
+            lastPlanIndex = index
+        } else if message.type == "plan_resolved" {
+            resolvedIndex = index
+        }
+    }
+    return lastPlanIndex > resolvedIndex ? lastPlan : nil
+}
+
+private func compactActivityValue(_ value: String) -> String {
+    let collapsed = value
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    guard collapsed.count > 48 else { return collapsed }
+    return "\(collapsed.prefix(45))..."
+}
+
+private func reasoningActivitySummary(_ value: String) -> String {
+    let firstLine = value
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty } ?? "thinking"
+    return compactActivityValue(firstLine)
+}
+
+private func reasoningActivityTitle(_ value: String) -> String {
+    let summary = reasoningActivitySummary(value)
+    return summary == "thinking" ? "Thinking through the plan" : summary
+}
+
+private func liveActivityColor(_ kind: String) -> Color {
+    switch kind {
+    case "tool": return OrionTheme.accentGreen
+    case "reasoning": return OrionTheme.accentPurple
+    case "plan", "question": return OrionTheme.accentYellow
+    default: return OrionTheme.accentBlue
+    }
 }
 
 private func approvalLabel(_ value: String?) -> String? {

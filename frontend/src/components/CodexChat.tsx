@@ -46,6 +46,13 @@ type ChatRow = ChatMessage & {
   toolStatus?: 'running' | 'complete';
 };
 
+type LiveActivityItem = {
+  id: string;
+  kind: 'status' | 'tool' | 'reasoning' | 'plan' | 'stream' | 'question';
+  label: string;
+  value?: string;
+};
+
 type SessionMetadata = {
   provider?: string;
   viewMode?: string;
@@ -153,6 +160,10 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   const lastStatusMessage = [...messages].reverse().find((m) => m.type === 'status');
   const lastStatus = lastStatusMessage?.status || 'idle';
   const isRunning = lastStatus === 'running';
+  const liveActivity = useMemo(
+    () => liveActivityItems(messages, rows, lastStatus, config.displayName, lastStatusMessage?.text),
+    [messages, rows, lastStatus, lastStatusMessage?.text, config.displayName],
+  );
 
   const send = async () => {
     const text = input.trim();
@@ -257,6 +268,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
           <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>{statusLabelShort(lastStatus)}</div>
         </div>
         {metadata && <SessionModeStrip metadata={metadata} kind={kind} />}
+        {liveActivity.length > 0 && <LiveActivityStrip items={liveActivity} />}
       </div>
 
       <div ref={scrollerRef} className="codex-chat-messages">
@@ -415,6 +427,110 @@ function sessionMetadata(messages: ChatMessage[]): SessionMetadata | null {
   return threadId ? { threadId } : null;
 }
 
+function liveActivityItems(
+  messages: ChatMessage[],
+  rows: ChatRow[],
+  lastStatus: string,
+  assistantName: string,
+  statusText?: string,
+): LiveActivityItem[] {
+  const items: LiveActivityItem[] = [];
+  if (lastStatus === 'starting') {
+    items.push({ id: 'status-starting', kind: 'status', label: 'Starting', value: assistantName });
+  } else if (lastStatus === 'running') {
+    items.push({
+      id: 'status-running',
+      kind: 'status',
+      label: 'Working',
+      value: compactActivityValue(statusText || `${assistantName} is working`),
+    });
+  } else if (lastStatus === 'waiting_input') {
+    items.push({ id: 'status-waiting', kind: 'question', label: 'Waiting', value: 'needs your input' });
+  }
+
+  const runningTools = rows.filter((row) => row.type === 'tool' && row.toolStatus === 'running');
+  const latestTool = runningTools[runningTools.length - 1];
+  if (latestTool) {
+    items.push({
+      id: `tool-${latestTool.id}`,
+      kind: 'tool',
+      label: 'Using',
+      value: compactActivityValue(latestTool.toolName || latestTool.text || 'tool'),
+    });
+    if (runningTools.length > 1) {
+      items.push({
+        id: 'tool-count',
+        kind: 'tool',
+        label: `${runningTools.length} tools`,
+        value: 'active',
+      });
+    }
+  }
+
+  const lastVisibleRow = rows[rows.length - 1];
+  const lastReasoning = [...rows].reverse().find((row) => row.type === 'thinking_delta');
+  if (lastReasoning && (lastStatus === 'running' || lastVisibleRow?.id === lastReasoning.id)) {
+    items.push({
+      id: `reasoning-${lastReasoning.id}`,
+      kind: 'reasoning',
+      label: 'Reasoning',
+      value: reasoningSummary(lastReasoning.text),
+    });
+  }
+
+  if (lastStatus === 'running' && lastVisibleRow?.type === 'assistant' && lastVisibleRow.merged) {
+    items.push({ id: `stream-${lastVisibleRow.id}`, kind: 'stream', label: 'Streaming', value: 'answer' });
+  }
+
+  const planState = openPlanMessage(messages);
+  if (planState) {
+    items.push({ id: `plan-${planState.id}`, kind: 'plan', label: 'Plan ready', value: compactActivityValue(planState.text || planTitle(planState.details || '')) });
+  }
+
+  return uniqueActivityItems(items).slice(0, 4);
+}
+
+function uniqueActivityItems(items: LiveActivityItem[]): LiveActivityItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.kind}:${item.label}:${item.value || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function openPlanMessage(messages: ChatMessage[]): ChatMessage | null {
+  let lastPlan: ChatMessage | null = null;
+  let lastPlanIndex = -1;
+  let resolvedIndex = -1;
+  messages.forEach((msg, index) => {
+    if (msg.type === 'plan') {
+      lastPlan = msg;
+      lastPlanIndex = index;
+    } else if (msg.type === 'plan_resolved') {
+      resolvedIndex = index;
+    }
+  });
+  return lastPlan && lastPlanIndex > resolvedIndex ? lastPlan : null;
+}
+
+function compactActivityValue(value: string): string {
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  return trimmed.length > 48 ? `${trimmed.slice(0, 45)}...` : trimmed;
+}
+
+function reasoningSummary(value?: string): string {
+  if (!value?.trim()) return 'thinking';
+  const firstLine = value.split('\n').map((line) => line.trim()).find(Boolean);
+  return compactActivityValue(firstLine || 'thinking');
+}
+
+function reasoningTitle(value?: string): string {
+  const summary = reasoningSummary(value);
+  return summary === 'thinking' ? 'Thinking through the plan' : summary;
+}
+
 function renderRow(
   msg: ChatRow,
   answers: Record<string, string>,
@@ -520,6 +636,20 @@ function SessionModeStrip({ metadata, kind }: { metadata: SessionMetadata; kind:
         <div className="codex-chat-mode-pill" key={item.label}>
           <span>{item.label}</span>
           <strong>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveActivityStrip({ items }: { items: LiveActivityItem[] }) {
+  return (
+    <div className="codex-chat-live-strip" aria-label="Live chat activity">
+      {items.map((item) => (
+        <div className={`codex-chat-live-pill codex-chat-live-pill-${item.kind}`} key={item.id}>
+          <span className="codex-chat-live-dot" />
+          <span className="codex-chat-live-label">{item.label}</span>
+          {item.value && <span className="codex-chat-live-value">{item.value}</span>}
         </div>
       ))}
     </div>
@@ -647,7 +777,7 @@ function ReasoningCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
         <details className="codex-reasoning-card">
           <summary>
             <span className="codex-reasoning-dot" />
-            <span>Thinking through the plan</span>
+            <span>{reasoningTitle(msg.text)}</span>
           </summary>
           <div>{msg.text || 'Reasoning in progress.'}</div>
         </details>
