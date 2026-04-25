@@ -620,13 +620,22 @@
 }
 
 .codex-chat-header {
-  min-height: 68px;
+  min-height: 82px;
   border-bottom: 1px solid var(--border-dim);
   background: var(--bg-secondary);
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 9px;
+  padding: 12px 18px;
+}
+
+.codex-chat-header-main {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 18px;
+  gap: 14px;
 }
 
 .codex-chat-heading {
@@ -647,14 +656,16 @@
   color: var(--text-dim);
 }
 
-.codex-chat-session-meta {
+.codex-chat-session-meta,
+.codex-chat-mode-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 5px;
 }
 
-.codex-chat-session-meta span {
+.codex-chat-session-meta span,
+.codex-chat-mode-pill {
   font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1;
@@ -662,6 +673,29 @@
   border: 1px solid var(--border-dim);
   border-radius: 6px;
   padding: 3px 5px;
+}
+
+.codex-chat-mode-strip {
+  margin-top: 0;
+  gap: 6px;
+}
+
+.codex-chat-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 4px 7px;
+  background: color-mix(in srgb, var(--bg-active) 72%, transparent);
+}
+
+.codex-chat-mode-pill span {
+  color: var(--text-dim);
+}
+
+.codex-chat-mode-pill strong {
+  color: var(--text-secondary);
+  font-weight: 650;
 }
 
 .codex-chat-status {
@@ -843,6 +877,12 @@
   max-width: min(720px, 88%);
 }
 
+.codex-chat-message-tool,
+.codex-chat-message-reasoning,
+.codex-chat-message-permission {
+  max-width: min(720px, 88%);
+}
+
 .codex-plan-card {
   width: min(640px, 100%);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 24%, var(--border));
@@ -895,18 +935,69 @@
   font-size: 11px;
 }
 
-.codex-plan-preview {
-  margin: 0;
-  padding: 10px 16px;
+.codex-plan-badges,
+.codex-plan-section-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.codex-plan-badge.muted {
+  color: var(--text-dim);
+  border-color: var(--border-dim);
+}
+
+.codex-plan-section-row {
+  justify-content: flex-start;
+  padding: 10px 16px 0;
+}
+
+.codex-plan-section-row span {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-active));
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 18%, var(--border-dim));
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.codex-plan-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 16px;
+}
+
+.codex-plan-preview-line {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 9px;
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.45;
-  white-space: pre-wrap;
+}
+
+.codex-plan-preview-line span {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, var(--bg-active));
+  color: var(--accent-blue);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.codex-plan-preview-line p {
+  margin: 0;
   overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-line-clamp: 5;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .codex-plan-actions {
@@ -979,6 +1070,22 @@
 
 .codex-plan-panel-title {
   font-size: 18px;
+}
+
+.codex-plan-panel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.codex-plan-panel-meta span {
+  color: var(--text-dim);
+  border: 1px solid var(--border-dim);
+  border-radius: 999px;
+  padding: 4px 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .codex-plan-markdown {
@@ -1059,6 +1166,194 @@
 
 .codex-chat-activity-error .codex-chat-activity-dot {
   background: var(--accent-red);
+}
+
+.codex-tool-card,
+.codex-permission-card,
+.codex-reasoning-card {
+  width: min(640px, 100%);
+  border: 1px solid var(--border-dim);
+  border-radius: 14px;
+  background: var(--bg-surface);
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.16);
+}
+
+.codex-tool-card {
+  border-color: color-mix(in srgb, var(--accent-green) 24%, var(--border-dim));
+}
+
+.codex-tool-card-header,
+.codex-permission-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.codex-tool-title,
+.codex-permission-header {
+  min-width: 0;
+}
+
+.codex-tool-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.codex-tool-icon,
+.codex-permission-icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent-green) 16%, var(--bg-active));
+  border: 1px solid color-mix(in srgb, var(--accent-green) 26%, var(--border));
+  color: var(--accent-green);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.codex-permission-icon {
+  background: color-mix(in srgb, var(--accent-yellow) 14%, var(--bg-active));
+  border-color: color-mix(in srgb, var(--accent-yellow) 34%, var(--border));
+  color: var(--accent-yellow);
+}
+
+.codex-tool-name,
+.codex-permission-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-tool-id,
+.codex-permission-subtitle {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.codex-tool-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 7px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.codex-tool-status.running {
+  color: var(--accent-blue);
+  border-color: color-mix(in srgb, var(--accent-blue) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+}
+
+.codex-tool-status.complete {
+  color: var(--accent-green);
+  border-color: color-mix(in srgb, var(--accent-green) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent-green) 8%, transparent);
+}
+
+.codex-tool-command,
+.codex-tool-text,
+.codex-tool-output pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.42;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.codex-tool-command,
+.codex-tool-text {
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--bg-terminal) 70%, var(--bg-surface));
+}
+
+.codex-tool-output {
+  border-top: 1px solid var(--border-dim);
+  padding: 9px 14px 12px;
+}
+
+.codex-tool-output summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  user-select: none;
+}
+
+.codex-tool-output pre {
+  margin-top: 8px;
+}
+
+.codex-reasoning-card {
+  padding: 0;
+  border-color: color-mix(in srgb, var(--accent-purple) 24%, var(--border-dim));
+}
+
+.codex-reasoning-card summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 11px 13px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  user-select: none;
+}
+
+.codex-reasoning-card div {
+  border-top: 1px solid var(--border-dim);
+  padding: 11px 13px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.codex-reasoning-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-purple);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-purple) 12%, transparent);
+}
+
+.codex-permission-card {
+  border-color: color-mix(in srgb, var(--accent-yellow) 42%, var(--border-dim));
+  background: color-mix(in srgb, var(--accent-yellow) 6%, var(--bg-surface));
+}
+
+.codex-permission-prompt {
+  padding: 12px 14px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.codex-permission-card .codex-chat-answer {
+  padding: 0 14px 14px;
 }
 
 .codex-chat-disclosure {

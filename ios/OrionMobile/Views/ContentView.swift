@@ -535,6 +535,20 @@ private struct CodexChatRow: Identifiable {
     let toolUseId: String?
     let planPath: String?
     let attachments: [ChatAttachmentPayload]
+    var resultText: String?
+    var resultDetails: String?
+    var toolStatus: String?
+}
+
+private struct ChatSessionMetadata: Decodable {
+    let provider: String?
+    let viewMode: String?
+    let model: String?
+    let reasoningEffort: String?
+    let approvalPolicy: String?
+    let sandboxMode: String?
+    let collaborationMode: String?
+    let threadId: String?
 }
 
 private struct PendingChatImage: Identifiable {
@@ -564,34 +578,40 @@ struct CodexChatView: View {
     private let chatBottomID = "chat-bottom"
     private var assistantName: String { connection.displayName }
     private var assistantColor: Color { sessionColor(connection.sessionType) }
+    private var sessionMetadata: ChatSessionMetadata? { chatSessionMetadata(connection.messages) }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                AgentSigilView(connection.sessionType, size: 34, strong: true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(assistantName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(OrionTheme.textPrimary)
-                    Text(statusLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(OrionTheme.textDim)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    AgentSigilView(connection.sessionType, size: 34, strong: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(assistantName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                        Text(statusLabel)
+                            .font(.system(size: 11))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(connection.connectionState == .connected ? OrionTheme.accentGreen : OrionTheme.textDim)
+                            .frame(width: 7, height: 7)
+                        Text(connection.connectionState == .connected ? "Online" : "Offline")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(connection.connectionState == .connected ? OrionTheme.textSecondary : OrionTheme.textDim)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
                 }
-                Spacer()
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(connection.connectionState == .connected ? OrionTheme.accentGreen : OrionTheme.textDim)
-                        .frame(width: 7, height: 7)
-                    Text(connection.connectionState == .connected ? "Online" : "Offline")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(connection.connectionState == .connected ? OrionTheme.textSecondary : OrionTheme.textDim)
+                if let sessionMetadata {
+                    modeStrip(sessionMetadata)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
             }
             .padding(.horizontal, 14)
-            .frame(height: 62)
+            .padding(.vertical, 12)
             .background(OrionTheme.bgSecondary)
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
@@ -675,11 +695,54 @@ struct CodexChatView: View {
     }
 
     @ViewBuilder
+    private func modeStrip(_ metadata: ChatSessionMetadata) -> some View {
+        let items: [(String, String?)] = [
+            ("model", metadata.model),
+            ("reasoning", metadata.reasoningEffort),
+            ("approvals", approvalLabel(metadata.approvalPolicy)),
+            ("sandbox", sandboxLabel(metadata.sandboxMode)),
+            ("mode", metadata.collaborationMode)
+        ]
+        let visible = items.compactMap { item -> (String, String)? in
+            let (label, value) = item
+            guard let value, !value.isEmpty else { return nil }
+            return (label, value)
+        }
+        if !visible.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(visible.enumerated()), id: \.offset) { _, item in
+                        HStack(spacing: 5) {
+                            Text(item.0)
+                                .foregroundStyle(OrionTheme.textDim)
+                            Text(item.1)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(OrionTheme.textSecondary)
+                        }
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 5)
+                        .background(OrionTheme.bgActive.opacity(0.72))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func chatRow(_ row: CodexChatRow) -> some View {
         if row.type == "plan" {
             planRow(row)
         } else if row.type == "loading" {
             loadingRow(row)
+        } else if row.type == "tool" {
+            toolRow(row)
+        } else if row.type == "thinking_delta" {
+            reasoningRow(row)
+        } else if row.type == "permission_request" {
+            permissionRow(row)
         } else if isActivityRow(row) {
             activityRow(row)
         } else if row.type == "user" {
@@ -709,7 +772,10 @@ struct CodexChatView: View {
     }
 
     private func planRow(_ row: CodexChatRow) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        let markdown = row.details ?? row.text
+        let insights = planInsights(markdown)
+        let sections = planSections(markdown)
+        return HStack(alignment: .bottom, spacing: 8) {
             AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text("\(assistantName) has a plan")
@@ -727,19 +793,55 @@ struct CodexChatView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 6) {
                             Text("Plan")
                                 .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(OrionTheme.accentBlue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.45), lineWidth: 0.5))
+                                .foregroundStyle(OrionTheme.accentBlue)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.45), lineWidth: 0.5))
+                            if insights.sections > 0 {
+                                Text("\(insights.sections) sections")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                            }
+                        }
                     }
 
-                    Text(planPreview(row.details ?? row.text))
-                        .font(.system(size: 13))
-                        .foregroundStyle(OrionTheme.textSecondary)
-                        .lineLimit(5)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !sections.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(sections.prefix(4), id: \.self) { section in
+                                    Text(section)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(OrionTheme.textSecondary)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(OrionTheme.accentBlue.opacity(0.08))
+                                        .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.18), lineWidth: 0.5))
+                                        .clipShape(Capsule())
+                                }
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(Array(planPreview(markdown).components(separatedBy: .newlines).filter { !$0.isEmpty }.prefix(4).enumerated()), id: \.offset) { index, line in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.accentBlue)
+                                    .frame(width: 20, height: 20)
+                                    .background(OrionTheme.accentBlue.opacity(0.12))
+                                    .clipShape(Circle())
+                                Text(cleanPlanPreviewLine(line))
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(OrionTheme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
 
                     HStack(spacing: 8) {
                         Button("Review") { expandedPlan = row }
@@ -782,6 +884,191 @@ struct CodexChatView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             Spacer(minLength: 46)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toolRow(_ row: CodexChatRow) -> some View {
+        let complete = row.toolStatus == "complete"
+        let output = row.resultText ?? row.resultDetails ?? ""
+        return HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionType, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(complete ? "Tool finished" : "Tool running")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 10) {
+                        Text(toolIcon(row.label))
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.accentGreen)
+                            .frame(width: 28, height: 28)
+                            .background(OrionTheme.accentGreen.opacity(0.13))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentGreen.opacity(0.28), lineWidth: 0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.label.isEmpty ? "Tool" : row.label)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            if let toolUseId = row.toolUseId {
+                                Text(shortID(toolUseId))
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                            }
+                        }
+                        Spacer()
+                        Text(complete ? "complete" : "running")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(complete ? OrionTheme.accentGreen : OrionTheme.accentBlue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .overlay(Capsule().stroke((complete ? OrionTheme.accentGreen : OrionTheme.accentBlue).opacity(0.42), lineWidth: 0.5))
+                    }
+                    .padding(12)
+
+                    if !row.text.isEmpty {
+                        Text(row.text)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(OrionTheme.bgTerminal.opacity(0.72))
+                    }
+
+                    if let details = row.details, !details.isEmpty {
+                        detailsView(details)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                    }
+
+                    if !output.isEmpty {
+                        DisclosureGroup {
+                            Text(prettyDetails(output))
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textSecondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 6)
+                        } label: {
+                            Text(toolLooksLikeCommand(row.label) ? "Output" : "Result")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                        }
+                        .tint(OrionTheme.textDim)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .top) { OrionTheme.borderDim.frame(height: 0.5) }
+                    }
+                }
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentGreen.opacity(0.24), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            Spacer(minLength: 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reasoningRow(_ row: CodexChatRow) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionType, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Reasoning")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                DisclosureGroup {
+                    Text(row.text.isEmpty ? "Reasoning in progress." : row.text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(OrionTheme.textSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(OrionTheme.accentPurple)
+                            .frame(width: 7, height: 7)
+                        Text("Thinking through the plan")
+                            .font(.system(size: 13))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                    }
+                }
+                .tint(OrionTheme.textDim)
+                .padding(12)
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OrionTheme.accentPurple.opacity(0.24), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            Spacer(minLength: 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func permissionRow(_ row: CodexChatRow) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionType, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("\(assistantName) needs input")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Text("?")
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.accentYellow)
+                            .frame(width: 28, height: 28)
+                            .background(OrionTheme.accentYellow.opacity(0.13))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentYellow.opacity(0.34), lineWidth: 0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.label.isEmpty ? "Question" : row.label)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            Text(row.text.isEmpty ? "The session is waiting for your answer." : row.text)
+                                .font(.system(size: 11))
+                                .foregroundStyle(OrionTheme.textDim)
+                                .lineLimit(2)
+                        }
+                    }
+                    Text(row.details ?? row.text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(OrionTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let toolUseId = row.toolUseId {
+                        HStack(alignment: .bottom, spacing: 8) {
+                            TextField("Answer \(assistantName)...", text: Binding(
+                                get: { answers[toolUseId] ?? "" },
+                                set: { answers[toolUseId] = $0 }
+                            ), axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 14))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                            .padding(8)
+                            .background(OrionTheme.bgPrimary)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
+
+                            Button("Send") {
+                                let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !text.isEmpty else { return }
+                                answers[toolUseId] = ""
+                                connection.answer(toolUseId: toolUseId, text: text)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(OrionTheme.accentBlue)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(OrionTheme.accentYellow.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentYellow.opacity(0.42), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            Spacer(minLength: 22)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1193,7 +1480,7 @@ struct CodexChatView: View {
 
     private func isActivityRow(_ row: CodexChatRow) -> Bool {
         switch row.type {
-        case "user", "assistant", "permission_request", "plan", "loading": return false
+        case "user", "assistant", "permission_request", "plan", "loading", "tool", "thinking_delta": return false
         default: return true
         }
     }
@@ -1330,7 +1617,7 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             if let lastIndex = rows.indices.last, rows[lastIndex].type == "assistant", rows[lastIndex].id.hasPrefix("assistant-stream") {
                 rows[lastIndex].text += message.text ?? ""
             } else {
-                rows.append(CodexChatRow(id: "assistant-stream-\(message.id)", type: "assistant", label: assistantName, text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: []))
+                rows.append(CodexChatRow(id: "assistant-stream-\(message.id)", type: "assistant", label: assistantName, text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: [], resultText: nil, resultDetails: nil, toolStatus: nil))
             }
             continue
         }
@@ -1338,8 +1625,32 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             if let lastIndex = rows.indices.last, rows[lastIndex].type == "thinking_delta" {
                 rows[lastIndex].text += message.text ?? ""
             } else {
-                rows.append(CodexChatRow(id: message.id, type: message.type, label: "Thinking", text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: []))
+                rows.append(CodexChatRow(id: message.id, type: message.type, label: "Thinking", text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: [], resultText: nil, resultDetails: nil, toolStatus: nil))
             }
+            continue
+        }
+        if message.type == "tool_result" {
+            if let index = findOpenToolRow(rows, result: message) {
+                rows[index].resultText = message.text
+                rows[index].resultDetails = message.details
+                rows[index].toolStatus = "complete"
+                continue
+            }
+        }
+        if message.type == "tool" {
+            rows.append(CodexChatRow(
+                id: message.id,
+                type: message.type,
+                label: chatLabel(message, assistantName: assistantName),
+                text: message.text ?? "",
+                details: message.details,
+                toolUseId: message.toolUseId,
+                planPath: message.planPath,
+                attachments: message.attachments ?? [],
+                resultText: nil,
+                resultDetails: nil,
+                toolStatus: "running"
+            ))
             continue
         }
         rows.append(CodexChatRow(
@@ -1350,10 +1661,28 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             details: message.details,
             toolUseId: message.toolUseId,
             planPath: message.planPath,
-            attachments: message.attachments ?? []
+            attachments: message.attachments ?? [],
+            resultText: nil,
+            resultDetails: nil,
+            toolStatus: nil
         ))
     }
     return rows
+}
+
+private func findOpenToolRow(_ rows: [CodexChatRow], result: CodexChatMessage) -> Int? {
+    for index in rows.indices.reversed() {
+        let row = rows[index]
+        guard row.type == "tool" else { continue }
+        guard row.resultText == nil && row.resultDetails == nil else { continue }
+        if let toolUseId = result.toolUseId, row.toolUseId == toolUseId {
+            return index
+        }
+        if result.toolUseId == nil && row.label == (result.toolName ?? "") {
+            return index
+        }
+    }
+    return nil
 }
 
 private func chatLabel(_ message: CodexChatMessage, assistantName: String) -> String {
@@ -1422,4 +1751,73 @@ private func planPreview(_ markdown: String) -> String {
         .filter { !$0.isEmpty && !$0.hasPrefix("#") }
     let preview = lines.prefix(4).joined(separator: "\n")
     return preview.isEmpty ? "Review the plan before changes start." : preview
+}
+
+private func planInsights(_ markdown: String) -> (sections: Int, steps: Int) {
+    let lines = markdown
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    let sections = lines.filter { $0.range(of: #"^#{1,4}\s+"#, options: .regularExpression) != nil }.count
+    let steps = lines.filter { $0.range(of: #"^([-*]|\d+\.)\s+"#, options: .regularExpression) != nil }.count
+    return (sections, steps)
+}
+
+private func planSections(_ markdown: String) -> [String] {
+    markdown
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { $0.range(of: #"^#{1,4}\s+"#, options: .regularExpression) != nil }
+        .map { $0.replacingOccurrences(of: #"^#{1,4}\s+"#, with: "", options: .regularExpression) }
+        .filter { !$0.isEmpty }
+}
+
+private func cleanPlanPreviewLine(_ line: String) -> String {
+    line
+        .replacingOccurrences(of: #"^[-*]\s+"#, with: "", options: .regularExpression)
+        .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
+}
+
+private func chatSessionMetadata(_ messages: [CodexChatMessage]) -> ChatSessionMetadata? {
+    for message in messages.reversed() where message.type == "system" {
+        guard let details = message.details, let data = details.data(using: .utf8) else { continue }
+        if let metadata = try? JSONDecoder().decode(ChatSessionMetadata.self, from: data) {
+            if metadata.model != nil || metadata.reasoningEffort != nil || metadata.approvalPolicy != nil || metadata.sandboxMode != nil || metadata.threadId != nil {
+                return metadata
+            }
+        }
+    }
+    return nil
+}
+
+private func approvalLabel(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    if value == "never" { return "full access" }
+    if value == "on-request" { return "ask first" }
+    return value.replacingOccurrences(of: "_", with: " ")
+}
+
+private func sandboxLabel(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    if value == "danger-full-access" { return "workspace + network" }
+    return value.replacingOccurrences(of: "-", with: " ")
+}
+
+private func toolLooksLikeCommand(_ toolName: String) -> Bool {
+    let value = toolName.lowercased()
+    return value.contains("bash") || value.contains("command") || value.contains("shell")
+}
+
+private func toolIcon(_ toolName: String) -> String {
+    let value = toolName.lowercased()
+    if value.contains("bash") || value.contains("command") { return "$" }
+    if value.contains("file") { return "±" }
+    if value.contains("web") { return "⌕" }
+    if value.contains("mcp") { return "◆" }
+    return "∴"
+}
+
+private func shortID(_ id: String) -> String {
+    guard id.count > 12 else { return id }
+    return "\(id.prefix(6))…\(id.suffix(4))"
 }

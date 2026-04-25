@@ -2,15 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import {
-	  AnswerClaudeChatRequest,
-	  AnswerCodexChatRequest,
-	  ApproveClaudePlan,
-	  GetClaudeChatMessages,
-	  GetCodexChatMessages,
-	  OpenChatAttachmentDialog,
-	  SendClaudeChatMessage,
-	  SendCodexChatMessage,
-	} from '../../wailsjs/go/main/App';
+  AnswerClaudeChatRequest,
+  AnswerCodexChatRequest,
+  ApproveClaudePlan,
+  GetClaudeChatMessages,
+  GetCodexChatMessages,
+  OpenChatAttachmentDialog,
+  SendClaudeChatMessage,
+  SendCodexChatMessage,
+} from '../../wailsjs/go/main/App';
 import AgentSigil from './AgentSigil';
 
 type ChatAttachment = {
@@ -40,13 +40,19 @@ type ChatMessage = {
 
 type ChatRow = ChatMessage & {
   merged?: boolean;
+  resultText?: string;
+  resultDetails?: string;
+  toolStatus?: 'running' | 'complete';
 };
 
 type SessionMetadata = {
+  provider?: string;
+  viewMode?: string;
   model?: string;
   reasoningEffort?: string;
   approvalPolicy?: string;
   sandboxMode?: string;
+  collaborationMode?: string;
   threadId?: string;
 };
 
@@ -232,22 +238,17 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
   return (
     <div className="codex-chat">
       <div className="codex-chat-header">
-        <div className="codex-chat-heading">
-          <AgentSigil id={config.sigil} size={34} strong />
-          <div>
-            <div className="codex-chat-title">{config.displayName} Chat</div>
-            <div className="codex-chat-subtitle">{statusLabel(lastStatus, config.displayName, lastStatusMessage?.text)}</div>
-            {metadata && (
-              <div className="codex-chat-session-meta">
-                {metadata.model && <span>{metadata.model}</span>}
-                {metadata.reasoningEffort && <span>{metadata.reasoningEffort}</span>}
-                {metadata.approvalPolicy && <span>{metadata.approvalPolicy === 'never' ? 'full access' : metadata.approvalPolicy}</span>}
-                {metadata.sandboxMode && <span>{metadata.sandboxMode}</span>}
-              </div>
-            )}
+        <div className="codex-chat-header-main">
+          <div className="codex-chat-heading">
+            <AgentSigil id={config.sigil} size={34} strong />
+            <div>
+              <div className="codex-chat-title">{config.displayName} Chat</div>
+              <div className="codex-chat-subtitle">{statusLabel(lastStatus, config.displayName, lastStatusMessage?.text)}</div>
+            </div>
           </div>
+          <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>{statusLabelShort(lastStatus)}</div>
         </div>
-        <div className={`codex-chat-status codex-chat-status-${lastStatus}`}>{lastStatus}</div>
+        {metadata && <SessionModeStrip metadata={metadata} kind={kind} />}
       </div>
 
       <div ref={scrollerRef} className="codex-chat-messages">
@@ -354,9 +355,36 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
       }
       continue;
     }
+    if (msg.type === 'tool_result') {
+      const toolIndex = findOpenToolRow(rows, msg);
+      if (toolIndex >= 0) {
+        rows[toolIndex] = {
+          ...rows[toolIndex],
+          resultText: msg.text,
+          resultDetails: msg.details,
+          toolStatus: 'complete',
+        };
+        continue;
+      }
+    }
+    if (msg.type === 'tool') {
+      rows.push({ ...msg, toolStatus: 'running' });
+      continue;
+    }
     rows.push({ ...msg });
   }
   return rows;
+}
+
+function findOpenToolRow(rows: ChatRow[], result: ChatMessage): number {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.type !== 'tool') continue;
+    if (row.resultText || row.resultDetails) continue;
+    if (result.toolUseId && row.toolUseId === result.toolUseId) return i;
+    if (!result.toolUseId && row.toolName === result.toolName) return i;
+  }
+  return -1;
 }
 
 function sessionMetadata(messages: ChatMessage[]): SessionMetadata | null {
@@ -401,6 +429,25 @@ function renderRow(
   if (msg.type === 'loading') {
     return <LoadingRow key={msg.id} msg={msg} assistantName={assistantName} agentId={agentId} />;
   }
+  if (msg.type === 'tool') {
+    return <ToolActivityCard key={msg.id} msg={msg} agentId={agentId} />;
+  }
+  if (msg.type === 'thinking_delta') {
+    return <ReasoningCard key={msg.id} msg={msg} agentId={agentId} />;
+  }
+  if (msg.type === 'permission_request') {
+    return (
+      <PermissionCard
+        key={msg.id}
+        msg={msg}
+        answers={answers}
+        setAnswers={setAnswers}
+        answer={answer}
+        assistantName={assistantName}
+        agentId={agentId}
+      />
+    );
+  }
 
   const kind = rowKind(msg.type);
   if (kind === 'activity') {
@@ -417,11 +464,10 @@ function renderRow(
   }
 
   const isUser = msg.type === 'user';
-  const isPermission = msg.type === 'permission_request';
   return (
     <div
       key={msg.id}
-      className={`codex-chat-message ${isUser ? 'codex-chat-message-user' : 'codex-chat-message-assistant'}${isPermission ? ' codex-chat-message-permission' : ''}`}
+      className={`codex-chat-message ${isUser ? 'codex-chat-message-user' : 'codex-chat-message-assistant'}`}
     >
       {!isUser && <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />}
       <div className="codex-chat-message-stack">
@@ -436,21 +482,46 @@ function renderRow(
           ) : null}
           {msg.text && <div className="codex-chat-text">{msg.text}</div>}
           {msg.details && detailsBlock(msg.details)}
-          {msg.type === 'permission_request' && msg.toolUseId && (
-            <div className="codex-chat-answer">
-              <textarea
-                value={answers[msg.toolUseId] || ''}
-                onChange={(e) => setAnswers((prev) => ({ ...prev, [msg.toolUseId!]: e.target.value }))}
-                placeholder={`Answer ${assistantName}...`}
-                rows={2}
-              />
-              <button onClick={() => answer(msg.toolUseId!)}>Send Answer</button>
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
+}
+
+function SessionModeStrip({ metadata, kind }: { metadata: SessionMetadata; kind: ChatKind }) {
+  const items = [
+    { label: 'model', value: metadata.model },
+    { label: 'reasoning', value: metadata.reasoningEffort },
+    { label: 'approvals', value: approvalLabel(metadata.approvalPolicy, kind) },
+    { label: 'sandbox', value: sandboxLabel(metadata.sandboxMode) },
+    { label: 'mode', value: metadata.collaborationMode },
+  ].filter((item) => item.value);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="codex-chat-mode-strip">
+      {items.map((item) => (
+        <div className="codex-chat-mode-pill" key={item.label}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function approvalLabel(value: string | undefined, kind: ChatKind): string | undefined {
+  if (!value) return kind === 'claude' ? undefined : 'full access';
+  if (value === 'never') return 'full access';
+  if (value === 'on-request') return 'ask first';
+  return value.replaceAll('_', ' ');
+}
+
+function sandboxLabel(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value === 'danger-full-access') return 'workspace + network';
+  return value.replaceAll('-', ' ');
 }
 
 function AttachmentChip({ attachment, onRemove }: { attachment: ChatAttachment; onRemove: () => void }) {
@@ -513,6 +584,110 @@ function LoadingRow({ msg, assistantName, agentId }: { msg: ChatRow; assistantNa
   );
 }
 
+function ToolActivityCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
+  const complete = msg.toolStatus === 'complete';
+  const output = msg.resultText || msg.resultDetails || '';
+  const commandLike = toolLooksLikeCommand(msg.toolName);
+
+  return (
+    <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-tool">
+      <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
+      <div className="codex-chat-message-stack">
+        <div className="codex-chat-message-meta">{complete ? 'Tool finished' : 'Tool running'}</div>
+        <div className="codex-tool-card">
+          <div className="codex-tool-card-header">
+            <div className="codex-tool-title">
+              <span className="codex-tool-icon">{toolIcon(msg.toolName)}</span>
+              <div>
+                <div className="codex-tool-name">{msg.toolName || 'Tool'}</div>
+                {msg.toolUseId && <div className="codex-tool-id">{shortID(msg.toolUseId)}</div>}
+              </div>
+            </div>
+            <span className={`codex-tool-status ${complete ? 'complete' : 'running'}`}>
+              {complete ? 'complete' : 'running'}
+            </span>
+          </div>
+          {msg.text && (
+            <pre className={commandLike ? 'codex-tool-command' : 'codex-tool-text'}>{msg.text}</pre>
+          )}
+          {msg.details && detailsBlock(msg.details, commandLike ? 'Input' : 'Details')}
+          {output && (
+            <details className="codex-tool-output" open={!commandLike}>
+              <summary>{commandLike ? 'Output' : 'Result'}</summary>
+              <pre>{formatDetails(output)}</pre>
+            </details>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReasoningCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
+  return (
+    <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-reasoning">
+      <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
+      <div className="codex-chat-message-stack">
+        <div className="codex-chat-message-meta">Reasoning</div>
+        <details className="codex-reasoning-card">
+          <summary>
+            <span className="codex-reasoning-dot" />
+            <span>Thinking through the plan</span>
+          </summary>
+          <div>{msg.text || 'Reasoning in progress.'}</div>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+function PermissionCard({
+  msg,
+  answers,
+  setAnswers,
+  answer,
+  assistantName,
+  agentId,
+}: {
+  msg: ChatRow;
+  answers: Record<string, string>;
+  setAnswers: Dispatch<SetStateAction<Record<string, string>>>;
+  answer: (toolUseId: string) => Promise<void>;
+  assistantName: string;
+  agentId: string;
+}) {
+  const prompt = permissionPrompt(msg);
+  return (
+    <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-permission">
+      <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
+      <div className="codex-chat-message-stack">
+        <div className="codex-chat-message-meta">{assistantName} needs input</div>
+        <div className="codex-permission-card">
+          <div className="codex-permission-header">
+            <span className="codex-permission-icon">?</span>
+            <div>
+              <div className="codex-permission-title">{msg.toolName || 'Question'}</div>
+              <div className="codex-permission-subtitle">{msg.text || 'The session is waiting for your answer.'}</div>
+            </div>
+          </div>
+          <div className="codex-permission-prompt">{prompt}</div>
+          {msg.toolUseId && (
+            <div className="codex-chat-answer">
+              <textarea
+                value={answers[msg.toolUseId] || ''}
+                onChange={(e) => setAnswers((prev) => ({ ...prev, [msg.toolUseId!]: e.target.value }))}
+                placeholder={`Answer ${assistantName}...`}
+                rows={2}
+              />
+              <button onClick={() => answer(msg.toolUseId!)}>Send Answer</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlanCard({
   plan,
   assistantName,
@@ -529,6 +704,8 @@ function PlanCard({
   approving?: boolean;
 }) {
   const markdown = plan.details || plan.text || '';
+  const insights = planInsights(markdown);
+  const sections = planSections(markdown);
   return (
     <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-plan" key={plan.id}>
       <AgentSigil id={agentId} size={24} className="codex-chat-avatar-sigil" />
@@ -540,9 +717,18 @@ function PlanCard({
               <div className="codex-plan-kicker">Waiting for approval</div>
               <div className="codex-plan-title">{plan.text || planTitle(markdown)}</div>
             </div>
-            <span className="codex-plan-badge">Plan</span>
+            <div className="codex-plan-badges">
+              <span className="codex-plan-badge">Plan</span>
+              {insights.sections > 0 && <span className="codex-plan-badge muted">{insights.sections} sections</span>}
+              {insights.steps > 0 && <span className="codex-plan-badge muted">{insights.steps} steps</span>}
+            </div>
           </div>
-          <div className="codex-plan-preview">{planPreview(markdown)}</div>
+          {sections.length > 0 && (
+            <div className="codex-plan-section-row">
+              {sections.slice(0, 4).map((section) => <span key={section}>{section}</span>)}
+            </div>
+          )}
+          <PlanPreview markdown={markdown} />
           <div className="codex-plan-actions">
             <button type="button" onClick={onReview}>Review</button>
             {onApprove && (
@@ -571,6 +757,7 @@ function PlanOverlay({
   approving?: boolean;
 }) {
   const markdown = plan.details || plan.text || '';
+  const insights = planInsights(markdown);
   return (
     <div className="codex-plan-overlay" role="dialog" aria-modal="true" aria-label={`${assistantName} plan`}>
       <div className="codex-plan-panel">
@@ -578,6 +765,11 @@ function PlanOverlay({
           <div>
             <div className="codex-plan-kicker">{assistantName} plan</div>
             <div className="codex-plan-panel-title">{plan.text || planTitle(markdown)}</div>
+            <div className="codex-plan-panel-meta">
+              <span>{insights.sections} sections</span>
+              <span>{insights.steps} steps</span>
+              {plan.planPath && <span>{plan.planPath}</span>}
+            </div>
           </div>
           <button type="button" className="codex-plan-close" onClick={onClose}>Minimize</button>
         </div>
@@ -595,10 +787,10 @@ function PlanOverlay({
   );
 }
 
-function detailsBlock(details: string) {
+function detailsBlock(details: string, label = 'Details') {
   return (
     <details className="codex-chat-disclosure">
-      <summary>Details</summary>
+      <summary>{label}</summary>
       <pre className="codex-chat-details">{formatDetails(details)}</pre>
     </details>
   );
@@ -625,6 +817,8 @@ function rowKind(type: string): 'message' | 'activity' {
     case 'permission_request':
     case 'loading':
     case 'plan':
+    case 'tool':
+    case 'thinking_delta':
       return 'message';
     default:
       return 'activity';
@@ -690,6 +884,16 @@ function statusLabel(status: string, assistantName: string, text?: string): stri
   }
 }
 
+function statusLabelShort(status: string): string {
+  switch (status) {
+    case 'waiting_input': return 'needs input';
+    case 'running': return 'running';
+    case 'starting': return 'starting';
+    case 'stopped': return 'stopped';
+    default: return 'ready';
+  }
+}
+
 function formatDetails(details: string): string {
   try {
     return JSON.stringify(JSON.parse(details), null, 2);
@@ -709,4 +913,59 @@ function planPreview(markdown: string): string {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'));
   return lines.slice(0, 4).join('\n') || 'Review the plan before changes start.';
+}
+
+function PlanPreview({ markdown }: { markdown: string }) {
+  const lines = planPreview(markdown).split('\n').filter(Boolean);
+  return (
+    <div className="codex-plan-preview-list">
+      {lines.map((line, index) => (
+        <div className="codex-plan-preview-line" key={`${line}-${index}`}>
+          <span>{index + 1}</span>
+          <p>{line.replace(/^[-*]\s*/, '').replace(/^\d+\.\s*/, '')}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function planInsights(markdown: string): { sections: number; steps: number } {
+  const lines = markdown.split('\n').map((line) => line.trim()).filter(Boolean);
+  return {
+    sections: lines.filter((line) => /^#{1,4}\s+/.test(line)).length,
+    steps: lines.filter((line) => /^([-*]|\d+\.)\s+/.test(line)).length,
+  };
+}
+
+function planSections(markdown: string): string[] {
+  return markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^#{1,4}\s+/.test(line))
+    .map((line) => line.replace(/^#{1,4}\s+/, '').trim())
+    .filter(Boolean);
+}
+
+function toolLooksLikeCommand(toolName?: string): boolean {
+  const value = (toolName || '').toLowerCase();
+  return value.includes('bash') || value.includes('command') || value.includes('shell');
+}
+
+function toolIcon(toolName?: string): string {
+  const value = (toolName || '').toLowerCase();
+  if (value.includes('bash') || value.includes('command')) return '$';
+  if (value.includes('file')) return '±';
+  if (value.includes('web')) return '⌕';
+  if (value.includes('mcp')) return '◆';
+  return '∴';
+}
+
+function permissionPrompt(msg: ChatMessage): string {
+  if (msg.details) return msg.details;
+  if (msg.text) return msg.text;
+  return 'Choose how Orion should continue.';
+}
+
+function shortID(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
 }
