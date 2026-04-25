@@ -725,6 +725,7 @@ export const useStore = create<OrionState>((set, get) => ({
     set((state) => ({
       serverTabs: [...state.serverTabs, tab],
       activeServerTabId: tab.id,
+      serverPaneVisible: true,
     }));
   },
 
