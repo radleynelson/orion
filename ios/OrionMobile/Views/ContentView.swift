@@ -2373,6 +2373,10 @@ struct CodexChatView: View {
                 assistantName: assistantName,
                 accentColor: assistantColor,
                 onClose: { expandedPlan = nil },
+                onReviewDiff: {
+                    expandedPlan = nil
+                    state.showDiffReview = true
+                },
                 onApprove: {
                     connection.approvePlan()
                     expandedPlan = nil
@@ -2496,6 +2500,7 @@ struct CodexChatView: View {
         let markdown = row.details ?? row.text
         let insights = planInsights(markdown)
         let sections = planSections(markdown)
+        let canApprove = connection.sessionType.lowercased().contains("claude")
         return HStack(alignment: .bottom, spacing: 8) {
             AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
@@ -2505,7 +2510,7 @@ struct CodexChatView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Waiting for approval")
+                            Text("PLAN · WAITING FOR YOU")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(OrionTheme.accentBlue)
                             Text(row.text.isEmpty ? "Plan ready" : row.text)
@@ -2548,14 +2553,12 @@ struct CodexChatView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 7) {
-                        ForEach(Array(planPreview(markdown).components(separatedBy: .newlines).filter { !$0.isEmpty }.prefix(4).enumerated()), id: \.offset) { index, line in
+                        ForEach(Array(planPreview(markdown).components(separatedBy: .newlines).filter { !$0.isEmpty }.prefix(4).enumerated()), id: \.offset) { _, line in
                             HStack(alignment: .top, spacing: 8) {
-                                Text("\(index + 1)")
-                                    .font(.system(size: 10, design: .monospaced))
+                                Image(systemName: "circle")
+                                    .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(OrionTheme.accentBlue)
                                     .frame(width: 20, height: 20)
-                                    .background(OrionTheme.accentBlue.opacity(0.12))
-                                    .clipShape(Circle())
                                 Text(cleanPlanPreviewLine(line))
                                     .font(.system(size: 13))
                                     .foregroundStyle(OrionTheme.textSecondary)
@@ -2565,11 +2568,16 @@ struct CodexChatView: View {
                     }
 
                     HStack(spacing: 8) {
-                        Button("Review") { expandedPlan = row }
+                        Button("Review plan") { expandedPlan = row }
                             .buttonStyle(.bordered)
-                        Button("Approve and run") { connection.approvePlan() }
+                        Button("Review diff") { state.showDiffReview = true }
+                            .buttonStyle(.bordered)
+                    }
+                    if canApprove {
+                        Button("Approve & run") { connection.approvePlan() }
                             .buttonStyle(.borderedProminent)
                             .tint(OrionTheme.accentBlue)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
                 .padding(12)
@@ -3250,6 +3258,7 @@ private struct PlanReviewView: View {
     let assistantName: String
     let accentColor: Color
     let onClose: () -> Void
+    let onReviewDiff: () -> Void
     let onApprove: () -> Void
 
     private var markdown: String {
@@ -3295,7 +3304,9 @@ private struct PlanReviewView: View {
             HStack(spacing: 10) {
                 Button("Back to chat", action: onClose)
                     .buttonStyle(.bordered)
-                Button("Approve and run", action: onApprove)
+                Button("Review diff", action: onReviewDiff)
+                    .buttonStyle(.bordered)
+                Button("Approve & run", action: onApprove)
                     .buttonStyle(.borderedProminent)
                     .tint(accentColor)
             }

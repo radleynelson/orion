@@ -11,6 +11,7 @@ import {
   SendClaudeChatMessage,
   SendCodexChatMessage,
 } from '../../wailsjs/go/main/App';
+import { useStore } from '../store';
 import AgentSigil from './AgentSigil';
 
 type ChatAttachment = {
@@ -102,6 +103,8 @@ const CHAT_CONFIG: Record<ChatKind, ChatConfig> = {
 
 export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexChatProps) {
   const config = CHAT_CONFIG[kind];
+  const setCodeReviewVisible = useStore((s) => s.setCodeReviewVisible);
+  const setCodeReviewBase = useStore((s) => s.setCodeReviewBase);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -235,6 +238,11 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
     }
   };
 
+  const reviewDiff = () => {
+    setCodeReviewBase('uncommitted');
+    setCodeReviewVisible(true);
+  };
+
   return (
     <div className="codex-chat">
       <div className="codex-chat-header">
@@ -266,6 +274,7 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
             config.displayName,
             config.sigil,
             setExpandedPlan,
+            reviewDiff,
             config.approvePlan ? approvePlan : undefined,
             approvingPlanId === msg.id,
           ))}
@@ -277,6 +286,10 @@ export default function CodexChat({ sessionId, visible, kind = 'codex' }: CodexC
           plan={expandedPlan}
           assistantName={config.displayName}
           onClose={() => setExpandedPlan(null)}
+          onReviewDiff={() => {
+            reviewDiff();
+            setExpandedPlan(null);
+          }}
           onApprove={config.approvePlan ? () => approvePlan(expandedPlan) : undefined}
           approving={approvingPlanId === expandedPlan.id}
         />
@@ -410,6 +423,7 @@ function renderRow(
   assistantName: string,
   agentId: string,
   expandPlan: (msg: ChatMessage) => void,
+  reviewDiff: () => void,
   approvePlan?: (msg: ChatMessage) => Promise<void>,
   approvingPlan?: boolean,
 ) {
@@ -421,6 +435,7 @@ function renderRow(
         assistantName={assistantName}
         agentId={agentId}
         onReview={() => expandPlan(msg)}
+        onReviewDiff={reviewDiff}
         onApprove={approvePlan ? () => approvePlan(msg) : undefined}
         approving={approvingPlan}
       />
@@ -693,6 +708,7 @@ function PlanCard({
   assistantName,
   agentId,
   onReview,
+  onReviewDiff,
   onApprove,
   approving,
 }: {
@@ -700,6 +716,7 @@ function PlanCard({
   assistantName: string;
   agentId: string;
   onReview: () => void;
+  onReviewDiff: () => void;
   onApprove?: () => void;
   approving?: boolean;
 }) {
@@ -714,7 +731,7 @@ function PlanCard({
         <div className="codex-plan-card">
           <div className="codex-plan-card-header">
             <div>
-              <div className="codex-plan-kicker">Waiting for approval</div>
+              <div className="codex-plan-kicker">Plan · waiting for you</div>
               <div className="codex-plan-title">{plan.text || planTitle(markdown)}</div>
             </div>
             <div className="codex-plan-badges">
@@ -730,10 +747,11 @@ function PlanCard({
           )}
           <PlanPreview markdown={markdown} />
           <div className="codex-plan-actions">
-            <button type="button" onClick={onReview}>Review</button>
+            <button type="button" onClick={onReview}>Review plan</button>
+            <button type="button" onClick={onReviewDiff}>Review diff</button>
             {onApprove && (
               <button type="button" className="codex-plan-primary" onClick={onApprove} disabled={approving}>
-                {approving ? 'Approving' : 'Approve and run'}
+                {approving ? 'Approving' : 'Approve & run'}
               </button>
             )}
           </div>
@@ -747,12 +765,14 @@ function PlanOverlay({
   plan,
   assistantName,
   onClose,
+  onReviewDiff,
   onApprove,
   approving,
 }: {
   plan: ChatMessage;
   assistantName: string;
   onClose: () => void;
+  onReviewDiff: () => void;
   onApprove?: () => void;
   approving?: boolean;
 }) {
@@ -776,9 +796,10 @@ function PlanOverlay({
         <pre className="codex-plan-markdown">{markdown}</pre>
         <div className="codex-plan-panel-footer">
           <button type="button" onClick={onClose}>Back to chat</button>
+          <button type="button" onClick={onReviewDiff}>Review diff</button>
           {onApprove && (
             <button type="button" className="codex-plan-primary" onClick={onApprove} disabled={approving}>
-              {approving ? 'Approving' : 'Approve and run'}
+              {approving ? 'Approving' : 'Approve & run'}
             </button>
           )}
         </div>
