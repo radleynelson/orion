@@ -545,6 +545,14 @@ func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {
 	cfg := config.Load(repoRoot)
 	wsID := filepath.Base(workspacePath)
 	alloc := a.portReg.GetAllocation(wsID)
+	if alloc == nil && filepath.Clean(repoRoot) == filepath.Clean(workspacePath) {
+		alloc = make(port.Allocation)
+		for name, srv := range cfg.Servers {
+			if srv.DefaultPort > 0 {
+				alloc[name] = srv.DefaultPort
+			}
+		}
+	}
 
 	if alloc == nil {
 		return fmt.Errorf("no servers running for this workspace")

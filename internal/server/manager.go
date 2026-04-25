@@ -15,16 +15,16 @@ import (
 
 // ServerStatus represents the state of a server for a workspace.
 type ServerStatus struct {
-	Name    string `json:"name"`
-	Port    int    `json:"port"`
-	Running bool   `json:"running"`
+	Name        string `json:"name"`
+	Port        int    `json:"port"`
+	Running     bool   `json:"running"`
 	TmuxSession string `json:"tmuxSession"`
 }
 
 // Manager handles server process lifecycle.
 type Manager struct {
-	ctx      context.Context
-	portReg  *port.Registry
+	ctx     context.Context
+	portReg *port.Registry
 }
 
 // NewManager creates a new server manager.
@@ -69,12 +69,8 @@ func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bo
 	var alloc port.Allocation
 	redisDB := 1 // main uses DB 1
 	if isMain {
-		alloc = make(port.Allocation)
-		for name, srv := range cfg.Servers {
-			if srv.DefaultPort > 0 {
-				alloc[name] = srv.DefaultPort
-			}
-		}
+		alloc = defaultAllocation(cfg)
+		m.portReg.SetAllocation(wsID, alloc)
 	} else {
 		var portServers []string
 		for name, srv := range cfg.Servers {
@@ -112,12 +108,8 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 
 	if isMain {
 		// Main branch uses default ports from config
-		alloc = make(port.Allocation)
-		for name, srv := range cfg.Servers {
-			if srv.DefaultPort > 0 {
-				alloc[name] = srv.DefaultPort
-			}
-		}
+		alloc = defaultAllocation(cfg)
+		m.portReg.SetAllocation(wsID, alloc)
 	} else {
 		// Worktrees get random isolated ports
 		var portServers []string
@@ -231,6 +223,9 @@ func (m *Manager) GetServerStatuses(repoRoot string, workspacePath string) []Ser
 	cfg := config.Load(repoRoot)
 	wsID := filepath.Base(workspacePath)
 	alloc := m.portReg.GetAllocation(wsID)
+	if alloc == nil && filepath.Clean(repoRoot) == filepath.Clean(workspacePath) {
+		alloc = defaultAllocation(cfg)
+	}
 
 	names := make([]string, 0, len(cfg.Servers))
 	for name := range cfg.Servers {
@@ -261,6 +256,16 @@ func (m *Manager) GetPortAllocations() map[string]port.Allocation {
 }
 
 // --- helpers ---
+
+func defaultAllocation(cfg *config.OrionConfig) port.Allocation {
+	alloc := make(port.Allocation)
+	for name, srv := range cfg.Servers {
+		if srv.DefaultPort > 0 {
+			alloc[name] = srv.DefaultPort
+		}
+	}
+	return alloc
+}
 
 func buildEnvString(serverName string, srv config.ServerConfig, alloc port.Allocation, cfg *config.OrionConfig, redisDB int) string {
 	var parts []string
