@@ -11,7 +11,7 @@ struct MainView: View {
     var body: some View {
         VStack(spacing: 0) {
             HeaderBar()
-            if !state.visibleTabs.isEmpty { TabStrip() }
+            if !state.showHome && !state.visibleTabs.isEmpty { TabStrip() }
             if state.isReconnecting {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini).tint(OrionTheme.accentYellow)
@@ -31,7 +31,9 @@ struct MainView: View {
             }
             ZStack {
                 OrionTheme.bgTerminal.ignoresSafeArea()
-                if let activeSession = state.activeSession,
+                if state.showHome {
+                    MobileHomeView()
+                } else if let activeSession = state.activeSession,
                    state.activeSessionShowsChat,
                    let connection = state.activeChatConnection,
                    connection.sessionId == activeSession.chatConnectionId {
@@ -84,11 +86,11 @@ struct MainView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "terminal").font(.system(size: 40)).foregroundStyle(OrionTheme.textDim)
                         Text(emptyStateTitle).font(.subheadline).foregroundStyle(OrionTheme.textDim)
-                        Button("Browse Workspaces") { state.showWorkspaces = true }.buttonStyle(.bordered).tint(OrionTheme.accentBlue)
+                        Button("Open Home") { state.showHome = true }.buttonStyle(.bordered).tint(OrionTheme.accentBlue)
                     }
                 }
             }
-            if state.activeSession != nil && !state.activeSessionShowsChat { TerminalToolbar() }
+            if !state.showHome && state.activeSession != nil && !state.activeSessionShowsChat { TerminalToolbar() }
         }
         .background(OrionTheme.bgPrimary)
         .sheet(isPresented: Binding(get: { state.showWorkspaces }, set: { state.showWorkspaces = $0 })) {
@@ -138,8 +140,16 @@ struct HeaderBar: View {
     @Environment(AppState.self) private var state
     var body: some View {
         HStack(spacing: 12) {
-            Button { state.showWorkspaces = true } label: {
-                Image(systemName: "sidebar.left").font(.system(size: 18)).foregroundStyle(OrionTheme.textSecondary)
+            Button {
+                if state.showHome {
+                    state.showWorkspaces = true
+                } else {
+                    state.showHome = true
+                }
+            } label: {
+                Image(systemName: state.showHome ? "sidebar.left" : "house")
+                    .font(.system(size: 18))
+                    .foregroundStyle(OrionTheme.textSecondary)
             }
             Spacer()
 
@@ -212,6 +222,626 @@ struct HeaderBar: View {
             return workspace.branch
         }
         return workspace.name
+    }
+}
+
+// MARK: - Mobile Home
+
+private struct MobileHomeView: View {
+    @Environment(AppState.self) private var state
+    @State private var serverStatusesByWorkspace: [String: [ServerStatus]] = [:]
+    @State private var changedFiles: [GitChangedFile] = []
+    @State private var loadingHome = false
+    @State private var showQuickAsk = false
+
+    private var projectSubtitle: String {
+        let projectCount = state.workspaces.count
+        let projectRoot = state.projectInfo?.root ?? state.selectedProject ?? ""
+        let folder = (projectRoot as NSString).lastPathComponent
+        if folder.isEmpty { return "\(projectCount) workspace\(projectCount == 1 ? "" : "s")" }
+        return "\(folder) · \(projectCount) workspace\(projectCount == 1 ? "" : "s")"
+    }
+
+    private var featuredSession: SessionInfo? {
+        if let active = state.activeSession, active.isChat { return active }
+        if let activeWorkspace = state.activeWorkspacePath,
+           let chat = state.sessions.first(where: { $0.workspacePath == activeWorkspace && $0.isChat }) {
+            return chat
+        }
+        return state.sessions.first(where: \.isChat)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                homeHero
+                readyCard
+                workspaceList
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+        }
+        .background(OrionTheme.bgTerminal)
+        .refreshable { await loadHome() }
+        .safeAreaInset(edge: .bottom) {
+            quickAskBar
+        }
+        .task { await loadHome() }
+        .onChange(of: state.activeWorkspacePath) { _, _ in
+            Task { await loadHome() }
+        }
+        .sheet(isPresented: $showQuickAsk) {
+            QuickAskSheet(
+                defaultWorkspacePath: state.activeWorkspacePath,
+                onCancel: { showQuickAsk = false },
+                onDone: {
+                    showQuickAsk = false
+                    Task { await loadHome() }
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var homeHero: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                    .frame(width: 7, height: 7)
+                Text(state.isConnected ? "Connected" : "Offline")
+                    .font(.system(size: 13))
+                    .foregroundStyle(OrionTheme.textDim)
+                Spacer()
+                Button {
+                    Task { await loadHome() }
+                } label: {
+                    if loadingHome {
+                        ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(alignment: .center, spacing: 14) {
+                OrionMarkView(size: 46)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("orion")
+                        .font(.system(size: 31, weight: .bold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(projectSubtitle)
+                        .font(.system(size: 14, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Menu {
+                    Button { state.showWorkspaces = true } label: {
+                        Label("Workspaces", systemImage: "sidebar.left")
+                    }
+                    Button { state.showDiffReview = true } label: {
+                        Label("Review diff", systemImage: "doc.text.magnifyingglass")
+                    }
+                    Button { showQuickAsk = true } label: {
+                        Label("Ask agent", systemImage: "paperplane")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(OrionTheme.textSecondary)
+                        .frame(width: 42, height: 42)
+                        .background(OrionTheme.bgSurface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var readyCard: some View {
+        let session = featuredSession
+        let label = session?.label ?? "Codex"
+        return HStack(spacing: 12) {
+            AgentSigilView(session?.type ?? "codex-chat", size: 38)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(label) is ready when you are")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.86)
+                Text(readyCardSubtitle)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.86)
+            }
+            Spacer(minLength: 8)
+            Button {
+                if changedFiles.isEmpty {
+                    showQuickAsk = true
+                } else {
+                    state.showDiffReview = true
+                }
+            } label: {
+                Text(changedFiles.isEmpty ? "Ask" : "Review")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(hex: 0x18233A))
+                    .padding(.horizontal, 17)
+                    .frame(height: 34)
+                    .background(OrionTheme.accentBlue)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+
+    private var readyCardSubtitle: String {
+        if !changedFiles.isEmpty {
+            return "\(changedFiles.count) changed file\(changedFiles.count == 1 ? "" : "s") in \(state.activeWorkspace?.name ?? "workspace")"
+        }
+        if let session = featuredSession {
+            return "\(sessionLabel(session.type)) · \(workspaceName(for: session.workspacePath))"
+        }
+        return "Start a plan, chat, or shell"
+    }
+
+    private var workspaceList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Workspaces")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(OrionTheme.textDim)
+                Spacer()
+                Text("\(state.workspaces.count)")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+            }
+            ForEach(state.workspaces) { workspace in
+                MobileWorkspaceCard(
+                    workspace: workspace,
+                    sessions: state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" },
+                    servers: serverStatusesByWorkspace[workspace.path] ?? [],
+                    onRefresh: { await loadHome() }
+                )
+            }
+        }
+    }
+
+    private var quickAskBar: some View {
+        Button { showQuickAsk = true } label: {
+            HStack(spacing: 10) {
+                Text("Ask an agent...")
+                    .font(.system(size: 15))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "mic")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OrionTheme.textDim)
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color(hex: 0x18233A))
+                    .frame(width: 42, height: 42)
+                    .background(OrionTheme.accentBlue)
+                    .clipShape(Circle())
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 6)
+            .frame(height: 58)
+            .background(OrionTheme.bgSurface)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.8))
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .background(OrionTheme.bgTerminal.opacity(0.96))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func loadHome() async {
+        loadingHome = true
+        defer { loadingHome = false }
+
+        await state.refreshSessions()
+        var statuses: [String: [ServerStatus]] = [:]
+        for workspace in state.workspaces {
+            statuses[workspace.path] = await state.getServerStatuses(workspace: workspace)
+        }
+        serverStatusesByWorkspace = statuses
+
+        do {
+            changedFiles = try await state.changedFiles()
+        } catch {
+            changedFiles = []
+        }
+    }
+
+    private func workspaceName(for path: String) -> String {
+        state.workspaces.first(where: { $0.path == path })?.name ?? "workspace"
+    }
+}
+
+private struct MobileWorkspaceCard: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+    let sessions: [SessionInfo]
+    let servers: [ServerStatus]
+    let onRefresh: () async -> Void
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
+    @State private var serverBusy = false
+
+    private var isActiveWorkspace: Bool { state.activeWorkspacePath == workspace.path }
+    private var activeSessionInWorkspace: Bool { state.activeSession?.workspacePath == workspace.path }
+    private var runningServers: [ServerStatus] { servers.filter(\.running) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button {
+                Task { await state.activateWorkspace(workspace.path) }
+            } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    Circle()
+                        .fill(statusDotColor)
+                        .frame(width: 9, height: 9)
+                        .shadow(color: statusDotColor.opacity(isActiveWorkspace ? 0.55 : 0), radius: 5)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 7) {
+                            Text(workspace.name)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                                .lineLimit(1)
+                            if workspace.isMain {
+                                Text("MAIN")
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.accentBlue)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(OrionTheme.accentBlue.opacity(0.15))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            }
+                        }
+                        Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text(statusText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(statusDotColor)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if sessions.isEmpty {
+                HStack(spacing: 9) {
+                    AgentSigilView("codex-chat", size: 25)
+                    Text("No live sessions")
+                        .font(.system(size: 13))
+                        .foregroundStyle(OrionTheme.textDim)
+                    Spacer()
+                }
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(Array(sessions.prefix(3))) { session in
+                        Button {
+                            Task {
+                                do { try await state.activateSession(session) }
+                                catch { state.showTransientError("Failed to open session: \(error.localizedDescription)") }
+                            }
+                        } label: {
+                            HomeSessionRow(
+                                session: session,
+                                isActive: state.activeSession?.id == session.id
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if sessions.count > 3 {
+                        Text("+ \(sessions.count - 3) more session\(sessions.count - 3 == 1 ? "" : "s")")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+
+            if !runningServers.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(runningServers) { server in
+                            HStack(spacing: 5) {
+                                Circle().fill(OrionTheme.accentGreen).frame(width: 6, height: 6)
+                                Text("\(server.name):\(server.port)")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    Button {
+                        Task {
+                            do {
+                                try await state.launchShell(workspacePath: workspace.path)
+                                await onRefresh()
+                            } catch {
+                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
+                    }
+                    Button { showingCodexOptions = true } label: {
+                        Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    Button {
+                        Task {
+                            do {
+                                _ = try await state.launchClaudeChat(workspacePath: workspace.path)
+                                await onRefresh()
+                            } catch {
+                                state.showTransientError("Failed to start Claude: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
+                    }
+                    if !state.agentTypes.isEmpty {
+                        Divider()
+                        ForEach(state.agentTypes) { agent in
+                            Button {
+                                Task {
+                                    do {
+                                        try await state.launchAgent(workspacePath: workspace.path, agentType: agent.name)
+                                        await onRefresh()
+                                    } catch {
+                                        state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
+                                    }
+                                }
+                            } label: {
+                                Label(agent.label, systemImage: agentIcon(agent.name))
+                            }
+                        }
+                    }
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .padding(.horizontal, 11)
+                        .frame(height: 32)
+                        .background(OrionTheme.bgActive)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                if !servers.isEmpty {
+                    Button {
+                        Task {
+                            serverBusy = true
+                            if runningServers.isEmpty {
+                                await state.startServers(workspace: workspace)
+                            } else {
+                                await state.stopServers(workspace: workspace)
+                            }
+                            await onRefresh()
+                            serverBusy = false
+                        }
+                    } label: {
+                        if serverBusy {
+                            ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
+                        } else {
+                            Label(runningServers.isEmpty ? "Servers" : "Stop", systemImage: runningServers.isEmpty ? "play.fill" : "stop.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(runningServers.isEmpty ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(serverBusy)
+                }
+            }
+        }
+        .padding(14)
+        .background(isActiveWorkspace ? OrionTheme.bgSurface : OrionTheme.bgSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isActiveWorkspace ? OrionTheme.accentBlue.opacity(0.22) : OrionTheme.borderDim, lineWidth: 0.8)
+        )
+        .sheet(isPresented: $showingCodexOptions) {
+            CodexLaunchOptionsSheet(
+                workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                options: $codexOptions,
+                onCancel: { showingCodexOptions = false },
+                onLaunch: {
+                    let selected = codexOptions
+                    showingCodexOptions = false
+                    Task {
+                        do {
+                            _ = try await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                            await onRefresh()
+                        } catch {
+                            state.showTransientError("Failed to start Codex: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var statusText: String {
+        if activeSessionInWorkspace { return "Open" }
+        if !sessions.isEmpty { return "\(sessions.count) session\(sessions.count == 1 ? "" : "s")" }
+        if !runningServers.isEmpty { return "Servers" }
+        if isActiveWorkspace { return "Selected" }
+        return "Idle"
+    }
+
+    private var statusDotColor: Color {
+        if activeSessionInWorkspace { return OrionTheme.accentBlue }
+        if !sessions.isEmpty || !runningServers.isEmpty { return OrionTheme.accentGreen }
+        if isActiveWorkspace { return OrionTheme.accentBlue }
+        return OrionTheme.border
+    }
+}
+
+private struct HomeSessionRow: View {
+    let session: SessionInfo
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 9) {
+            AgentSigilView(session.type, size: 25)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.label)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(sessionLabel(session.type))
+                    if let model = session.model, !model.isEmpty {
+                        Text(modelLabel(model))
+                    }
+                    if let reasoning = session.reasoningEffort, !reasoning.isEmpty {
+                        Text(reasoningLabel(reasoning))
+                    }
+                }
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .lineLimit(1)
+            }
+            Spacer()
+            Circle()
+                .fill(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+                .frame(width: 7, height: 7)
+                .opacity(isActive ? 1 : 0.7)
+        }
+    }
+}
+
+private struct QuickAskSheet: View {
+    @Environment(AppState.self) private var state
+    let onCancel: () -> Void
+    let onDone: () -> Void
+    @State private var workspacePath: String
+    @State private var provider = "codex-chat"
+    @State private var prompt = ""
+    @State private var codexOptions = CodexLaunchOptions()
+    @State private var launching = false
+
+    init(defaultWorkspacePath: String?, onCancel: @escaping () -> Void, onDone: @escaping () -> Void) {
+        self.onCancel = onCancel
+        self.onDone = onDone
+        _workspacePath = State(initialValue: defaultWorkspacePath ?? "")
+    }
+
+    private var canLaunch: Bool {
+        !workspacePath.isEmpty && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !launching
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Workspace") {
+                    Picker("Workspace", selection: $workspacePath) {
+                        ForEach(state.workspaces) { workspace in
+                            Text(workspace.name).tag(workspace.path)
+                        }
+                    }
+                }
+
+                Section("Agent") {
+                    Picker("Agent", selection: $provider) {
+                        Text("Codex Chat").tag("codex-chat")
+                        Text("Claude Chat").tag("claude-chat")
+                    }
+                    .pickerStyle(.segmented)
+                    if provider == "codex-chat" {
+                        Picker("Model", selection: $codexOptions.model) {
+                            ForEach(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
+                                Text(modelLabel($0)).tag($0)
+                            }
+                        }
+                        Picker("Reasoning", selection: $codexOptions.reasoningEffort) {
+                            ForEach(["low", "medium", "high", "xhigh"], id: \.self) {
+                                Text(reasoningLabel($0)).tag($0)
+                            }
+                        }
+                    }
+                }
+
+                Section("Prompt") {
+                    TextEditor(text: $prompt)
+                        .frame(minHeight: 170)
+                        .font(.system(size: 15))
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Ask agent")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await launch() }
+                    } label: {
+                        if launching {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Text("Start").fontWeight(.semibold)
+                        }
+                    }
+                    .disabled(!canLaunch)
+                    .foregroundStyle(canLaunch ? OrionTheme.accentBlue : OrionTheme.textDim)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .onAppear {
+                if workspacePath.isEmpty {
+                    workspacePath = state.activeWorkspacePath ?? state.workspaces.first?.path ?? ""
+                }
+            }
+        }
+    }
+
+    private func launch() async {
+        guard canLaunch else { return }
+        launching = true
+        do {
+            _ = try await state.launchChatWithPrompt(
+                workspacePath: workspacePath,
+                provider: provider,
+                prompt: prompt,
+                codexOptions: codexOptions
+            )
+            launching = false
+            onDone()
+        } catch {
+            launching = false
+            state.showTransientError("Failed to start chat: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -979,6 +1609,18 @@ func sessionIcon(_ type: String) -> String {
     case "codex":  return "\u{25C7}"  // ◇
     case "server": return "\u{25B8}"  // ▸
     default:       return "\u{203A}"  // ›
+    }
+}
+
+func sessionLabel(_ type: String) -> String {
+    switch type {
+    case "claude": return "Claude CLI"
+    case "claude-chat": return "Claude chat"
+    case "codex-chat": return "Codex chat"
+    case "codex": return "Codex CLI"
+    case "server": return "Server"
+    case "shell": return "Shell"
+    default: return type.replacingOccurrences(of: "-", with: " ")
     }
 }
 

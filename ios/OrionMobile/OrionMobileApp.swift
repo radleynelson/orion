@@ -60,6 +60,7 @@ final class AppState {
     let voiceConnection = VoiceConnection()
     var voiceModeEnabled = false
     var lastVoiceText: String?
+    var showHome = true
     var showWorkspaces = false
     var showSettings = false
     var showDiffReview = false
@@ -149,6 +150,7 @@ final class AppState {
         workspaces = []
         sessions = []
         phoneLaunchedSessions = [:]
+        showHome = true
         activeWorkspacePath = nil
         activeTabId = nil
         selectedSessionByWorkspace = [:]
@@ -191,6 +193,7 @@ final class AppState {
             disconnectActiveTerminal()
             sessions = []
             phoneLaunchedSessions = [:]
+            showHome = true
             activeWorkspacePath = nil
             activeTabId = nil
             selectedSessionByWorkspace = [:]
@@ -263,9 +266,10 @@ final class AppState {
         } catch {}
     }
 
-    func activateSession(_ session: SessionInfo) async throws {
+    func activateSession(_ session: SessionInfo, showSession: Bool = true) async throws {
         guard let client else { return }
 
+        if showSession { showHome = false }
         activeWorkspacePath = session.workspacePath
         activeTabId = session.id
         selectedSessionByWorkspace[session.workspacePath] = session.id
@@ -475,8 +479,28 @@ final class AppState {
     }
 
     func activateWorkspace(_ path: String) async {
+        showHome = true
         activeWorkspacePath = path
         await ensureWorkspaceSelectionAttached()
+    }
+
+    @discardableResult
+    func launchChatWithPrompt(workspacePath: String, provider: String, prompt: String, codexOptions: CodexLaunchOptions = CodexLaunchOptions()) async throws -> SessionInfo {
+        guard let client else { throw OrionError.invalidResponse }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == "claude-chat" {
+            let session = try await launchClaudeChat(workspacePath: workspacePath)
+            if !trimmed.isEmpty {
+                try await client.sendClaudeChatMessage(sessionId: session.chatConnectionId, text: trimmed)
+            }
+            return session
+        }
+
+        let session = try await launchCodexChat(workspacePath: workspacePath, options: codexOptions)
+        if !trimmed.isEmpty {
+            try await client.sendCodexChatMessage(sessionId: session.chatConnectionId, text: trimmed)
+        }
+        return session
     }
 
     // MARK: - Kill Session
@@ -671,7 +695,7 @@ final class AppState {
             return
         }
 
-        try? await activateSession(preferred)
+        try? await activateSession(preferred, showSession: false)
     }
 
     private func handleSessionExit(tmuxSession: String, workspacePath: String) {
