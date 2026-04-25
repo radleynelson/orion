@@ -290,6 +290,10 @@ func (a *App) CreateWorkspace(repoRoot string, name string) (*workspace.Workspac
 	return a.wsMgr.CreateWorkspace(repoRoot, name)
 }
 
+func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) (*workspace.Workspace, error) {
+	return a.wsMgr.CreateWorkspaceFrom(repoRoot, name, baseRef)
+}
+
 func (a *App) DeleteWorkspace(repoRoot string, path string) error {
 	wsID := filepath.Base(path)
 	a.portReg.ReleaseWorkspace(wsID)

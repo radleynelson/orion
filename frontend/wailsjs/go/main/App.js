@@ -50,6 +50,10 @@ export function CreateWorkspace(arg1, arg2) {
   return window['go']['main']['App']['CreateWorkspace'](arg1, arg2);
 }
 
+export function CreateWorkspaceFrom(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateWorkspaceFrom'](arg1, arg2, arg3);
+}
+
 export function DeleteWorkspace(arg1, arg2) {
   return window['go']['main']['App']['DeleteWorkspace'](arg1, arg2);
 }

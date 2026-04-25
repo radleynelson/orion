@@ -126,8 +126,16 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 
 // CreateWorkspace creates a new worktree and copies credential files.
 func (m *Manager) CreateWorkspace(repoRoot, name string) (*Workspace, error) {
+	return m.CreateWorkspaceFrom(repoRoot, name, "")
+}
+
+// CreateWorkspaceFrom creates a new worktree from a caller-selected base ref.
+func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*Workspace, error) {
 	repoName := filepath.Base(repoRoot)
-	baseBranch := getMainBranch(repoRoot)
+	baseBranch := strings.TrimSpace(baseRef)
+	if baseBranch == "" {
+		baseBranch = getMainBranch(repoRoot)
+	}
 
 	mainPath := getMainWorktreePath(repoRoot)
 

@@ -3,11 +3,13 @@ import { useStore, generateId, PaneLeaf, sortWorkspaces } from '../store';
 import { server, main } from '../../wailsjs/go/models';
 import {
   ListWorkspaces,
-  CreateWorkspace,
+  CreateWorkspaceFrom,
   DeleteWorkspace,
   LaunchAgent,
   LaunchClaudeChat,
   LaunchCodexChatWithOptions,
+  SendClaudeChatMessage,
+  SendCodexChatMessage,
   CreateAttachedTerminal,
   CreateTerminalInDir,
   CloseTerminal,
@@ -33,12 +35,28 @@ type CodexLaunchOptions = {
   collaborationMode: string;
 };
 
+type NewWorkspaceDraft = {
+  name: string;
+  baseRef: string;
+  startWith: 'codex-chat' | 'claude-chat' | 'codex' | 'claude' | 'shell' | 'none';
+  prompt: string;
+  codexOptions: CodexLaunchOptions;
+};
+
 const DEFAULT_CODEX_OPTIONS: CodexLaunchOptions = {
   model: 'gpt-5.4',
   reasoningEffort: 'xhigh',
   approvalPolicy: 'never',
   sandboxMode: 'danger-full-access',
   collaborationMode: 'default',
+};
+
+const DEFAULT_WORKSPACE_DRAFT: NewWorkspaceDraft = {
+  name: '',
+  baseRef: '',
+  startWith: 'codex-chat',
+  prompt: '',
+  codexOptions: DEFAULT_CODEX_OPTIONS,
 };
 
 const CODEX_MODELS = [
@@ -92,7 +110,9 @@ export default function Sidebar() {
   } = useStore();
 
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
+  const [newWorkspaceDraft, setNewWorkspaceDraft] = useState<NewWorkspaceDraft>(DEFAULT_WORKSPACE_DRAFT);
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [serverStatuses, setServerStatuses] = useState<Record<string, server.ServerStatus[]>>({});
@@ -186,6 +206,13 @@ export default function Sidebar() {
       // Cmd+N: new workspace
       if (e.metaKey && !e.shiftKey && e.key === 'n') {
         e.preventDefault();
+        const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
+        setNewWorkspaceDraft({
+          ...DEFAULT_WORKSPACE_DRAFT,
+          baseRef: baseRefs[0] || project?.mainBranch || 'main',
+          codexOptions: { ...DEFAULT_CODEX_OPTIONS },
+        });
+        setCreateError(null);
         setCreating(true);
       }
       // Cmd+Shift+Backspace: delete active workspace
@@ -211,21 +238,27 @@ export default function Sidebar() {
     }
   }, [project, setWorkspaces]);
 
-  const handleCreate = useCallback(async () => {
-    if (!project || !newName.trim()) return;
-    try {
-      const ws = await CreateWorkspace(project.root, newName.trim());
-      setNewName('');
-      setCreating(false);
-      await refreshWorkspaces();
-      if (ws?.path) {
-        setActiveWorkspace(ws.path);
-        AllocatePorts(project.root, ws.path, false).catch(() => {});
-      }
-    } catch (err) {
-      console.error('Failed to create workspace:', err);
-    }
-  }, [project, newName, refreshWorkspaces, setActiveWorkspace]);
+  const openNewWorkspace = useCallback(() => {
+    const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
+    setNewWorkspaceDraft({
+      ...DEFAULT_WORKSPACE_DRAFT,
+      baseRef: baseRefs[0] || project?.mainBranch || 'main',
+      codexOptions: { ...DEFAULT_CODEX_OPTIONS },
+    });
+    setCreateError(null);
+    setCreating(true);
+  }, [project?.mainBranch, workspaces]);
+
+  const updateNewWorkspaceDraft = useCallback(<K extends keyof NewWorkspaceDraft>(key: K, value: NewWorkspaceDraft[K]) => {
+    setNewWorkspaceDraft((current) => ({ ...current, [key]: value }));
+  }, []);
+
+  const updateNewWorkspaceCodexOption = useCallback((key: keyof CodexLaunchOptions, value: string) => {
+    setNewWorkspaceDraft((current) => ({
+      ...current,
+      codexOptions: { ...current.codexOptions, [key]: value },
+    }));
+  }, []);
 
   const handleDelete = useCallback(async (path: string) => {
     if (!project) return;
@@ -307,8 +340,10 @@ export default function Sidebar() {
         collaborationMode: session.collaborationMode,
       });
       setCodexLaunch(null);
+      return session;
     } catch (err) {
       console.error('Failed to launch Codex chat:', err);
+      throw err;
     } finally {
       setLaunchingCodexChat(false);
     }
@@ -329,8 +364,10 @@ export default function Sidebar() {
         runtimeSessionId: session.id,
         threadId: session.threadId,
       });
+      return session;
     } catch (err) {
       console.error('Failed to launch Claude chat:', err);
+      throw err;
     }
   }, [project, addTab]);
 
@@ -351,6 +388,50 @@ export default function Sidebar() {
       console.error('Failed to launch shell:', err);
     }
   }, [project, tabs, addTab]);
+
+  const handleCreate = useCallback(async () => {
+    if (!project || !newWorkspaceDraft.name.trim()) return;
+    setCreatingWorkspace(true);
+    setCreateError(null);
+    try {
+      const ws = await CreateWorkspaceFrom(project.root, normalizedWorkspaceName(newWorkspaceDraft.name), newWorkspaceDraft.baseRef);
+      setCreating(false);
+      await refreshWorkspaces();
+      if (ws?.path) {
+        setActiveWorkspace(ws.path);
+        AllocatePorts(project.root, ws.path, false).catch(() => {});
+        const prompt = newWorkspaceDraft.prompt.trim();
+        switch (newWorkspaceDraft.startWith) {
+          case 'codex-chat': {
+            const session = await handleLaunchCodexChat(ws.path, newWorkspaceDraft.codexOptions);
+            if (session?.id && prompt) await SendCodexChatMessage(session.id, prompt, []);
+            break;
+          }
+          case 'claude-chat': {
+            const session = await handleLaunchClaudeChat(ws.path);
+            if (session?.id && prompt) await SendClaudeChatMessage(session.id, prompt, []);
+            break;
+          }
+          case 'codex':
+            await handleLaunchAgent(ws.path, 'codex');
+            break;
+          case 'claude':
+            await handleLaunchAgent(ws.path, 'claude');
+            break;
+          case 'shell':
+            await handleLaunchShell(ws.path);
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to create workspace:', err);
+      setCreateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  }, [project, newWorkspaceDraft, refreshWorkspaces, setActiveWorkspace, handleLaunchCodexChat, handleLaunchClaudeChat, handleLaunchAgent, handleLaunchShell]);
 
   const handleStartServers = useCallback(async (wsPath: string, isMain: boolean) => {
     if (!project) return;
@@ -440,6 +521,11 @@ export default function Sidebar() {
     );
   }
 
+  const baseRefs = workspaceBaseRefs(project.mainBranch, workspaces);
+  const normalizedName = normalizedWorkspaceName(newWorkspaceDraft.name);
+  const previewPath = normalizedName ? `${project.root}-${normalizedName}` : `${project.root}-new-worktree`;
+  const createDisabled = creatingWorkspace || !normalizedName;
+
   return (
     <div className="sidebar">
       {/* Project name */}
@@ -474,7 +560,7 @@ export default function Sidebar() {
             </span>
             <span
               style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size)' }}
-              onClick={() => setCreating(true)}
+              onClick={openNewWorkspace}
               title="New workspace"
             >
               +
@@ -619,22 +705,88 @@ export default function Sidebar() {
         })}
 
         {creating && (
-          <div style={{ padding: '4px 12px' }}>
-            <input
-              autoFocus
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className="sidebar-input"
-              placeholder="branch-name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreate();
-                if (e.key === 'Escape') { setCreating(false); setNewName(''); }
-              }}
-              onBlur={() => { if (!newName.trim()) { setCreating(false); setNewName(''); } }}
-            />
+          <div className="workspace-create-overlay" onMouseDown={() => !creatingWorkspace && setCreating(false)}>
+            <div className="workspace-create-sheet" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="workspace-create-header">
+                <button type="button" onClick={() => setCreating(false)} disabled={creatingWorkspace}>Cancel</button>
+                <div>
+                  <div>New worktree</div>
+                  <span>{project.name}</span>
+                </div>
+                <button type="button" className="workspace-create-primary" onClick={handleCreate} disabled={createDisabled}>
+                  {creatingWorkspace ? 'Creating' : 'Create'}
+                </button>
+              </div>
+
+              <div className="workspace-create-body">
+                <label className="workspace-create-field workspace-create-wide">
+                  <span>Name</span>
+                  <input
+                    autoFocus
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder="fix-stripe-webhook"
+                    value={newWorkspaceDraft.name}
+                    onChange={(e) => updateNewWorkspaceDraft('name', e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !createDisabled) handleCreate();
+                      if (e.key === 'Escape') setCreating(false);
+                    }}
+                  />
+                  <small>{previewPath}</small>
+                </label>
+
+                <label className="workspace-create-field">
+                  <span>Branch from</span>
+                  <select value={newWorkspaceDraft.baseRef || baseRefs[0]} onChange={(e) => updateNewWorkspaceDraft('baseRef', e.target.value)}>
+                    {baseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+                  </select>
+                </label>
+
+                <label className="workspace-create-field">
+                  <span>Start with</span>
+                  <select value={newWorkspaceDraft.startWith} onChange={(e) => updateNewWorkspaceDraft('startWith', e.target.value as NewWorkspaceDraft['startWith'])}>
+                    <option value="codex-chat">Codex Chat</option>
+                    <option value="claude-chat">Claude Chat</option>
+                    <option value="codex">Codex CLI</option>
+                    <option value="claude">Claude CLI</option>
+                    <option value="shell">Shell</option>
+                    <option value="none">Nothing</option>
+                  </select>
+                </label>
+
+                {newWorkspaceDraft.startWith === 'codex-chat' && (
+                  <div className="workspace-create-codex">
+                    <label>
+                      <span>Model</span>
+                      <select value={newWorkspaceDraft.codexOptions.model} onChange={(e) => updateNewWorkspaceCodexOption('model', e.target.value)}>
+                        {CODEX_MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Reasoning</span>
+                      <select value={newWorkspaceDraft.codexOptions.reasoningEffort} onChange={(e) => updateNewWorkspaceCodexOption('reasoningEffort', e.target.value)}>
+                        {REASONING_EFFORTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                <label className="workspace-create-field workspace-create-wide">
+                  <span>First prompt</span>
+                  <textarea
+                    placeholder="Trace the failing checkout webhook and propose a fix."
+                    value={newWorkspaceDraft.prompt}
+                    onChange={(e) => updateNewWorkspaceDraft('prompt', e.target.value)}
+                    disabled={newWorkspaceDraft.startWith !== 'codex-chat' && newWorkspaceDraft.startWith !== 'claude-chat'}
+                  />
+                  <small>Sent automatically when the new worktree starts with a chat session.</small>
+                </label>
+
+                {createError && <div className="workspace-create-error">{createError}</div>}
+              </div>
+            </div>
           </div>
         )}
 
@@ -715,4 +867,19 @@ export default function Sidebar() {
 function workspaceLabel(ws?: { name?: string; branch?: string; path?: string }): string {
   if (!ws) return 'Active workspace';
   return ws.branch || ws.name || ws.path || 'Active workspace';
+}
+
+function workspaceBaseRefs(mainBranch: string | undefined, workspaces: { branch?: string }[]): string[] {
+  const refs = new Set<string>();
+  if (mainBranch) refs.add(mainBranch);
+  for (const ws of workspaces) {
+    const branch = (ws.branch || '').trim();
+    if (branch && branch !== '(detached)') refs.add(branch);
+  }
+  if (refs.size === 0) refs.add('main');
+  return Array.from(refs);
+}
+
+function normalizedWorkspaceName(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
 }

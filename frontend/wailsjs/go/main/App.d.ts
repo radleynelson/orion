@@ -37,6 +37,8 @@ export function CreateTerminalInDir(arg1:string,arg2:string):Promise<void>;
 
 export function CreateWorkspace(arg1:string,arg2:string):Promise<workspace.Workspace>;
 
+export function CreateWorkspaceFrom(arg1:string,arg2:string,arg3:string):Promise<workspace.Workspace>;
+
 export function DeleteWorkspace(arg1:string,arg2:string):Promise<void>;
 
 export function DetachTerminal(arg1:string):Promise<void>;

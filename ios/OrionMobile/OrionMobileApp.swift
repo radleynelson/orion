@@ -16,6 +16,23 @@ struct OrionMobileApp: App {
     }
 }
 
+private func normalizeWorkspaceName(_ name: String) -> String {
+    let lowercased = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    var output = ""
+    var previousWasDash = false
+    for scalar in lowercased.unicodeScalars {
+        let isAllowed = CharacterSet.alphanumerics.contains(scalar) || scalar == "." || scalar == "_" || scalar == "-"
+        if isAllowed {
+            output.unicodeScalars.append(scalar)
+            previousWasDash = scalar == "-"
+        } else if !previousWasDash {
+            output.append("-")
+            previousWasDash = true
+        }
+    }
+    return output.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+}
+
 @Observable
 final class AppState {
     var isConnected = false
@@ -191,6 +208,33 @@ final class AppState {
         await ensureWorkspaceSelectionAttached()
     }
 
+    @discardableResult
+    func createWorkspace(name: String, baseRef: String, startWith: String, firstPrompt: String, codexOptions: CodexLaunchOptions = CodexLaunchOptions()) async throws -> Workspace {
+        guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
+        let normalizedName = normalizeWorkspaceName(name)
+        let workspace = try await client.createWorkspace(root: root, name: normalizedName, baseRef: baseRef)
+        workspaces = try await client.getWorkspaces(root: root)
+        activeWorkspacePath = workspace.path
+        let prompt = firstPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch startWith {
+        case "codex-chat":
+            let session = try await launchCodexChat(workspacePath: workspace.path, options: codexOptions)
+            if !prompt.isEmpty { try await client.sendCodexChatMessage(sessionId: session.chatConnectionId, text: prompt) }
+        case "claude-chat":
+            let session = try await launchClaudeChat(workspacePath: workspace.path)
+            if !prompt.isEmpty { try await client.sendClaudeChatMessage(sessionId: session.chatConnectionId, text: prompt) }
+        case "codex", "claude":
+            try await launchAgent(workspacePath: workspace.path, agentType: startWith)
+        case "shell":
+            try await launchShell(workspacePath: workspace.path)
+        default:
+            break
+        }
+
+        return workspace
+    }
+
     func refreshSessions() async {
         guard let client, let info = projectInfo, !workspaces.isEmpty else { return }
         do {
@@ -275,8 +319,9 @@ final class AppState {
         }
     }
 
-    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions = CodexLaunchOptions()) async throws {
-        guard let client, let root = selectedProject else { return }
+    @discardableResult
+    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions = CodexLaunchOptions()) async throws -> SessionInfo {
+        guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
         let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, options: options)
         let session = SessionInfo(
             tmuxName: resp.threadId ?? resp.id,
@@ -297,14 +342,17 @@ final class AppState {
         await refreshSessions()
         if let refreshed = sessions.first(where: { $0.id == session.id || $0.threadId == resp.threadId }) {
             try await activateSession(refreshed)
+            return refreshed
         } else {
             sessions.append(session)
             try await activateSession(session)
+            return session
         }
     }
 
-    func launchClaudeChat(workspacePath: String) async throws {
-        guard let client, let root = selectedProject else { return }
+    @discardableResult
+    func launchClaudeChat(workspacePath: String) async throws -> SessionInfo {
+        guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
         let resp = try await client.launchClaudeChat(repoRoot: root, workspacePath: workspacePath)
         let session = SessionInfo(tmuxName: resp.id, type: resp.type, label: resp.label, workspacePath: resp.workspacePath, provider: resp.provider ?? "claude", viewMode: resp.viewMode ?? "chat", runtimeSessionId: resp.runtimeSessionId ?? resp.id, threadId: resp.threadId)
         claudeViewModeBySession[resp.id] = "chat"
@@ -312,9 +360,11 @@ final class AppState {
         await refreshSessions()
         if let refreshed = sessions.first(where: { $0.tmuxName == resp.id }) {
             try await activateSession(refreshed)
+            return refreshed
         } else {
             sessions.append(session)
             try await activateSession(session)
+            return session
         }
     }
 

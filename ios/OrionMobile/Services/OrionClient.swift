@@ -18,6 +18,9 @@ actor OrionClient {
     func getProjects() async throws -> [String] { try await get("/api/projects") }
     func getProjectInfo(root: String) async throws -> ProjectInfo { try await get("/api/projects/info", query: ["root": root]) }
     func getWorkspaces(root: String) async throws -> [Workspace] { try await get("/api/workspaces", query: ["root": root]) }
+    func createWorkspace(root: String, name: String, baseRef: String) async throws -> Workspace {
+        try await post("/api/workspaces", body: ["root": root, "name": name, "baseRef": baseRef])
+    }
     func getSessions(repo: String, workspacePaths: [String]) async throws -> [SessionInfo] {
         try await get("/api/sessions", query: ["repo": repo, "workspaces": workspacePaths.joined(separator: ",")])
     }
@@ -47,6 +50,14 @@ actor OrionClient {
 
     func launchClaudeChat(repoRoot: String, workspacePath: String) async throws -> LaunchClaudeChatResponse {
         try await post("/api/claude-chat", body: ["repoRoot": repoRoot, "workspacePath": workspacePath])
+    }
+
+    func sendCodexChatMessage(sessionId: String, text: String) async throws {
+        let _: [String: String] = try await post("/api/codex-chat/message", body: ["sessionId": sessionId, "text": text])
+    }
+
+    func sendClaudeChatMessage(sessionId: String, text: String) async throws {
+        let _: [String: String] = try await post("/api/claude-chat/message", body: ["sessionId": sessionId, "text": text])
     }
 
     // Server management

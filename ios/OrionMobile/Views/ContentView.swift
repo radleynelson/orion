@@ -213,6 +213,7 @@ struct HeaderBar: View {
 
 struct WorkspaceSheet: View {
     @Environment(AppState.self) private var state
+    @State private var showingNewWorktree = false
 
     var body: some View {
         NavigationStack {
@@ -231,12 +232,42 @@ struct WorkspaceSheet: View {
                     Button("Done") { state.showWorkspaces = false }.foregroundStyle(OrionTheme.accentBlue)
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { Task { await state.refreshSessions() } } label: {
-                        Image(systemName: "arrow.clockwise").foregroundStyle(OrionTheme.accentBlue)
+                    HStack(spacing: 14) {
+                        Button { Task { await state.refreshSessions() } } label: {
+                            Image(systemName: "arrow.clockwise").foregroundStyle(OrionTheme.accentBlue)
+                        }
+                        Button { showingNewWorktree = true } label: {
+                            Image(systemName: "plus").foregroundStyle(OrionTheme.accentBlue)
+                        }
                     }
                 }
             }
             .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .sheet(isPresented: $showingNewWorktree) {
+                NewWorktreeSheet(
+                    baseRefs: workspaceBaseRefs(mainBranch: state.projectInfo?.mainBranch, workspaces: state.workspaces),
+                    onCancel: { showingNewWorktree = false },
+                    onCreate: { draft in
+                        showingNewWorktree = false
+                        Task {
+                            do {
+                                try await state.createWorkspace(
+                                    name: draft.name,
+                                    baseRef: draft.baseRef,
+                                    startWith: draft.startWith,
+                                    firstPrompt: draft.firstPrompt,
+                                    codexOptions: draft.codexOptions
+                                )
+                                state.showWorkspaces = false
+                            } catch {
+                                state.showTransientError("Failed to create worktree: \(error.localizedDescription)")
+                            }
+                        }
+                    }
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
         }
     }
 }
@@ -333,7 +364,7 @@ struct WorkspaceSection: View {
 
                     Button {
                         Task {
-                            try? await state.launchClaudeChat(workspacePath: workspace.path)
+                            _ = try? await state.launchClaudeChat(workspacePath: workspace.path)
                             state.showWorkspaces = false
                         }
                     } label: {
@@ -434,13 +465,125 @@ struct WorkspaceSection: View {
                     let selected = codexOptions
                     showingCodexOptions = false
                     Task {
-                        try? await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                        _ = try? await state.launchCodexChat(workspacePath: workspace.path, options: selected)
                         state.showWorkspaces = false
                     }
                 }
             )
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+private struct NewWorktreeDraft {
+    var name = ""
+    var baseRef: String
+    var startWith = "codex-chat"
+    var firstPrompt = ""
+    var codexOptions = CodexLaunchOptions()
+}
+
+private struct NewWorktreeSheet: View {
+    let baseRefs: [String]
+    let onCancel: () -> Void
+    let onCreate: (NewWorktreeDraft) -> Void
+    @State private var draft: NewWorktreeDraft
+
+    private let starts = [
+        ("codex-chat", "Codex Chat"),
+        ("claude-chat", "Claude Chat"),
+        ("codex", "Codex CLI"),
+        ("claude", "Claude CLI"),
+        ("shell", "Shell"),
+        ("none", "Nothing")
+    ]
+
+    init(baseRefs: [String], onCancel: @escaping () -> Void, onCreate: @escaping (NewWorktreeDraft) -> Void) {
+        let refs = baseRefs.isEmpty ? ["main"] : baseRefs
+        self.baseRefs = refs
+        self.onCancel = onCancel
+        self.onCreate = onCreate
+        _draft = State(initialValue: NewWorktreeDraft(baseRef: refs[0]))
+    }
+
+    private var normalizedName: String {
+        normalizedWorktreeName(draft.name)
+    }
+
+    private var canCreate: Bool {
+        !normalizedName.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("fix-stripe-webhook", text: $draft.name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 15, design: .monospaced))
+                    Text(normalizedName.isEmpty ? "Use lowercase letters, numbers, dots, underscores, and dashes." : "New branch: \(normalizedName)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                }
+
+                Section("Branch from") {
+                    Picker("Base", selection: $draft.baseRef) {
+                        ForEach(baseRefs, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+
+                Section("Start with") {
+                    Picker("Session", selection: $draft.startWith) {
+                        ForEach(starts, id: \.0) { item in
+                            Text(item.1).tag(item.0)
+                        }
+                    }
+                    if draft.startWith == "codex-chat" {
+                        Picker("Model", selection: $draft.codexOptions.model) {
+                            ForEach(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
+                                Text(modelLabel($0)).tag($0)
+                            }
+                        }
+                        Picker("Reasoning", selection: $draft.codexOptions.reasoningEffort) {
+                            ForEach(["low", "medium", "high", "xhigh"], id: \.self) {
+                                Text(reasoningLabel($0)).tag($0)
+                            }
+                        }
+                    }
+                }
+
+                Section("First prompt") {
+                    TextEditor(text: $draft.firstPrompt)
+                        .frame(minHeight: 110)
+                        .font(.system(size: 14))
+                        .disabled(draft.startWith != "codex-chat" && draft.startWith != "claude-chat")
+                    Text("Sent automatically when the worktree starts with a chat session.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(OrionTheme.textDim)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("New worktree")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Create") {
+                        var normalized = draft
+                        normalized.name = normalizedName
+                        onCreate(normalized)
+                    }
+                    .disabled(!canCreate)
+                    .foregroundStyle(canCreate ? OrionTheme.accentBlue : OrionTheme.textDim)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
         }
     }
 }
@@ -583,6 +726,37 @@ func agentIcon(_ name: String) -> String {
     case "codex":  return "diamond"
     default:       return "sparkles"
     }
+}
+
+private func workspaceBaseRefs(mainBranch: String?, workspaces: [Workspace]) -> [String] {
+    var refs: [String] = []
+    func append(_ value: String?) {
+        guard let value else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "(detached)", !refs.contains(trimmed) else { return }
+        refs.append(trimmed)
+    }
+    append(mainBranch)
+    workspaces.forEach { append($0.branch) }
+    if refs.isEmpty { refs.append("main") }
+    return refs
+}
+
+private func normalizedWorktreeName(_ name: String) -> String {
+    let lowercased = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    var output = ""
+    var previousWasDash = false
+    for scalar in lowercased.unicodeScalars {
+        let isAllowed = CharacterSet.alphanumerics.contains(scalar) || scalar == "." || scalar == "_" || scalar == "-"
+        if isAllowed {
+            output.unicodeScalars.append(scalar)
+            previousWasDash = scalar == "-"
+        } else if !previousWasDash {
+            output.append("-")
+            previousWasDash = true
+        }
+    }
+    return output.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
 }
 
 func sessionColor(_ type: String) -> Color {

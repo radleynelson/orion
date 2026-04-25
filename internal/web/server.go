@@ -41,6 +41,7 @@ type AppAPI interface {
 	GetRecentProjects() []string
 	GetProjectInfo(path string) (*workspace.ProjectInfo, error)
 	ListWorkspaces(repoRoot string) ([]workspace.Workspace, error)
+	CreateWorkspaceFrom(repoRoot string, name string, baseRef string) (*workspace.Workspace, error)
 	RecoverSessions(repoName string, workspacePaths []string) []state.SessionInfo
 	GetSavedTabs() []state.SavedTab
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
@@ -280,21 +281,42 @@ func (s *Server) handleProjectInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		root := r.URL.Query().Get("root")
+		if root == "" {
+			http.Error(w, "root parameter required", http.StatusBadRequest)
+			return
+		}
+		workspaces, err := s.app.ListWorkspaces(root)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, workspaces)
+	case http.MethodPost:
+		var req struct {
+			Root    string `json:"root"`
+			Name    string `json:"name"`
+			BaseRef string `json:"baseRef"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Root) == "" || strings.TrimSpace(req.Name) == "" {
+			http.Error(w, "root and name required", http.StatusBadRequest)
+			return
+		}
+		workspace, err := s.app.CreateWorkspaceFrom(req.Root, req.Name, req.BaseRef)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, workspace)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	root := r.URL.Query().Get("root")
-	if root == "" {
-		http.Error(w, "root parameter required", http.StatusBadRequest)
-		return
-	}
-	workspaces, err := s.app.ListWorkspaces(root)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, workspaces)
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
