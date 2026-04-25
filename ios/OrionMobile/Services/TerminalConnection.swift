@@ -249,6 +249,7 @@ final class CodexChatConnection {
     let workspacePath: String
     private(set) var isConnected = false
     private(set) var connectionState = ConnectionState.disconnected
+    private(set) var queuedMessageCount = 0
     var messages: [CodexChatMessage] = []
     var onPermanentFailure: (() -> Void)?
     var onAssistantVoiceText: ((String) -> Void)?
@@ -259,11 +260,16 @@ final class CodexChatConnection {
     private var session: URLSession?
     private var reconnectTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
+    private var pongTimeoutTask: Task<Void, Never>?
+    private var healthTask: Task<Void, Never>?
     private var shouldReconnect = false
     private var connectionGeneration = 0
     private var connectedAt = Date.distantPast
+    private var lastPongAt = Date.distantPast
     private var pendingCodexVoiceText = ""
     private var lastCodexVoiceMessageType = ""
+    private var pendingSends: [CodexChatWSMessage] = []
+    private let maxPendingSends = 12
 
     init(sessionId: String, sessionType: String = "codex-chat", workspacePath: String = "") {
         self.sessionId = sessionId
@@ -282,7 +288,11 @@ final class CodexChatConnection {
         self.token = token
         shouldReconnect = true
         connectionGeneration += 1
+        reconnectTask?.cancel()
+        reconnectTask = nil
         pingTask?.cancel(); pingTask = nil
+        pongTimeoutTask?.cancel(); pongTimeoutTask = nil
+        healthTask?.cancel(); healthTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil); webSocket = nil
         session?.invalidateAndCancel(); session = nil
         connectWebSocket(host: host, token: token, generation: connectionGeneration)
@@ -295,12 +305,18 @@ final class CodexChatConnection {
         reconnectTask = nil
         pingTask?.cancel()
         pingTask = nil
+        pongTimeoutTask?.cancel()
+        pongTimeoutTask = nil
+        healthTask?.cancel()
+        healthTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil)
         webSocket = nil
         session?.invalidateAndCancel()
         session = nil
         isConnected = false
         connectionState = .disconnected
+        pendingSends.removeAll(keepingCapacity: true)
+        queuedMessageCount = 0
         resetPendingCodexVoiceText()
     }
 
@@ -315,6 +331,16 @@ final class CodexChatConnection {
     func approvePlan() {
         guard isClaude else { return }
         send(CodexChatWSMessage(type: "plan_action", action: "approve"))
+    }
+
+    func reconnectOrProbe() {
+        guard let host, let token else { return }
+        if connectionState == .reconnecting { return }
+        if !isConnected || connectionState == .failed {
+            connect(host: host, token: token)
+            return
+        }
+        verifyServerReachable()
     }
 
     private func connectWebSocket(host: String, token: String, generation: Int) {
@@ -339,15 +365,28 @@ final class CodexChatConnection {
         isConnected = true
         connectionState = .connected
         connectedAt = Date()
+        lastPongAt = Date()
         resetPendingCodexVoiceText()
         receiveLoop(generation: generation)
         startPing()
+        flushPendingSends()
     }
 
     private func send(_ message: CodexChatWSMessage) {
         guard let data = try? JSONEncoder().encode(message),
               let string = String(data: data, encoding: .utf8) else { return }
-        webSocket?.send(.string(string)) { _ in }
+        guard isConnected, let webSocket else {
+            queueForReconnect(message)
+            attemptReconnect()
+            return
+        }
+        webSocket.send(.string(string)) { [weak self] error in
+            guard let self, error != nil else { return }
+            DispatchQueue.main.async {
+                self.queueForReconnect(message)
+                self.markDisconnectedAndReconnect()
+            }
+        }
     }
 
     private func receiveLoop(generation: Int) {
@@ -361,9 +400,7 @@ final class CodexChatConnection {
             case .failure:
                 DispatchQueue.main.async {
                     guard generation == self.connectionGeneration else { return }
-                    self.isConnected = false
-                    guard self.shouldReconnect else { return }
-                    self.attemptReconnect()
+                    self.markDisconnectedAndReconnect()
                 }
             }
         }
@@ -383,11 +420,17 @@ final class CodexChatConnection {
         }
         if let control = try? JSONDecoder().decode(CodexChatWSMessage.self, from: data),
            control.type == "pong" {
+            DispatchQueue.main.async {
+                self.lastPongAt = Date()
+                self.pongTimeoutTask?.cancel()
+                self.pongTimeoutTask = nil
+            }
             return
         }
     }
 
     private func attemptReconnect() {
+        guard reconnectTask == nil else { return }
         guard let host, let token else {
             connectionState = .failed
             onPermanentFailure?()
@@ -409,12 +452,14 @@ final class CodexChatConnection {
                     self.webSocket = nil
                     self.session?.invalidateAndCancel()
                     self.session = nil
+                    self.reconnectTask = nil
                     self.connectWebSocket(host: host, token: token, generation: generation)
                 }
                 return
             }
             guard let self, !Task.isCancelled else { return }
             await MainActor.run {
+                self.reconnectTask = nil
                 self.connectionState = .failed
                 self.onPermanentFailure?()
             }
@@ -427,9 +472,93 @@ final class CodexChatConnection {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 20 * 1_000_000_000)
                 guard let self, !Task.isCancelled, self.isConnected else { return }
-                self.send(CodexChatWSMessage(type: "ping"))
+                self.verifyServerReachable()
             }
         }
+    }
+
+    private func verifyServerReachable() {
+        guard let host, let token else { return }
+        guard let url = URL(string: "http://\(host)/api/projects") else {
+            markDisconnectedAndReconnect()
+            return
+        }
+        healthTask?.cancel()
+        let generation = connectionGeneration
+        healthTask = Task { [weak self] in
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 3
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            do {
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                guard let self, !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard generation == self.connectionGeneration else { return }
+                    self.healthTask = nil
+                    guard self.connectionState == .connected else { return }
+                    self.sendPingProbe()
+                }
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard generation == self.connectionGeneration else { return }
+                    self.healthTask = nil
+                    self.markDisconnectedAndReconnect()
+                }
+            }
+        }
+    }
+
+    private func sendPingProbe() {
+        send(CodexChatWSMessage(type: "ping"))
+        schedulePongTimeout()
+    }
+
+    private func schedulePongTimeout() {
+        pongTimeoutTask?.cancel()
+        let generation = connectionGeneration
+        pongTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            await MainActor.run {
+                guard generation == self.connectionGeneration else { return }
+                guard self.connectionState == .connected else { return }
+                guard Date().timeIntervalSince(self.lastPongAt) >= 4.5 else { return }
+                self.markDisconnectedAndReconnect()
+            }
+        }
+    }
+
+    private func queueForReconnect(_ message: CodexChatWSMessage) {
+        guard message.type != "ping" else { return }
+        pendingSends.append(message)
+        if pendingSends.count > maxPendingSends {
+            pendingSends.removeFirst(pendingSends.count - maxPendingSends)
+        }
+        queuedMessageCount = pendingSends.count
+    }
+
+    private func flushPendingSends() {
+        guard isConnected, !pendingSends.isEmpty else { return }
+        let queued = pendingSends
+        pendingSends.removeAll(keepingCapacity: true)
+        queuedMessageCount = 0
+        for message in queued {
+            send(message)
+        }
+    }
+
+    private func markDisconnectedAndReconnect() {
+        pongTimeoutTask?.cancel()
+        pongTimeoutTask = nil
+        healthTask?.cancel()
+        healthTask = nil
+        isConnected = false
+        guard shouldReconnect else { return }
+        attemptReconnect()
     }
 
     private func publishAssistantVoiceTextIfNeeded(_ message: CodexChatMessage) {

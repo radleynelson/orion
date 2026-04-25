@@ -2317,11 +2317,11 @@ struct CodexChatView: View {
                     Spacer()
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(connection.connectionState == .connected ? OrionTheme.accentGreen : OrionTheme.textDim)
+                            .fill(connectionBadgeColor)
                             .frame(width: 7, height: 7)
-                        Text(connection.connectionState == .connected ? "Online" : "Offline")
+                        Text(connectionBadgeText)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(connection.connectionState == .connected ? OrionTheme.textSecondary : OrionTheme.textDim)
+                            .foregroundStyle(connectionBadgeForeground)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -2383,6 +2383,9 @@ struct CodexChatView: View {
                 }
             )
         }
+        .onAppear {
+            connection.reconnectOrProbe()
+        }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await loadPhotoAttachments(items) }
@@ -2400,6 +2403,34 @@ struct CodexChatView: View {
             }
         }
         return "Ready"
+    }
+
+    private var connectionBadgeText: String {
+        if connection.queuedMessageCount > 0 {
+            return connection.queuedMessageCount == 1 ? "1 queued" : "\(connection.queuedMessageCount) queued"
+        }
+        switch connection.connectionState {
+        case .connected: return "Online"
+        case .reconnecting: return "Reconnecting"
+        case .failed: return "Reconnect"
+        case .disconnected: return "Offline"
+        }
+    }
+
+    private var connectionBadgeColor: Color {
+        if connection.queuedMessageCount > 0 { return OrionTheme.accentYellow }
+        switch connection.connectionState {
+        case .connected: return OrionTheme.accentGreen
+        case .reconnecting: return OrionTheme.accentYellow
+        case .failed: return OrionTheme.accentRed
+        case .disconnected: return OrionTheme.textDim
+        }
+    }
+
+    private var connectionBadgeForeground: Color {
+        connection.connectionState == .disconnected && connection.queuedMessageCount == 0
+            ? OrionTheme.textDim
+            : OrionTheme.textSecondary
     }
 
     private var isAssistantRunning: Bool {
@@ -2804,6 +2835,21 @@ struct CodexChatView: View {
 
     private var composer: some View {
         VStack(spacing: 7) {
+            if connection.queuedMessageCount > 0 {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(connection.queuedMessageCount == 1 ? "Message queued. It will send when chat reconnects." : "\(connection.queuedMessageCount) messages queued. They will send when chat reconnects.")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(OrionTheme.accentYellow)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(OrionTheme.accentYellow.opacity(0.08))
+                .clipShape(Capsule())
+            }
+
             if isAssistantRunning {
                 workingIndicator
                     .transition(.opacity.combined(with: .move(edge: .bottom)))

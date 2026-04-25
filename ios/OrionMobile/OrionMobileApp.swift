@@ -606,6 +606,10 @@ final class AppState {
            !activeChatConnection.isConnected,
            activeChatConnection.connectionState != .reconnecting {
             activeChatConnection.connect(host: host, token: token)
+        } else if let activeChatConnection,
+                  activeSessionShowsChat,
+                  activeChatConnection.connectionState == .connected {
+            activeChatConnection.reconnectOrProbe()
         }
 
         // Reconnect voice WebSocket if voice mode is on and it's disconnected
