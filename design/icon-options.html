@@ -549,6 +549,23 @@
       border-color: rgba(255,255,255,.18);
     }
 
+    .brand-sigil.native-art {
+      overflow: hidden;
+      background: #111315;
+      color: transparent;
+    }
+
+    .brand-sigil.native-art.claude-native {
+      background: #f2eee6;
+    }
+
+    .brand-sigil.native-art img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
     .brand-sigil.openai-slot,
     .brand-sigil.claude-slot {
       font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -594,6 +611,69 @@
       color: var(--dim);
       font-size: 12px;
       line-height: 1.45;
+    }
+
+    .downloaded-provider-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+      margin-top: 12px;
+    }
+
+    .downloaded-provider {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(0,0,0,.18);
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .provider-art-sample {
+      height: 58px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255,255,255,.09);
+      overflow: hidden;
+    }
+
+    .provider-art-sample.dark {
+      background: #101113;
+    }
+
+    .provider-art-sample.light {
+      background: #f2eee6;
+    }
+
+    .provider-art-sample.checker {
+      background:
+        linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(255,255,255,.08) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(255,255,255,.08) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.08) 75%),
+        #17181b;
+      background-size: 12px 12px;
+      background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+    }
+
+    .provider-art-sample img {
+      width: 42px;
+      height: 42px;
+      object-fit: cover;
+      display: block;
+      border-radius: 8px;
+    }
+
+    .provider-art-sample .transparent-img {
+      object-fit: contain;
+    }
+
+    .asset-caption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
     }
 
     .role-grid {
@@ -960,7 +1040,7 @@
       </div>
     </section>
 
-    <section class="section">
+    <section id="agent-icons" class="section">
       <div class="section-head">
         <h2>Orion project mark</h2>
         <div class="section-note">Second pass: make the constellation legible as Orion first. These emphasize the shoulder stars, the three-star belt, the sword, and the Rigel/Saiph base instead of generic connected dots.</div>
@@ -1068,23 +1148,37 @@
           <div class="sample brand-comparison">
             <div class="official-slot-grid">
               <div class="official-slot">
-                <div class="official-slot-head"><span class="brand-sigil claude-slot">SVG</span>Claude</div>
-                <div class="official-slot-copy">Use the official Claude/Anthropic SVG if we can bundle it locally.</div>
+                <div class="official-slot-head"><span class="brand-sigil native-art claude-native"><img src="assets/provider-icons/claude-native.webp" alt=""></span>Claude</div>
+                <div class="official-slot-copy">Downloaded 1280px WebP from Downloads. Reads clearly at tab and session size.</div>
               </div>
               <div class="official-slot">
-                <div class="official-slot-head"><span class="brand-sigil openai-slot">SVG</span>Codex</div>
-                <div class="official-slot-copy">Use OpenAI/Codex product art if an approved standalone icon exists.</div>
+                <div class="official-slot-head"><span class="brand-sigil native-art"><img src="assets/provider-icons/codex-native.webp" alt=""></span>Codex</div>
+                <div class="official-slot-copy">Downloaded 1280px WebP from Downloads. Stronger than the placeholder chevron.</div>
               </div>
               <div class="official-slot">
                 <div class="official-slot-head"><span class="sigil agent-review"><svg class="glyph"><use href="#i-target"></use></svg></span>Custom</div>
                 <div class="official-slot-copy">Custom agents stay in Orion's role icon system, not external brand art.</div>
               </div>
             </div>
+            <div class="downloaded-provider-grid">
+              <div class="downloaded-provider">
+                <div class="provider-art-sample light"><img src="assets/provider-icons/claude-native.webp" alt=""></div>
+                <div class="asset-caption">Claude WebP<br>1280 x 1280, no alpha</div>
+              </div>
+              <div class="downloaded-provider">
+                <div class="provider-art-sample dark"><img src="assets/provider-icons/codex-native.webp" alt=""></div>
+                <div class="asset-caption">Codex WebP<br>1280 x 1280, no alpha</div>
+              </div>
+              <div class="downloaded-provider">
+                <div class="provider-art-sample checker"><img class="transparent-img" src="assets/provider-icons/claude-native-small.png" alt=""></div>
+                <div class="asset-caption">Claude PNG<br>128 x 128, transparent</div>
+              </div>
+            </div>
             <div class="brand-row">
               <strong>Sessions</strong>
               <div class="agent-icons">
-                <span class="brand-sigil"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-claude-brand"></use></svg></span>
-                <span class="brand-sigil codex-brand"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-codex-brand"></use></svg></span>
+                <span class="brand-sigil native-art claude-native"><img src="assets/provider-icons/claude-native.webp" alt=""></span>
+                <span class="brand-sigil native-art"><img src="assets/provider-icons/codex-native.webp" alt=""></span>
                 <span class="sigil agent-shell"><svg class="glyph"><use href="#i-shell"></use></svg></span>
                 <span class="sigil agent-review"><svg class="glyph"><use href="#i-target"></use></svg></span>
               </div>
@@ -1092,11 +1186,11 @@
             <div class="brand-row">
               <strong>Tabs</strong>
               <div class="agent-icons">
-                <div class="tab active"><span class="brand-sigil"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-claude-brand"></use></svg></span>Claude Chat</div>
-                <div class="tab"><span class="brand-sigil codex-brand"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-codex-brand"></use></svg></span>Codex</div>
+                <div class="tab active"><span class="brand-sigil native-art claude-native"><img src="assets/provider-icons/claude-native.webp" alt=""></span>Claude Chat</div>
+                <div class="tab"><span class="brand-sigil native-art"><img src="assets/provider-icons/codex-native.webp" alt=""></span>Codex</div>
               </div>
             </div>
-            <div class="brand-note">Technically possible: the cleanest path is <code>provider = "claude"</code> or <code>provider = "codex"</code> mapping to locally bundled provider SVGs. This board still uses placeholders so we can judge scale without accidentally treating a traced logo as production-ready.</div>
+            <div class="brand-note">These are now local design assets copied from Downloads into <code>design/assets/provider-icons/</code>. The WebP files include their own square backgrounds, so if we choose this route we should preserve the tile treatment instead of recoloring them.</div>
           </div>
         </div>
 
