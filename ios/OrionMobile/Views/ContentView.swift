@@ -769,35 +769,7 @@ private struct MobileWorkspaceCard: View {
 
             HStack(spacing: 10) {
                 Menu {
-                    Button {
-                        Task {
-                            do {
-                                try await state.launchShell(workspacePath: workspace.path)
-                                await onRefresh()
-                            } catch {
-                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
-                            }
-                        }
-                    } label: {
-                        Label("Shell", systemImage: "terminal")
-                    }
-                    Button { showingCodexOptions = true } label: {
-                        Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
-                    }
-                    Button {
-                        Task {
-                            do {
-                                _ = try await state.launchClaudeChat(workspacePath: workspace.path)
-                                await onRefresh()
-                            } catch {
-                                state.showTransientError("Failed to start Claude: \(error.localizedDescription)")
-                            }
-                        }
-                    } label: {
-                        Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
-                    }
                     if !state.agentTypes.isEmpty {
-                        Divider()
                         ForEach(state.agentTypes) { agent in
                             Button {
                                 Task {
@@ -812,6 +784,19 @@ private struct MobileWorkspaceCard: View {
                                 Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
                             }
                         }
+                        Divider()
+                    }
+                    Button {
+                        Task {
+                            do {
+                                try await state.launchShell(workspacePath: workspace.path)
+                                await onRefresh()
+                            } catch {
+                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
                     }
                 } label: {
                     Label("New", systemImage: "plus")
@@ -1199,37 +1184,7 @@ private struct WorkspaceDetailSheet: View {
 
             HStack(spacing: 10) {
                 Menu {
-                    Button { showingCodexOptions = true } label: {
-                        Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
-                    }
-                    Button {
-                        Task {
-                            do {
-                                _ = try await state.launchClaudeChat(workspacePath: workspace.path)
-                                await onRefresh()
-                                onClose()
-                            } catch {
-                                state.showTransientError("Failed to start Claude: \(error.localizedDescription)")
-                            }
-                        }
-                    } label: {
-                        Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
-                    }
-                    Button {
-                        Task {
-                            do {
-                                try await state.launchShell(workspacePath: workspace.path)
-                                await onRefresh()
-                                onClose()
-                            } catch {
-                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
-                            }
-                        }
-                    } label: {
-                        Label("Shell", systemImage: "terminal")
-                    }
                     if !state.agentTypes.isEmpty {
-                        Divider()
                         ForEach(state.agentTypes) { agent in
                             Button {
                                 Task {
@@ -1245,6 +1200,20 @@ private struct WorkspaceDetailSheet: View {
                                 Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
                             }
                         }
+                        Divider()
+                    }
+                    Button {
+                        Task {
+                            do {
+                                try await state.launchShell(workspacePath: workspace.path)
+                                await onRefresh()
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
                     }
                 } label: {
                     Label("New session", systemImage: "plus")
@@ -1741,32 +1710,7 @@ struct WorkspaceSection: View {
             // Actions row: New session menu + server controls
             HStack(spacing: 10) {
                 Menu {
-                    Button {
-                        Task {
-                            try? await state.launchShell(workspacePath: workspace.path)
-                            state.showWorkspaces = false
-                        }
-                    } label: {
-                        Label("Shell", systemImage: "terminal")
-                    }
-
-                    Button {
-                        showingCodexOptions = true
-                    } label: {
-                        Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
-                    }
-
-                    Button {
-                        Task {
-                            _ = try? await state.launchClaudeChat(workspacePath: workspace.path)
-                            state.showWorkspaces = false
-                        }
-                    } label: {
-                        Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
-                    }
-
                     if !state.agentTypes.isEmpty {
-                        Divider()
                         ForEach(state.agentTypes) { agent in
                             Button {
                                 Task {
@@ -1777,6 +1721,16 @@ struct WorkspaceSection: View {
                                 Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
                             }
                         }
+                        Divider()
+                    }
+
+                    Button {
+                        Task {
+                            try? await state.launchShell(workspacePath: workspace.path)
+                            state.showWorkspaces = false
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
                     }
                 } label: {
                     Label("New", systemImage: "plus").font(.system(size: 13))
