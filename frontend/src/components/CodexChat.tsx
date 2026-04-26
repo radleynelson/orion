@@ -512,9 +512,13 @@ function updatePermissionRow(
   update: ChatMessage,
   state: "submitted" | "answered",
 ) {
+  let fallbackIndex = -1;
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
     if (row.type !== "permission_request") continue;
+    if (fallbackIndex < 0 && row.permissionState !== "answered") {
+      fallbackIndex = i;
+    }
     if (update.toolUseId && row.toolUseId !== update.toolUseId) continue;
     const answerText =
       update.text && !isGenericPermissionAnswer(update.text)
@@ -526,6 +530,18 @@ function updatePermissionRow(
       answerText,
     };
     return;
+  }
+  if (fallbackIndex >= 0) {
+    const row = rows[fallbackIndex];
+    const answerText =
+      update.text && !isGenericPermissionAnswer(update.text)
+        ? update.text
+        : row.answerText;
+    rows[fallbackIndex] = {
+      ...row,
+      permissionState: state,
+      answerText,
+    };
   }
 }
 
@@ -859,7 +875,7 @@ function SessionModeStrip({
     { label: "sandbox", value: sandboxLabel(metadata.sandboxMode) },
     {
       label: "mode",
-      value: metadata.permissionMode || metadata.collaborationMode,
+      value: modeLabel(metadata.permissionMode || metadata.collaborationMode),
     },
   ].filter((item) => item.value);
 
@@ -910,6 +926,14 @@ function sandboxLabel(value: string | undefined): string | undefined {
   if (!value) return undefined;
   if (value === "danger-full-access") return "workspace + network";
   return value.replaceAll("-", " ");
+}
+
+function modeLabel(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value === "bypassPermissions") return "full access";
+  if (value === "acceptEdits") return "accept edits";
+  if (value === "dontAsk") return "don't ask";
+  return value.replaceAll("_", " ").replaceAll("-", " ");
 }
 
 function AttachmentChip({

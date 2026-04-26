@@ -309,28 +309,40 @@ func (a *App) LaunchShell(repoRoot string, workspacePath string) (string, error)
 }
 
 func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error) {
+	return a.ConvertChatToTerminalWithOptions(repoRoot, workspacePath, sessionID, chatKind, "", "", "", "")
+}
+
+func (a *App) ConvertChatToTerminalWithOptions(repoRoot string, workspacePath string, sessionID string, chatKind string, model string, reasoningEffort string, permissionMode string, collaborationMode string) (string, error) {
 	switch chatKind {
 	case "claude":
 		var threadID string
 		if session, ok := a.claudeMgr.Get(sessionID); ok {
-			threadID = strings.TrimSpace(session.Info().ThreadID)
+			info := session.Info()
+			threadID = strings.TrimSpace(info.ThreadID)
+			model = firstNonEmpty(model, info.Model)
+			reasoningEffort = firstNonEmpty(reasoningEffort, info.ReasoningEffort)
+			permissionMode = firstNonEmpty(permissionMode, info.PermissionMode)
 			_ = session.Stop()
 		}
 		if threadID == "" && !strings.HasPrefix(strings.TrimSpace(sessionID), claudechat.SessionType+"-") {
 			threadID = strings.TrimSpace(sessionID)
 		}
 		if threadID != "" {
-			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "claude --dangerously-skip-permissions --resume "+shellQuote(threadID))
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, claudeResumeCommand(threadID, model, reasoningEffort, permissionMode))
 		}
 		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
 	case "codex":
 		var threadID string
 		if session, ok := a.codexMgr.Get(sessionID); ok {
-			threadID = strings.TrimSpace(session.Info().ThreadID)
+			info := session.Info()
+			threadID = strings.TrimSpace(info.ThreadID)
+			model = firstNonEmpty(model, info.Model)
+			reasoningEffort = firstNonEmpty(reasoningEffort, info.ReasoningEffort)
+			collaborationMode = firstNonEmpty(collaborationMode, info.CollaborationMode)
 			_ = session.Stop()
 		}
 		if threadID != "" {
-			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "codex resume --dangerously-bypass-approvals-and-sandbox --no-alt-screen "+shellQuote(threadID))
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, codexResumeCommand(threadID, model, reasoningEffort, collaborationMode))
 		}
 		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "codex")
 	default:
@@ -348,12 +360,16 @@ func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudech
 		ReasoningEffort:  "xhigh",
 		ApprovalPolicy:   "never",
 		SandboxMode:      "danger-full-access",
-		PermissionMode:   "plan",
+		PermissionMode:   "bypassPermissions",
 		ClaudeExecutable: "claude",
 	})
 }
 
 func (a *App) ResumeClaudeChat(repoRoot string, workspacePath string, threadID string) (*claudechat.SessionInfo, error) {
+	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, "", "", "", "", "")
+}
+
+func (a *App) ResumeClaudeChatWithOptions(repoRoot string, workspacePath string, threadID string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, fmt.Errorf("threadId required")
@@ -362,11 +378,11 @@ func (a *App) ResumeClaudeChat(repoRoot string, workspacePath string, threadID s
 		WorkspacePath:    workspacePath,
 		Label:            "Claude Chat",
 		ThreadID:         threadID,
-		Model:            "claude-opus-4-7",
-		ReasoningEffort:  "xhigh",
-		ApprovalPolicy:   "never",
-		SandboxMode:      "danger-full-access",
-		PermissionMode:   "plan",
+		Model:            model,
+		ReasoningEffort:  reasoningEffort,
+		ApprovalPolicy:   approvalPolicy,
+		SandboxMode:      sandboxMode,
+		PermissionMode:   permissionMode,
 		ClaudeExecutable: "claude",
 	})
 }
@@ -376,6 +392,10 @@ func (a *App) AttachClaudeChat(tmuxSession string, workspacePath string) (*claud
 }
 
 func (a *App) ConvertTerminalToClaudeChat(repoRoot string, workspacePath string, tmuxSession string) (*claudechat.SessionInfo, error) {
+	return a.ConvertTerminalToClaudeChatWithOptions(repoRoot, workspacePath, tmuxSession, "", "", "", "", "")
+}
+
+func (a *App) ConvertTerminalToClaudeChatWithOptions(repoRoot string, workspacePath string, tmuxSession string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
@@ -384,7 +404,7 @@ func (a *App) ConvertTerminalToClaudeChat(repoRoot string, workspacePath string,
 	if threadID == "" {
 		return nil, fmt.Errorf("could not identify Claude session for tmux session %s", tmuxSession)
 	}
-	return a.ResumeClaudeChat(repoRoot, workspacePath, threadID)
+	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
 }
 
 func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -477,6 +497,10 @@ func (a *App) ResumeCodexChatWithOptions(repoRoot string, workspacePath string, 
 	if threadID == "" {
 		return nil, fmt.Errorf("threadId required")
 	}
+	options := codexchat.ThreadOptions(threadID)
+	model = firstNonEmpty(options.Model, model)
+	reasoningEffort = firstNonEmpty(options.ReasoningEffort, reasoningEffort)
+	collaborationMode = firstNonEmpty(options.CollaborationMode, collaborationMode)
 	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
 		WorkspacePath:     workspacePath,
 		Label:             "Codex Chat",
@@ -490,6 +514,10 @@ func (a *App) ResumeCodexChatWithOptions(repoRoot string, workspacePath string, 
 }
 
 func (a *App) ConvertTerminalToCodexChat(repoRoot string, workspacePath string, tmuxSession string) (*codexchat.SessionInfo, error) {
+	return a.ConvertTerminalToCodexChatWithOptions(repoRoot, workspacePath, tmuxSession, "", "", "", "", "")
+}
+
+func (a *App) ConvertTerminalToCodexChatWithOptions(repoRoot string, workspacePath string, tmuxSession string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
@@ -498,7 +526,7 @@ func (a *App) ConvertTerminalToCodexChat(repoRoot string, workspacePath string, 
 	if threadID == "" {
 		return nil, fmt.Errorf("could not identify Codex thread for tmux session %s", tmuxSession)
 	}
-	return a.ResumeCodexChat(repoRoot, workspacePath, threadID)
+	return a.ResumeCodexChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, collaborationMode)
 }
 
 func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -742,6 +770,42 @@ func shellQuote(value string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func claudeResumeCommand(threadID string, model string, reasoningEffort string, permissionMode string) string {
+	parts := []string{"claude", "--dangerously-skip-permissions"}
+	if model = strings.TrimSpace(model); model != "" {
+		parts = append(parts, "--model", shellQuote(model))
+	}
+	if reasoningEffort = strings.TrimSpace(reasoningEffort); reasoningEffort != "" {
+		parts = append(parts, "--effort", shellQuote(reasoningEffort))
+	}
+	if permissionMode = strings.TrimSpace(permissionMode); permissionMode == "plan" {
+		parts = append(parts, "--permission-mode", "plan")
+	}
+	parts = append(parts, "--resume", shellQuote(threadID))
+	return strings.Join(parts, " ")
+}
+
+func codexResumeCommand(threadID string, model string, reasoningEffort string, collaborationMode string) string {
+	parts := []string{"codex", "resume", "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen"}
+	if model = strings.TrimSpace(model); model != "" {
+		parts = append(parts, "-m", shellQuote(model))
+	}
+	if reasoningEffort = strings.TrimSpace(reasoningEffort); reasoningEffort != "" {
+		parts = append(parts, "-c", shellQuote("model_reasoning_effort="+strconv.Quote(reasoningEffort)))
+	}
+	parts = append(parts, shellQuote(threadID))
+	return strings.Join(parts, " ")
 }
 
 func (a *App) GetAgentNames(repoRoot string) []web.AgentType {

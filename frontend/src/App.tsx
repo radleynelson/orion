@@ -17,15 +17,15 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 import { main } from '../wailsjs/go/models';
 import {
   AllocatePorts,
-  ConvertChatToTerminal,
+  ConvertChatToTerminalWithOptions,
   AttachClaudeChat,
-  ResumeClaudeChat,
+  ResumeClaudeChatWithOptions,
   CreateTerminalInDir,
   CreateAttachedTerminal,
   CloseTerminal,
   ResumeCodexChatWithOptions,
-  ConvertTerminalToClaudeChat,
-  ConvertTerminalToCodexChat,
+  ConvertTerminalToClaudeChatWithOptions,
+  ConvertTerminalToCodexChatWithOptions,
   SaveTabs,
   GetLastProject,
   GetProjectInfo,
@@ -148,7 +148,16 @@ function App() {
         try {
           if (saved.tabType === 'claude-chat') {
             const session = saved.threadId
-              ? await ResumeClaudeChat(info.root, saved.workspacePath, saved.threadId)
+              ? await ResumeClaudeChatWithOptions(
+                  info.root,
+                  saved.workspacePath,
+                  saved.threadId,
+                  saved.model || '',
+                  saved.reasoningEffort || '',
+                  saved.approvalPolicy || '',
+                  saved.sandboxMode || '',
+                  saved.permissionMode || '',
+                )
               : await AttachClaudeChat(saved.tmuxSession, saved.workspacePath);
             addTab({
               id: generateId('tab'),
@@ -610,7 +619,16 @@ function App() {
       const chat = getChatSessions(tab.rootPane, fallbackKind)[0];
       if (!chat) return;
       try {
-        const tmuxSession = await ConvertChatToTerminal(project.root, tab.workspacePath, chat.id, chat.kind);
+        const tmuxSession = await ConvertChatToTerminalWithOptions(
+          project.root,
+          tab.workspacePath,
+          chat.id,
+          chat.kind,
+          tab.model || '',
+          tab.reasoningEffort || '',
+          tab.permissionMode || '',
+          tab.collaborationMode || '',
+        );
         const termId = generateId('term');
         await CreateAttachedTerminal(termId, tmuxSession);
         addTab({
@@ -644,7 +662,16 @@ function App() {
           if (!termId) return;
           const tmuxSession = await GetTmuxSession(termId);
           if (!tmuxSession) return;
-          const session = await ConvertTerminalToClaudeChat(project.root, tab.workspacePath, tmuxSession);
+          const session = await ConvertTerminalToClaudeChatWithOptions(
+            project.root,
+            tab.workspacePath,
+            tmuxSession,
+            tab.model || '',
+            tab.reasoningEffort || '',
+            tab.approvalPolicy || '',
+            tab.sandboxMode || '',
+            tab.permissionMode || '',
+          );
           for (const termId of getAllTerminalIds(tab)) {
             try { await CloseTerminal(termId); } catch {}
           }
@@ -671,7 +698,16 @@ function App() {
         if (!termId) return;
         const tmuxSession = await GetTmuxSession(termId);
         if (!tmuxSession) return;
-        const session = await ConvertTerminalToCodexChat(project.root, tab.workspacePath, tmuxSession);
+        const session = await ConvertTerminalToCodexChatWithOptions(
+          project.root,
+          tab.workspacePath,
+          tmuxSession,
+          tab.model || '',
+          tab.reasoningEffort || '',
+          tab.approvalPolicy || '',
+          tab.sandboxMode || '',
+          tab.collaborationMode || '',
+        );
         for (const termId of getAllTerminalIds(tab)) {
           try { await CloseTerminal(termId); } catch {}
         }

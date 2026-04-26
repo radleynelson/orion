@@ -29,9 +29,15 @@ export function CloseTerminal(arg1:string):Promise<void>;
 
 export function ConvertChatToTerminal(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
+export function ConvertChatToTerminalWithOptions(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string):Promise<string>;
+
 export function ConvertTerminalToClaudeChat(arg1:string,arg2:string,arg3:string):Promise<claudesdk.SessionInfo>;
 
+export function ConvertTerminalToClaudeChatWithOptions(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string):Promise<claudesdk.SessionInfo>;
+
 export function ConvertTerminalToCodexChat(arg1:string,arg2:string,arg3:string):Promise<codexchat.SessionInfo>;
+
+export function ConvertTerminalToCodexChatWithOptions(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string):Promise<codexchat.SessionInfo>;
 
 export function CreateAttachedTerminal(arg1:string,arg2:string):Promise<void>;
 
@@ -138,6 +144,8 @@ export function ReadFileContents(arg1:string):Promise<string>;
 export function RecoverSessions(arg1:string,arg2:Array<string>):Promise<Array<state.SessionInfo>>;
 
 export function ResumeClaudeChat(arg1:string,arg2:string,arg3:string):Promise<claudesdk.SessionInfo>;
+
+export function ResumeClaudeChatWithOptions(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string):Promise<claudesdk.SessionInfo>;
 
 export function ResumeCodexChat(arg1:string,arg2:string,arg3:string):Promise<codexchat.SessionInfo>;
 

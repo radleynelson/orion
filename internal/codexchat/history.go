@@ -28,9 +28,23 @@ type codexLogEntry struct {
 }
 
 type codexSessionMeta struct {
-	ID    string `json:"id"`
-	CWD   string `json:"cwd"`
-	Model string `json:"model"`
+	ID                string `json:"id"`
+	CWD               string `json:"cwd"`
+	Model             string `json:"model"`
+	ReasoningEffort   string `json:"reasoningEffort"`
+	CollaborationMode string `json:"collaborationMode"`
+}
+
+type codexTurnContextPayload struct {
+	Model             string `json:"model"`
+	Effort            string `json:"effort"`
+	CollaborationMode struct {
+		Mode     string `json:"mode"`
+		Settings struct {
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoning_effort"`
+		} `json:"settings"`
+	} `json:"collaboration_mode"`
 }
 
 type codexEventPayload struct {
@@ -100,8 +114,54 @@ func LoadCachedMessages(threadID string, workspacePath string) []Message {
 		if msg.ThreadID == "" {
 			msg.ThreadID = threadID
 		}
+		if msg.Type == "plan" {
+			if details := formatPlanDetails(firstNonEmptyString(msg.Details, msg.Text)); details != "" {
+				msg.Details = details
+				msg.Text = "Plan ready"
+			}
+		}
 		out = append(out, msg)
 	}
+	if len(out) > 1000 {
+		out = out[len(out)-1000:]
+	}
+	return out
+}
+
+func MergeRestoredMessages(cached []Message, history []Message) []Message {
+	if len(cached) == 0 {
+		return history
+	}
+	if len(history) == 0 {
+		return cached
+	}
+	out := make([]Message, 0, len(cached)+len(history))
+	seenIDs := map[string]bool{}
+	seenContent := map[string]bool{}
+	appendMessage := func(msg Message) {
+		if msg.ID != "" {
+			if seenIDs[msg.ID] {
+				return
+			}
+			seenIDs[msg.ID] = true
+		}
+		if key := messageContentKey(msg); key != "" {
+			if seenContent[key] {
+				return
+			}
+			seenContent[key] = true
+		}
+		out = append(out, msg)
+	}
+	for _, msg := range cached {
+		appendMessage(msg)
+	}
+	for _, msg := range history {
+		appendMessage(msg)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return messageSortTime(out[i]).Before(messageSortTime(out[j]))
+	})
 	if len(out) > 1000 {
 		out = out[len(out)-1000:]
 	}
@@ -128,6 +188,26 @@ func AppendCachedMessage(msg Message) {
 	if data, err := json.Marshal(msg); err == nil {
 		_, _ = f.Write(append(data, '\n'))
 	}
+}
+
+func messageContentKey(msg Message) string {
+	switch msg.Type {
+	case "user", "assistant":
+		text := strings.Join(strings.Fields(msg.Text), " ")
+		if text == "" {
+			return ""
+		}
+		return msg.Type + "\x00" + msg.Role + "\x00" + text
+	default:
+		return ""
+	}
+}
+
+func messageSortTime(msg Message) time.Time {
+	if parsed, err := time.Parse(time.RFC3339Nano, msg.CreatedAt); err == nil {
+		return parsed
+	}
+	return time.Time{}
 }
 
 func shouldCacheMessage(msg Message) bool {
@@ -170,6 +250,15 @@ func FindSessionFile(threadID string) string {
 		}
 	}
 	return ""
+}
+
+func ThreadOptions(threadID string) codexSessionMeta {
+	path := FindSessionFile(threadID)
+	if path == "" {
+		return codexSessionMeta{}
+	}
+	meta, _ := readSessionMeta(path)
+	return meta
 }
 
 // ThreadIDForTmux returns the best-known Codex thread ID for a tmux-backed
@@ -336,7 +425,8 @@ func readSessionMeta(path string) (codexSessionMeta, bool) {
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 16*1024), 1024*1024)
-	for i := 0; i < 20 && scanner.Scan(); i++ {
+	var meta codexSessionMeta
+	for i := 0; i < 80 && scanner.Scan(); i++ {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -345,16 +435,32 @@ func readSessionMeta(path string) (codexSessionMeta, bool) {
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		if entry.Type != "session_meta" || len(entry.Payload) == 0 {
+		if len(entry.Payload) == 0 {
 			continue
 		}
-		var meta codexSessionMeta
-		if err := json.Unmarshal(entry.Payload, &meta); err != nil {
-			return codexSessionMeta{}, false
+		switch entry.Type {
+		case "session_meta":
+			var sessionMeta codexSessionMeta
+			if err := json.Unmarshal(entry.Payload, &sessionMeta); err != nil {
+				return codexSessionMeta{}, false
+			}
+			meta.ID = firstNonEmptyString(meta.ID, sessionMeta.ID)
+			meta.CWD = firstNonEmptyString(meta.CWD, sessionMeta.CWD)
+			meta.Model = firstNonEmptyString(meta.Model, sessionMeta.Model)
+		case "turn_context":
+			var turn codexTurnContextPayload
+			if err := json.Unmarshal(entry.Payload, &turn); err != nil {
+				continue
+			}
+			meta.Model = firstNonEmptyString(meta.Model, turn.CollaborationMode.Settings.Model, turn.Model)
+			meta.ReasoningEffort = firstNonEmptyString(meta.ReasoningEffort, turn.CollaborationMode.Settings.ReasoningEffort, turn.Effort)
+			meta.CollaborationMode = firstNonEmptyString(meta.CollaborationMode, turn.CollaborationMode.Mode)
 		}
-		return meta, meta.ID != ""
+		if meta.ID != "" && meta.CWD != "" && meta.Model != "" && meta.ReasoningEffort != "" && meta.CollaborationMode != "" {
+			break
+		}
 	}
-	return codexSessionMeta{}, false
+	return meta, meta.ID != ""
 }
 
 func codexSessionFiles() []sessionFile {
@@ -468,6 +574,15 @@ func samePath(a string, b string) bool {
 		b = bb
 	}
 	return a == b
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func historyTimestamp(value string) string {

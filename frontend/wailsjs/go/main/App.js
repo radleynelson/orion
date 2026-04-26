@@ -34,12 +34,24 @@ export function ConvertChatToTerminal(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ConvertChatToTerminal'](arg1, arg2, arg3, arg4);
 }
 
+export function ConvertChatToTerminalWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ConvertChatToTerminalWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
 export function ConvertTerminalToClaudeChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ConvertTerminalToClaudeChat'](arg1, arg2, arg3);
 }
 
+export function ConvertTerminalToClaudeChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ConvertTerminalToClaudeChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
 export function ConvertTerminalToCodexChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ConvertTerminalToCodexChat'](arg1, arg2, arg3);
+}
+
+export function ConvertTerminalToCodexChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ConvertTerminalToCodexChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function CreateAttachedTerminal(arg1, arg2) {
@@ -252,6 +264,10 @@ export function RecoverSessions(arg1, arg2) {
 
 export function ResumeClaudeChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResumeClaudeChat'](arg1, arg2, arg3);
+}
+
+export function ResumeClaudeChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ResumeClaudeChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function ResumeCodexChat(arg1, arg2, arg3) {

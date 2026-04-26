@@ -128,21 +128,14 @@ function ensureTurnStream() {
 }
 
 function handleStreamEvent(event) {
+  if (event && typeof event.permissionMode === 'string' && event.permissionMode) {
+    setLocalPermissionMode(event.permissionMode, 'Claude permission mode changed');
+  }
   switch (event.type) {
     case 'system':
       if (event.subtype === 'init') {
         threadId = event.session_id || threadId;
-        currentPermissionMode = event.permissionMode || currentPermissionMode;
-        emit({
-          type: 'session',
-          threadId,
-          model: event.model || model,
-          reasoningEffort,
-          approvalPolicy,
-          sandboxMode,
-          permissionMode: event.permissionMode || currentPermissionMode,
-          label,
-        });
+        emitSessionMetadata(event.model || model, currentPermissionMode);
         emitStatus('idle');
       } else if (event.subtype === 'status') {
         if (running) {
@@ -160,6 +153,10 @@ function handleStreamEvent(event) {
       return;
     case 'assistant':
       for (const message of normalizeAssistantEvent(event)) {
+        if (message.type === 'plan') {
+          setLocalPermissionMode('plan', 'Claude entered plan mode');
+          emitStatus('waiting_input', 'Waiting for plan approval');
+        }
         emitMessage(message);
       }
       return;
@@ -292,21 +289,19 @@ async function setSessionPermissionMode(mode) {
   if (session && typeof session.setPermissionMode === 'function') {
     await session.setPermissionMode(mode);
   }
+  setLocalPermissionMode(mode, 'Claude permission mode changed');
+}
+
+function setLocalPermissionMode(mode, text) {
+  if (!mode || currentPermissionMode === mode) {
+    return;
+  }
   currentPermissionMode = mode;
-  emit({
-    type: 'session',
-    threadId,
-    model,
-    reasoningEffort,
-    approvalPolicy,
-    sandboxMode,
-    permissionMode: currentPermissionMode,
-    label,
-  });
+  emitSessionMetadata(model, currentPermissionMode);
   emitMessage({
     id: `claude-mode-${Date.now()}`,
     type: 'system',
-    text: 'Claude permission mode changed',
+    text,
     details: compact({
       provider: 'claude',
       viewMode: 'chat',
@@ -317,6 +312,19 @@ async function setSessionPermissionMode(mode) {
       sandboxMode,
       permissionMode: currentPermissionMode,
     }),
+  });
+}
+
+function emitSessionMetadata(nextModel = model, nextPermissionMode = currentPermissionMode) {
+  emit({
+    type: 'session',
+    threadId,
+    model: nextModel,
+    reasoningEffort,
+    approvalPolicy,
+    sandboxMode,
+    permissionMode: nextPermissionMode,
+    label,
   });
 }
 
