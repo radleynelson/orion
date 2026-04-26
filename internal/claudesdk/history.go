@@ -68,11 +68,10 @@ func ListHistory(workspacePath string, limit int) []HistoryThread {
 }
 
 func claudeHistoryFiles(workspacePath string) []historyFile {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	root := userClaudeProjectsRoot()
+	if root == "" {
 		return nil
 	}
-	root := filepath.Join(home, ".claude", "projects")
 	var dirs []string
 	if workspacePath != "" {
 		dirs = append(dirs, filepath.Join(root, claudeProjectDir(workspacePath)))

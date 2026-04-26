@@ -37,6 +37,20 @@ func TestLoadHistoryReadsCodexJSONL(t *testing.T) {
 	}
 }
 
+func TestLoadHistoryRejectsWrongWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	threadID := "019d9f18-9278-7f90-96bb-78390d0560e1"
+	workspace := filepath.Join(t.TempDir(), "orion")
+	otherWorkspace := filepath.Join(t.TempDir(), "waterboy")
+	writeCodexHistory(t, home, workspace, threadID, "Hello from Orion.")
+
+	if messages := LoadHistory(threadID, otherWorkspace); len(messages) != 0 {
+		t.Fatalf("expected no messages for wrong workspace, got %#v", messages)
+	}
+}
+
 func TestCachedMessagesPreserveRichRows(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -126,6 +140,58 @@ func TestLatestThreadIDForWorkspace(t *testing.T) {
 	}
 }
 
+func TestResolveThreadIDFallsBackToOnlyCodexHistoryWhenProcessIDInvalid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "slant")
+	validID := "019dc827-72fb-7100-9770-33b63986e2ea"
+	writeCodexHistory(t, home, workspace, validID, "Plan a README update.")
+
+	got, err := resolveThreadIDForWorkspace(workspace, "", []string{"missing-thread"})
+	if err != nil {
+		t.Fatalf("resolveThreadIDForWorkspace returned error: %v", err)
+	}
+	if got != validID {
+		t.Fatalf("got %q, want %q", got, validID)
+	}
+}
+
+func TestResolveThreadIDRejectsAmbiguousCodexHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "slant")
+	writeCodexHistory(t, home, workspace, "first-thread", "First thread.")
+	writeCodexHistory(t, home, workspace, "second-thread", "Second thread.")
+
+	got, err := resolveThreadIDForWorkspace(workspace, "", []string{"missing-thread"})
+	if err == nil {
+		t.Fatalf("expected ambiguity error, got thread %q", got)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty thread on ambiguity", got)
+	}
+}
+
+func TestResolveThreadIDUsesValidCodexProcessIDBeforeHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "slant")
+	processID := "019d9f18-9278-7f90-96bb-78390d0560e1"
+	writeCodexHistory(t, home, workspace, processID, "Process thread.")
+	writeCodexHistory(t, home, workspace, "other-thread", "Other thread.")
+
+	got, err := resolveThreadIDForWorkspace(workspace, "", []string{processID})
+	if err != nil {
+		t.Fatalf("resolveThreadIDForWorkspace returned error: %v", err)
+	}
+	if got != processID {
+		t.Fatalf("got %q, want %q", got, processID)
+	}
+}
+
 func TestThreadOptionsReadsTurnContextModelAndEffort(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -152,6 +218,20 @@ func TestThreadOptionsReadsTurnContextModelAndEffort(t *testing.T) {
 	}
 	if options.CollaborationMode != "default" {
 		t.Fatalf("CollaborationMode = %q, want default", options.CollaborationMode)
+	}
+}
+
+func writeCodexHistory(t *testing.T, home string, workspace string, threadID string, text string) {
+	t.Helper()
+	sessionDir := filepath.Join(home, "sessions", "2026", "04", "20")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"type":"session_meta","timestamp":"2026-04-20T10:00:00Z","payload":{"id":"` + threadID + `","cwd":"` + workspace + `","model":"gpt-5.4"}}
+{"type":"event_msg","timestamp":"2026-04-20T10:00:01Z","payload":{"type":"user_message","message":"` + text + `","images":[],"local_images":[]}}
+`
+	if err := os.WriteFile(filepath.Join(sessionDir, threadID+".jsonl"), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 

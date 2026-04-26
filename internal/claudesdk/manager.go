@@ -152,9 +152,9 @@ func (m *Manager) Attach(tmuxSession string, workspacePath string, label string)
 	if workspacePath == "" {
 		workspacePath = tmuxCurrentPath(tmuxSession)
 	}
-	threadID := ThreadIDForTmux(tmuxSession, workspacePath)
-	if threadID == "" {
-		return nil, fmt.Errorf("could not identify Claude session for tmux session %s", tmuxSession)
+	threadID, err := ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
+		return nil, err
 	}
 	return m.Resume(workspacePath, label, threadID)
 }
@@ -672,22 +672,48 @@ func (s *Session) emit(msg Message) {
 	s.manager.emit(s.id, msg)
 }
 
-func ThreadIDForTmux(tmuxSession string, workspacePath string) string {
+func ResolveThreadIDForTmux(tmuxSession string, workspacePath string) (string, error) {
 	if workspacePath == "" {
 		workspacePath = tmuxCurrentPath(tmuxSession)
 	}
-	if id := tmuxOption(tmuxSession, "@orion_thread_id"); validClaudeSessionForWorkspace(id, workspacePath) {
-		return id
-	}
-	if ids := claudeSessionIDsForTmux(tmuxSession); len(ids) > 0 {
-		for _, id := range ids {
-			if validClaudeSessionForWorkspace(id, workspacePath) {
-				return id
-			}
-		}
+	return resolveThreadIDForWorkspace(
+		workspacePath,
+		tmuxOption(tmuxSession, "@orion_thread_id"),
+		claudeSessionIDsForTmux(tmuxSession),
+	)
+}
+
+func ThreadIDForTmux(tmuxSession string, workspacePath string) string {
+	threadID, err := ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
 		return ""
 	}
-	return latestSessionIDForWorkspace(workspacePath)
+	return threadID
+}
+
+func resolveThreadIDForWorkspace(workspacePath string, tmuxThreadID string, processThreadIDs []string) (string, error) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return "", errors.New("workspacePath required")
+	}
+
+	if id := strings.TrimSpace(tmuxThreadID); id != "" {
+		if validClaudeSessionForWorkspace(id, workspacePath) {
+			return id, nil
+		}
+	}
+
+	for _, id := range uniqueStrings(processThreadIDs) {
+		if validClaudeSessionForWorkspace(id, workspacePath) {
+			return id, nil
+		}
+	}
+
+	threadID, err := uniqueHistorySessionIDForWorkspace(workspacePath)
+	if err != nil {
+		return "", err
+	}
+	return threadID, nil
 }
 
 func bridgeScriptPath() (string, error) {
@@ -782,6 +808,18 @@ func latestSessionIDForWorkspace(workspacePath string) string {
 	return candidates[0].id
 }
 
+func uniqueHistorySessionIDForWorkspace(workspacePath string) (string, error) {
+	history := ListHistory(workspacePath, 50)
+	switch len(history) {
+	case 0:
+		return "", fmt.Errorf("could not identify Claude session for workspace %s", workspacePath)
+	case 1:
+		return history[0].ThreadID, nil
+	default:
+		return "", fmt.Errorf("multiple Claude transcripts found for workspace %s; choose a session from history instead of converting this terminal automatically", workspacePath)
+	}
+}
+
 func validClaudeSessionForWorkspace(sessionID string, workspacePath string) bool {
 	sessionID = strings.TrimSpace(sessionID)
 	workspacePath = strings.TrimSpace(workspacePath)
@@ -793,15 +831,37 @@ func validClaudeSessionForWorkspace(sessionID string, workspacePath string) bool
 	return err == nil && !info.IsDir()
 }
 
-func userClaudeProjectDir(workspacePath string) string {
+func userClaudeProjectsRoot() string {
 	if configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configDir != "" {
-		return filepath.Join(configDir, "projects", claudeProjectDir(workspacePath))
+		return filepath.Join(configDir, "projects")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".claude", "projects", claudeProjectDir(workspacePath))
+	return filepath.Join(home, ".claude", "projects")
+}
+
+func userClaudeProjectDir(workspacePath string) string {
+	root := userClaudeProjectsRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, claudeProjectDir(workspacePath))
+}
+
+func uniqueStrings(values []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func tmuxOption(name string, option string) string {

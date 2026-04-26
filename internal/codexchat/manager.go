@@ -133,6 +133,10 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 	if collaborationMode == "" {
 		collaborationMode = defaultCollabMode
 	}
+	threadID := strings.TrimSpace(options.ThreadID)
+	if threadID != "" && !ValidThreadForWorkspace(threadID, workspacePath) {
+		return nil, fmt.Errorf("Codex thread not found for workspace: %s", threadID)
+	}
 
 	id := "codex-chat-" + shortID()
 	ctx, cancel := context.WithCancel(m.ctx)
@@ -162,7 +166,7 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		id:                id,
 		label:             label,
 		workspacePath:     workspacePath,
-		threadID:          strings.TrimSpace(options.ThreadID),
+		threadID:          threadID,
 		status:            "starting",
 		cmd:               cmd,
 		stdin:             stdin,

@@ -74,6 +74,7 @@ func TestSessionEnvelopeDoesNotClearRunningStatus(t *testing.T) {
 func TestValidClaudeSessionForWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	workspacePath := "/Users/rad_nelson/Desktop/code/slant"
 	sessionID := "204b42f3-4200-4e5a-8079-0878793d6136"
 	dir := filepath.Join(home, ".claude", "projects", claudeProjectDir(workspacePath))
@@ -95,6 +96,7 @@ func TestValidClaudeSessionForWorkspace(t *testing.T) {
 func TestLatestSessionIDForWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	workspacePath := "/Users/rad_nelson/Desktop/code/slant"
 	dir := filepath.Join(home, ".claude", "projects", claudeProjectDir(workspacePath))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -119,5 +121,70 @@ func TestLatestSessionIDForWorkspace(t *testing.T) {
 
 	if got := latestSessionIDForWorkspace(workspacePath); got != "newer" {
 		t.Fatalf("got %q, want newer", got)
+	}
+}
+
+func TestResolveThreadIDFallsBackToOnlyClaudeHistoryWhenProcessIDInvalid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	workspacePath := "/Users/rad_nelson/Desktop/code/voltra_mcp"
+	validID := "f7b01a91-8d31-4fd3-8f47-16820af1f45d"
+	invalidID := "f706d222-3fc1-479f-ba70-a817a2d50e28"
+	writeClaudeHistory(t, home, workspacePath, validID, "Help me scaffold this MCP server.")
+
+	got, err := resolveThreadIDForWorkspace(workspacePath, "", []string{invalidID})
+	if err != nil {
+		t.Fatalf("resolveThreadIDForWorkspace returned error: %v", err)
+	}
+	if got != validID {
+		t.Fatalf("got %q, want %q", got, validID)
+	}
+}
+
+func TestResolveThreadIDRejectsAmbiguousClaudeHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	workspacePath := "/Users/rad_nelson/Desktop/code/slant"
+	writeClaudeHistory(t, home, workspacePath, "first-thread", "First thread.")
+	writeClaudeHistory(t, home, workspacePath, "second-thread", "Second thread.")
+
+	got, err := resolveThreadIDForWorkspace(workspacePath, "", []string{"missing-thread"})
+	if err == nil {
+		t.Fatalf("expected ambiguity error, got thread %q", got)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty thread on ambiguity", got)
+	}
+}
+
+func TestResolveThreadIDUsesValidProcessIDBeforeHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	workspacePath := "/Users/rad_nelson/Desktop/code/slant"
+	processID := "204b42f3-4200-4e5a-8079-0878793d6136"
+	writeClaudeHistory(t, home, workspacePath, processID, "Process transcript.")
+	writeClaudeHistory(t, home, workspacePath, "other-thread", "Other transcript.")
+
+	got, err := resolveThreadIDForWorkspace(workspacePath, "", []string{processID})
+	if err != nil {
+		t.Fatalf("resolveThreadIDForWorkspace returned error: %v", err)
+	}
+	if got != processID {
+		t.Fatalf("got %q, want %q", got, processID)
+	}
+}
+
+func writeClaudeHistory(t *testing.T, home string, workspacePath string, sessionID string, text string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "projects", claudeProjectDir(workspacePath))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"type":"user","uuid":"` + sessionID + `","cwd":"` + workspacePath + `","sessionId":"` + sessionID + `","timestamp":"2026-04-20T10:00:00Z","message":{"role":"user","content":"` + text + `"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

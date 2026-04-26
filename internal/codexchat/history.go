@@ -77,6 +77,13 @@ func LoadHistory(threadID string, workspacePath string) []Message {
 	if path == "" {
 		return nil
 	}
+	meta, ok := readSessionMeta(path)
+	if !ok || meta.ID != threadID {
+		return nil
+	}
+	if strings.TrimSpace(workspacePath) != "" && !samePath(meta.CWD, workspacePath) {
+		return nil
+	}
 	return loadHistoryFromFile(path, threadID, workspacePath)
 }
 
@@ -261,18 +268,53 @@ func ThreadOptions(threadID string) codexSessionMeta {
 	return meta
 }
 
-// ThreadIDForTmux returns the best-known Codex thread ID for a tmux-backed
-// terminal. It first checks a running "codex resume" command, then falls back to
-// the newest Codex transcript for the workspace.
-func ThreadIDForTmux(tmuxSession string, workspacePath string) string {
+// ResolveThreadIDForTmux returns the best-known Codex thread ID for a
+// tmux-backed terminal. It only returns IDs that can be validated against the
+// requested workspace, or a single unambiguous workspace history candidate.
+func ResolveThreadIDForTmux(tmuxSession string, workspacePath string) (string, error) {
+	var processThreadIDs []string
 	for _, command := range descendantProcessCommands(tmuxPanePID(tmuxSession)) {
 		for _, id := range ParseResumeIDs(command) {
-			if id != "" {
-				return id
-			}
+			processThreadIDs = append(processThreadIDs, id)
 		}
 	}
-	return LatestThreadIDForWorkspace(workspacePath)
+	return resolveThreadIDForWorkspace(
+		workspacePath,
+		tmuxOption(tmuxSession, "@orion_thread_id"),
+		processThreadIDs,
+	)
+}
+
+// ThreadIDForTmux preserves the old string-returning API for callers that only
+// need a best-effort ID. Prefer ResolveThreadIDForTmux when surfacing errors.
+func ThreadIDForTmux(tmuxSession string, workspacePath string) string {
+	threadID, err := ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
+		return ""
+	}
+	return threadID
+}
+
+func resolveThreadIDForWorkspace(workspacePath string, tmuxThreadID string, processThreadIDs []string) (string, error) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return "", fmt.Errorf("workspacePath required")
+	}
+	if id := strings.TrimSpace(tmuxThreadID); id != "" {
+		if ValidThreadForWorkspace(id, workspacePath) {
+			return id, nil
+		}
+	}
+	for _, id := range uniqueStrings(processThreadIDs) {
+		if ValidThreadForWorkspace(id, workspacePath) {
+			return id, nil
+		}
+	}
+	threadID, err := uniqueHistoryThreadIDForWorkspace(workspacePath)
+	if err != nil {
+		return "", err
+	}
+	return threadID, nil
 }
 
 func LatestThreadIDForWorkspace(workspacePath string) string {
@@ -287,6 +329,38 @@ func LatestThreadIDForWorkspace(workspacePath string) string {
 		}
 	}
 	return ""
+}
+
+func uniqueHistoryThreadIDForWorkspace(workspacePath string) (string, error) {
+	var candidates []HistoryThread
+	for _, thread := range ListHistory(workspacePath, 50) {
+		if strings.TrimSpace(thread.ThreadID) == "" || thread.MessageCount == 0 {
+			continue
+		}
+		candidates = append(candidates, thread)
+	}
+	switch len(candidates) {
+	case 0:
+		return "", fmt.Errorf("could not identify Codex thread for workspace %s", workspacePath)
+	case 1:
+		return candidates[0].ThreadID, nil
+	default:
+		return "", fmt.Errorf("multiple Codex transcripts found for workspace %s; choose a session from history instead of converting this terminal automatically", workspacePath)
+	}
+}
+
+func ValidThreadForWorkspace(threadID string, workspacePath string) bool {
+	threadID = strings.TrimSpace(threadID)
+	workspacePath = strings.TrimSpace(workspacePath)
+	if threadID == "" || workspacePath == "" {
+		return false
+	}
+	path := FindSessionFile(threadID)
+	if path == "" {
+		return false
+	}
+	meta, ok := readSessionMeta(path)
+	return ok && meta.ID == threadID && samePath(meta.CWD, workspacePath)
 }
 
 func ListHistory(workspacePath string, limit int) []HistoryThread {
@@ -573,6 +647,17 @@ func processCommand(pid int) string {
 	return strings.TrimSpace(string(out))
 }
 
+func tmuxOption(name string, option string) string {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(option) == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "show-options", "-v", "-t", name, option).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func samePath(a string, b string) bool {
 	a = strings.TrimSpace(a)
 	b = strings.TrimSpace(b)
@@ -594,6 +679,20 @@ func samePath(a string, b string) bool {
 		b = bb
 	}
 	return a == b
+}
+
+func uniqueStrings(values []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func firstNonEmptyString(values ...string) string {

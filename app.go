@@ -408,9 +408,9 @@ func (a *App) ConvertTerminalToClaudeChatWithOptions(repoRoot string, workspaceP
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
 	}
-	threadID := claudechat.ThreadIDForTmux(tmuxSession, workspacePath)
-	if threadID == "" {
-		return a.LaunchClaudeChatWithOptions(repoRoot, workspacePath, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
+	threadID, err := claudechat.ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
+		return nil, err
 	}
 	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
 }
@@ -532,9 +532,9 @@ func (a *App) ConvertTerminalToCodexChatWithOptions(repoRoot string, workspacePa
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
 	}
-	threadID := codexchat.ThreadIDForTmux(tmuxSession, workspacePath)
-	if threadID == "" {
-		return nil, fmt.Errorf("could not identify Codex thread for tmux session %s", tmuxSession)
+	threadID, err := codexchat.ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
+		return nil, err
 	}
 	return a.ResumeCodexChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, collaborationMode)
 }
