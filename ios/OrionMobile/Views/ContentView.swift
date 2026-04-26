@@ -2677,6 +2677,7 @@ private struct CodexChatRow: Identifiable {
     var resultDetails: String?
     var toolStatus: String?
     var permissionState: String? = nil
+    var planState: String? = nil
     var answerText: String? = nil
 }
 
@@ -3038,6 +3039,8 @@ struct CodexChatView: View {
         let markdown = row.details ?? row.text
         let insights = planInsights(markdown)
         let sections = planSections(markdown)
+        let isWaiting = row.planState != "approved"
+        let planTint = isWaiting ? OrionTheme.accentBlue : OrionTheme.accentGreen
         return HStack(alignment: .bottom, spacing: 8) {
             AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
@@ -3047,9 +3050,9 @@ struct CodexChatView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("PLAN · WAITING FOR YOU")
+                            Text(isWaiting ? "PLAN · WAITING FOR YOU" : "PLAN · APPROVED")
                                 .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(OrionTheme.accentBlue)
+                                .foregroundStyle(planTint)
                             Text(row.text.isEmpty ? "Plan ready" : row.text)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(OrionTheme.textPrimary)
@@ -3057,12 +3060,12 @@ struct CodexChatView: View {
                         }
                         Spacer(minLength: 8)
                         VStack(alignment: .trailing, spacing: 6) {
-                            Text("Plan")
+                            Text(isWaiting ? "Plan" : "Approved")
                                 .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(OrionTheme.accentBlue)
+                                .foregroundStyle(planTint)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.45), lineWidth: 0.5))
+                                .overlay(Capsule().stroke(planTint.opacity(0.45), lineWidth: 0.5))
                             if insights.sections > 0 {
                                 Text("\(insights.sections) sections")
                                     .font(.system(size: 10, design: .monospaced))
@@ -3110,15 +3113,17 @@ struct CodexChatView: View {
                         Button("Review diff") { state.showDiffReview = true }
                             .buttonStyle(.bordered)
                     }
-                    Button("Approve & run") { connection.approvePlan() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(OrionTheme.accentBlue)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    if isWaiting {
+                        Button("Approve & run") { connection.approvePlan() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(OrionTheme.accentBlue)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                 }
                 .padding(12)
                 .frame(maxWidth: 340, alignment: .leading)
                 .background(OrionTheme.bgSurface)
-                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(OrionTheme.accentBlue.opacity(0.28), lineWidth: 0.7))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(planTint.opacity(0.28), lineWidth: 0.7))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             Spacer(minLength: 22)
@@ -3864,8 +3869,12 @@ private struct PlanReviewView: View {
         return value.isEmpty ? "Plan ready" : value
     }
 
-    private var renderedPlan: AttributedString {
-        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+    private var reviewBlocks: [PlanReviewBlock] {
+        planReviewBlocks(markdown)
+    }
+
+    private var isWaiting: Bool {
+        plan.planState != "approved"
     }
 
     var body: some View {
@@ -3890,12 +3899,13 @@ private struct PlanReviewView: View {
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
             ScrollView {
-                Text(renderedPlan)
-                    .font(.system(size: 14))
-                    .foregroundStyle(OrionTheme.textPrimary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(reviewBlocks.enumerated()), id: \.offset) { _, block in
+                        PlanReviewBlockRow(block: block)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
             }
             .background(OrionTheme.bgPrimary)
 
@@ -3904,9 +3914,11 @@ private struct PlanReviewView: View {
                     .buttonStyle(.bordered)
                 Button("Review diff", action: onReviewDiff)
                     .buttonStyle(.bordered)
-                Button("Approve & run", action: onApprove)
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentColor)
+                if isWaiting {
+                    Button("Approve & run", action: onApprove)
+                        .buttonStyle(.borderedProminent)
+                        .tint(accentColor)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(14)
@@ -3914,6 +3926,44 @@ private struct PlanReviewView: View {
             .overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
         }
         .background(OrionTheme.bgPrimary)
+    }
+}
+
+private struct PlanReviewBlock {
+    let kind: String
+    let text: String
+}
+
+private struct PlanReviewBlockRow: View {
+    let block: PlanReviewBlock
+
+    var body: some View {
+        switch block.kind {
+        case "heading":
+            Text(block.text)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OrionTheme.textPrimary)
+                .textSelection(.enabled)
+                .padding(.top, 2)
+        case "step":
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: block.text.lowercased().contains("[completed]") ? "checkmark.circle" : "circle")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OrionTheme.accentBlue)
+                    .frame(width: 20, height: 20)
+                Text(block.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        default:
+            Text(block.text)
+                .font(.system(size: 14))
+                .foregroundStyle(OrionTheme.textSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -3940,14 +3990,23 @@ private struct TypingDotsView: View {
 
 private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String) -> [CodexChatRow] {
     var rows: [CodexChatRow] = []
+    var planApprovedSinceLastUser = false
     for message in messages {
         if message.type == "status" { continue }
+        if message.type == "user" {
+            planApprovedSinceLastUser = false
+        }
         if message.type == "permission_submitted" {
             updatePermissionRow(&rows, update: message, state: "submitted")
             continue
         }
         if message.type == "permission_resolved" {
             updatePermissionRow(&rows, update: message, state: "answered")
+            continue
+        }
+        if message.type == "plan_resolved" {
+            markLatestPlanRowApproved(&rows)
+            planApprovedSinceLastUser = true
             continue
         }
         if shouldHideChatMessage(message) { continue }
@@ -4008,6 +4067,23 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             ))
             continue
         }
+        if message.type == "plan" {
+            rows.append(CodexChatRow(
+                id: message.id,
+                type: message.type,
+                label: chatLabel(message, assistantName: assistantName),
+                text: message.text ?? "",
+                details: message.details,
+                toolUseId: message.toolUseId,
+                planPath: message.planPath,
+                attachments: message.attachments ?? [],
+                resultText: nil,
+                resultDetails: nil,
+                toolStatus: nil,
+                planState: planApprovedSinceLastUser ? "approved" : "waiting"
+            ))
+            continue
+        }
         rows.append(CodexChatRow(
             id: message.id,
             type: message.type,
@@ -4044,6 +4120,13 @@ private func resolvePermissionRow(_ row: inout CodexChatRow, update: CodexChatMe
     if let text = update.text, !text.isEmpty, !isGenericPermissionAnswer(text) {
         row.answerText = text
     }
+}
+
+private func markLatestPlanRowApproved(_ rows: inout [CodexChatRow]) {
+    guard let index = rows.indices.reversed().first(where: { rows[$0].type == "plan" }) else {
+        return
+    }
+    rows[index].planState = "approved"
 }
 
 private func isGenericPermissionAnswer(_ text: String) -> Bool {
@@ -4154,6 +4237,24 @@ private func planSections(_ markdown: String) -> [String] {
         .filter { !$0.isEmpty }
 }
 
+private func planReviewBlocks(_ markdown: String) -> [PlanReviewBlock] {
+    let blocks = markdown
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .compactMap { line -> PlanReviewBlock? in
+            guard !line.isEmpty else { return nil }
+            if line.range(of: #"^#{1,4}\s+"#, options: .regularExpression) != nil {
+                let text = line.replacingOccurrences(of: #"^#{1,4}\s+"#, with: "", options: .regularExpression)
+                return PlanReviewBlock(kind: "heading", text: text)
+            }
+            if line.range(of: #"^([-*]|\d+\.)\s+"#, options: .regularExpression) != nil {
+                return PlanReviewBlock(kind: "step", text: cleanPlanPreviewLine(line))
+            }
+            return PlanReviewBlock(kind: "paragraph", text: line)
+        }
+    return blocks.isEmpty ? [PlanReviewBlock(kind: "paragraph", text: "Plan ready")] : blocks
+}
+
 private func cleanPlanPreviewLine(_ line: String) -> String {
     line
         .replacingOccurrences(of: #"^[-*]\s+"#, with: "", options: .regularExpression)
@@ -4190,6 +4291,8 @@ private func liveChatActivityItems(messages: [CodexChatMessage], rows: [CodexCha
     var items: [MobileLiveActivityItem] = []
     let statusMessage = messages.reversed().first { $0.type == "status" }
     let status = statusMessage?.status ?? "idle"
+    let openPlan = openPlanMessage(messages)
+    let hasWaitingPermission = rows.contains { $0.type == "permission_request" && $0.permissionState == "waiting" }
 
     switch status {
     case "starting":
@@ -4198,7 +4301,11 @@ private func liveChatActivityItems(messages: [CodexChatMessage], rows: [CodexCha
         let value = compactActivityValue(statusMessage?.text ?? "\(assistantName) is working")
         items.append(MobileLiveActivityItem(id: "status-running", kind: "status", label: "Working", value: value))
     case "waiting_input":
-        items.append(MobileLiveActivityItem(id: "status-waiting", kind: "question", label: "Waiting", value: "needs your input"))
+        if hasWaitingPermission {
+            items.append(MobileLiveActivityItem(id: "status-waiting", kind: "question", label: "Waiting", value: "needs your input"))
+        } else if openPlan == nil {
+            items.append(MobileLiveActivityItem(id: "status-paused", kind: "status", label: "Ready", value: nil))
+        }
     default:
         break
     }
@@ -4234,7 +4341,7 @@ private func liveChatActivityItems(messages: [CodexChatMessage], rows: [CodexCha
         items.append(MobileLiveActivityItem(id: "stream-\(lastVisibleRow.id)", kind: "stream", label: "Streaming", value: "answer"))
     }
 
-    if let plan = openPlanMessage(messages) {
+    if let plan = openPlan {
         let markdown = plan.details ?? ""
         let title = plan.text?.isEmpty == false ? plan.text! : planTitle(markdown)
         items.append(MobileLiveActivityItem(id: "plan-\(plan.id)", kind: "plan", label: "Plan ready", value: compactActivityValue(title)))
@@ -4254,18 +4361,25 @@ private func uniqueActivityItems(_ items: [MobileLiveActivityItem]) -> [MobileLi
 }
 
 private func openPlanMessage(_ messages: [CodexChatMessage]) -> CodexChatMessage? {
-    var lastPlan: CodexChatMessage?
-    var lastPlanIndex = -1
-    var resolvedIndex = -1
-    for (index, message) in messages.enumerated() {
-        if message.type == "plan" {
-            lastPlan = message
-            lastPlanIndex = index
-        } else if message.type == "plan_resolved" {
-            resolvedIndex = index
+    var lastOpenPlan: CodexChatMessage?
+    var planApprovedSinceLastUser = false
+    for message in messages {
+        switch message.type {
+        case "user":
+            lastOpenPlan = nil
+            planApprovedSinceLastUser = false
+        case "plan_resolved":
+            lastOpenPlan = nil
+            planApprovedSinceLastUser = true
+        case "plan":
+            if !planApprovedSinceLastUser {
+                lastOpenPlan = message
+            }
+        default:
+            break
         }
     }
-    return lastPlanIndex > resolvedIndex ? lastPlan : nil
+    return lastOpenPlan
 }
 
 private func compactActivityValue(_ value: String) -> String {
