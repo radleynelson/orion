@@ -26,6 +26,7 @@ import {
 } from '../../wailsjs/go/main/App';
 import OrionMark from './OrionMark';
 import WorkspaceDetailPanel from './WorkspaceDetailPanel';
+import AgentSigil from './AgentSigil';
 
 interface SidebarProps {
   onNewSession: () => void;
@@ -119,6 +120,8 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
+  const [inspectorEnvVars, setInspectorEnvVars] = useState<Record<string, string>>({});
+  const [inspector, setInspector] = useState<{ path: string; top: number; left: number } | null>(null);
 
   // Init is handled by App.tsx (which never unmounts)
 
@@ -144,6 +147,21 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     })();
   }, [activeWorkspacePath, serverStatuses]);
 
+  useEffect(() => {
+    if (!inspector?.path) {
+      setInspectorEnvVars({});
+      return;
+    }
+    (async () => {
+      try {
+        const env = await GetWorkspaceEnv(inspector.path);
+        setInspectorEnvVars(env || {});
+      } catch {
+        setInspectorEnvVars({});
+      }
+    })();
+  }, [inspector?.path, serverStatuses]);
+
   // Poll server statuses for ALL workspaces (so indicators are correct on startup)
   useEffect(() => {
     if (!project || workspaces.length === 0) return;
@@ -166,9 +184,14 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         });
       } catch {}
     };
+    const handleServerChange = () => fetchAll();
     fetchAll();
     const interval = setInterval(fetchAll, 5000);
-    return () => clearInterval(interval);
+    window.addEventListener('orion:servers-changed', handleServerChange);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('orion:servers-changed', handleServerChange);
+    };
   }, [project, workspaces]);
 
   // Recompute activity tier whenever tabs or server statuses change.
@@ -251,6 +274,12 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     window.addEventListener('orion:new-workspace', handler);
     return () => window.removeEventListener('orion:new-workspace', handler);
   }, [openNewWorkspace]);
+
+  useEffect(() => {
+    const closeInspector = () => setInspector(null);
+    window.addEventListener('orion:close-workspace-inspector', closeInspector);
+    return () => window.removeEventListener('orion:close-workspace-inspector', closeInspector);
+  }, []);
 
   const updateNewWorkspaceDraft = useCallback(<K extends keyof NewWorkspaceDraft>(key: K, value: NewWorkspaceDraft[K]) => {
     setNewWorkspaceDraft((current) => ({ ...current, [key]: value }));
@@ -443,6 +472,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     try {
       const statuses = await StartServers(project.root, wsPath, isMain);
       setServerStatuses((prev) => ({ ...prev, [wsPath]: statuses }));
+      window.dispatchEvent(new Event('orion:servers-changed'));
       for (const srv of statuses) {
         if (srv.running && srv.tmuxSession) {
           const termId = generateId('term');
@@ -466,6 +496,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     try {
       await StopServers(wsPath);
       setServerStatuses((prev) => ({ ...prev, [wsPath]: [] }));
+      window.dispatchEvent(new Event('orion:servers-changed'));
       // Clean up server tabs from the bottom pane
       const srvTabs = useStore.getState().serverTabs.filter((t) => t.workspacePath === wsPath);
       for (const tab of srvTabs) {
@@ -521,6 +552,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const normalizedName = normalizedWorkspaceName(newWorkspaceDraft.name);
   const previewPath = normalizedName ? `${project.root}-${normalizedName}` : `${project.root}-new-worktree`;
   const createDisabled = creatingWorkspace || !normalizedName;
+  const inspectedWorkspace = inspector ? workspaces.find((ws) => ws.path === inspector.path) : undefined;
 
   return (
     <div className="sidebar">
@@ -567,13 +599,15 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         {sortWorkspaces(workspaces, workspaceActive).map((ws) => {
           const wsStatuses = serverStatuses[ws.path] || [];
           const wsHasServers = wsStatuses.some((s) => s.running);
-          const wsHasAgent = tabs.some(
-            (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex'),
+          const wsAgentTabs = tabs.filter((t) =>
+            t.workspacePath === ws.path &&
+            (t.tabType === 'claude' || t.tabType === 'codex' || t.tabType === 'claude-chat' || t.tabType === 'codex-chat'),
           );
+          const wsHasAgent = wsAgentTabs.length > 0;
           const active = ws.path === activeWorkspacePath;
 
           return (
-            <div key={ws.path}>
+            <div key={ws.path} className="sidebar-workspace-row">
               <div
                 className={`sidebar-item ${active ? 'active' : ''}`}
                 onClick={() => {
@@ -586,6 +620,23 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
                   {ws.isMain ? '◉' : wsHasAgent || wsHasServers ? '●' : '○'}
                 </span>
                 <span className="label">{ws.isMain ? 'main' : (project ? ws.name.replace(project.name + '-', '') : ws.name)}</span>
+                <WorkspaceActivityBadges tabs={wsAgentTabs} />
+                <button
+                  type="button"
+                  className={`workspace-info-button ${inspector?.path === ws.path ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setInspector((current) =>
+                      current?.path === ws.path
+                        ? null
+                        : { path: ws.path, top: Math.max(72, rect.top - 26), left: rect.right + 10 },
+                    );
+                  }}
+                  title="Workspace details"
+                >
+                  i
+                </button>
                 {!ws.isMain && deletingPath === ws.path && (
                   <span className="ws-delete-spinner" title="Deleting...">⟳</span>
                 )}
@@ -607,19 +658,40 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
                   </span>
                 )}
               </div>
-              {active && (
-                <WorkspaceDetailPanel
-                  workspace={ws}
-                  serverStatuses={serverStatuses[ws.path] || []}
-                  envVars={envVars}
-                  onStartServers={handleStartServers}
-                  onStopServers={handleStopServers}
-                  onNewSession={onNewSession}
-                />
-              )}
             </div>
           );
         })}
+
+        {inspector && inspectedWorkspace && (
+          <>
+            <div className="workspace-inspector-dismiss" onMouseDown={() => setInspector(null)} />
+            <div
+              className="workspace-inspector-popover"
+              style={{ top: inspector.top, left: inspector.left }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="workspace-inspector-header">
+                <span className={`icon ${(serverStatuses[inspectedWorkspace.path] || []).some((s) => s.running) ? '' : 'inactive'}`} />
+                <div>
+                  <strong>{inspectedWorkspace.isMain ? 'main' : (project ? inspectedWorkspace.name.replace(project.name + '-', '') : inspectedWorkspace.name)}</strong>
+                  <code>{inspectedWorkspace.branch || inspectedWorkspace.name}</code>
+                </div>
+                <button type="button" onClick={() => setInspector(null)} title="Close">×</button>
+              </div>
+              <WorkspaceDetailPanel
+                workspace={inspectedWorkspace}
+                serverStatuses={serverStatuses[inspectedWorkspace.path] || []}
+                envVars={inspectedWorkspace.path === activeWorkspacePath ? envVars : inspectorEnvVars}
+                onStartServers={handleStartServers}
+                onStopServers={handleStopServers}
+                onNewSession={() => {
+                  setActiveWorkspace(inspectedWorkspace.path);
+                  onNewSession();
+                }}
+              />
+            </div>
+          </>
+        )}
 
         {creating && (
           <div className="workspace-create-overlay" onMouseDown={() => !creatingWorkspace && setCreating(false)}>
@@ -708,6 +780,20 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function WorkspaceActivityBadges({ tabs }: { tabs: { tabType: string }[] }) {
+  const ids = Array.from(new Set(tabs.map((tab) => {
+    if (tab.tabType === 'claude-chat') return 'claude';
+    if (tab.tabType === 'codex-chat') return 'codex';
+    return tab.tabType;
+  }))).slice(0, 3);
+  if (ids.length === 0) return null;
+  return (
+    <span className="workspace-activity-badges">
+      {ids.map((id) => <AgentSigil key={id} id={id} size={15} />)}
+    </span>
   );
 }
 

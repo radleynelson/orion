@@ -13,8 +13,9 @@ import AgentSigil from './components/AgentSigil';
 import OrionMark from './components/OrionMark';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
+import { parseUnifiedDiff } from './lib/diffParser';
 import { EventsOn } from '../wailsjs/runtime/runtime';
-import { main } from '../wailsjs/go/models';
+import { main, server } from '../wailsjs/go/models';
 import {
   AllocatePorts,
   ConvertChatToTerminalWithOptions,
@@ -45,6 +46,11 @@ import {
   LaunchAgent,
   StartServers,
   StopServers,
+  GetServerStatuses,
+  GetWorkspaceEnv,
+  GetChangedFilesAgainst,
+  GetUnifiedDiff,
+  WatchWorkspace,
   OpenBrowser,
 } from '../wailsjs/go/main/App';
 
@@ -55,6 +61,8 @@ const DEFAULT_CODEX_CHAT_OPTIONS = {
   sandboxMode: 'danger-full-access',
   collaborationMode: 'default',
 };
+
+type DiffStats = { files: number; added: number; removed: number; loading: boolean };
 
 function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefined {
   const provider = (agent?.provider || agent?.name || '').toLowerCase();
@@ -335,6 +343,11 @@ function App() {
   const [newTabPickerVisible, setNewTabPickerVisible] = useState(false);
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
+  const [activeWorkspaceStatuses, setActiveWorkspaceStatuses] = useState<server.ServerStatus[]>([]);
+  const [activeWorkspaceEnv, setActiveWorkspaceEnv] = useState<Record<string, string>>({});
+  const [diffStats, setDiffStats] = useState<DiffStats>({ files: 0, added: 0, removed: 0, loading: false });
+  const [toolbarPopover, setToolbarPopover] = useState<'servers' | 'env' | null>(null);
+  const [toolbarBusy, setToolbarBusy] = useState<'servers' | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
     return isNaN(v) ? 250 : v;
@@ -357,6 +370,79 @@ function App() {
     }
     GetAgentTypes(project.root).then(setAgentTypes).catch(() => setAgentTypes([]));
   }, [project]);
+
+  const refreshActiveWorkspaceMeta = useCallback(async () => {
+    if (!project || !activeWorkspacePath) {
+      setActiveWorkspaceStatuses([]);
+      setActiveWorkspaceEnv({});
+      return;
+    }
+    try {
+      const [statuses, env] = await Promise.all([
+        GetServerStatuses(project.root, activeWorkspacePath),
+        GetWorkspaceEnv(activeWorkspacePath),
+      ]);
+      setActiveWorkspaceStatuses(statuses || []);
+      setActiveWorkspaceEnv(env || {});
+    } catch {
+      setActiveWorkspaceStatuses([]);
+      setActiveWorkspaceEnv({});
+    }
+  }, [activeWorkspacePath, project]);
+
+  useEffect(() => {
+    refreshActiveWorkspaceMeta();
+    const interval = setInterval(refreshActiveWorkspaceMeta, 5000);
+    const handleServerChange = () => refreshActiveWorkspaceMeta();
+    window.addEventListener('orion:servers-changed', handleServerChange);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('orion:servers-changed', handleServerChange);
+    };
+  }, [refreshActiveWorkspaceMeta]);
+
+  const refreshDiffStats = useCallback(async () => {
+    if (!activeWorkspacePath) {
+      setDiffStats({ files: 0, added: 0, removed: 0, loading: false });
+      return;
+    }
+    setDiffStats((current) => ({ ...current, loading: true }));
+    try {
+      const files = (await GetChangedFilesAgainst(activeWorkspacePath, '')) || [];
+      const diffs = await Promise.all(
+        files.map(async (file) => {
+          try {
+            const raw = await GetUnifiedDiff(activeWorkspacePath, '', file.path);
+            return parseUnifiedDiff(raw || '');
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const totals = diffs.reduce(
+        (acc, diff) => ({
+          added: acc.added + (diff?.added || 0),
+          removed: acc.removed + (diff?.removed || 0),
+        }),
+        { added: 0, removed: 0 },
+      );
+      setDiffStats({ files: files.length, added: totals.added, removed: totals.removed, loading: false });
+    } catch {
+      setDiffStats({ files: 0, added: 0, removed: 0, loading: false });
+    }
+  }, [activeWorkspacePath]);
+
+  useEffect(() => {
+    refreshDiffStats();
+    if (!activeWorkspacePath) return;
+    WatchWorkspace(activeWorkspacePath).catch(() => {});
+    const cancel = EventsOn('git:files-changed', () => refreshDiffStats());
+    const interval = setInterval(refreshDiffStats, 7000);
+    return () => {
+      cancel();
+      clearInterval(interval);
+    };
+  }, [activeWorkspacePath, refreshDiffStats]);
 
   // Double-shift detection for Search Everywhere (like JetBrains)
   useEffect(() => {
@@ -542,8 +628,13 @@ function App() {
   const startServersForActiveWorkspace = useCallback(async () => {
     if (!project || !activeWorkspacePath) return;
     const workspace = workspaces.find((ws) => ws.path === activeWorkspacePath);
+    setToolbarBusy('servers');
     try {
       const statuses = await StartServers(project.root, activeWorkspacePath, workspace?.isMain || false);
+      setActiveWorkspaceStatuses(statuses || []);
+      const env = await GetWorkspaceEnv(activeWorkspacePath).catch(() => ({}));
+      setActiveWorkspaceEnv(env || {});
+      window.dispatchEvent(new Event('orion:servers-changed'));
       const existingServerTabs = useStore.getState().serverTabs;
       for (const srv of statuses || []) {
         if (!srv.running || !srv.tmuxSession) continue;
@@ -565,13 +656,19 @@ function App() {
       setServerPaneVisible(true);
     } catch (err) {
       console.error('Failed to start servers:', err);
+    } finally {
+      setToolbarBusy(null);
     }
   }, [project, activeWorkspacePath, workspaces, addServerTab, setServerPaneVisible]);
 
   const stopServersForActiveWorkspace = useCallback(async () => {
     if (!activeWorkspacePath) return;
+    setToolbarBusy('servers');
     try {
       await StopServers(activeWorkspacePath);
+      setActiveWorkspaceStatuses([]);
+      setActiveWorkspaceEnv({});
+      window.dispatchEvent(new Event('orion:servers-changed'));
       const tabsToClose = useStore.getState().serverTabs.filter((tab) => tab.workspacePath === activeWorkspacePath);
       for (const tab of tabsToClose) {
         for (const termId of useStore.getState().getAllTerminalIds(tab)) {
@@ -581,6 +678,8 @@ function App() {
       }
     } catch (err) {
       console.error('Failed to stop servers:', err);
+    } finally {
+      setToolbarBusy(null);
     }
   }, [activeWorkspacePath, removeServerTab]);
 
@@ -1146,6 +1245,11 @@ function App() {
     return getAllTerminalIds(tab).length;
   };
   const paneCount = countPanes(activeTab);
+  const sessionStatus = activeTab ? 'ready' : 'ready';
+
+  useEffect(() => {
+    setToolbarPopover(null);
+  }, [activeWorkspacePath]);
 
   const commandPaletteCommands = useMemo<CommandPaletteItem[]>(() => {
     const activeWorkspaceName = activeWorkspace
@@ -1413,13 +1517,6 @@ function App() {
   return (
     <div className="app">
       <div className="titlebar">
-        <div
-          className={`titlebar-action ${codeReviewVisible ? 'active' : ''}`}
-          onClick={toggleCodeReview}
-          title="Code Review (⌘⇧+)"
-        >
-          ⎇
-        </div>
         <div className="titlebar-brand">
           <OrionMark size={24} />
           <span className="titlebar-title">orion</span>
@@ -1470,114 +1567,133 @@ function App() {
           >
           {/* Tab bar */}
           <div className="tab-bar">
-            {activeTabs.map((tab) => (
-              <div
-                key={tab.id}
-                className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? (dragMerge ? 'tab-drop-target' : 'tab-reorder-target') : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-                onContextMenu={(e) => {
-                  if (tab.tabType === 'editor') {
-                    e.preventDefault();
-                    const leaves = getAllTerminalIds(tab); // won't have terminals for editor tabs
-                    // Get file path from pane tree
-                    const getFilePath = (pane: any): string | null => {
-                      if (pane.type === 'editor' && pane.filePath) return pane.filePath;
-                      if (pane.children) {
-                        for (const c of pane.children) {
-                          const r = getFilePath(c);
-                          if (r) return r;
+            <div className="tab-list">
+              {activeTabs.map((tab) => (
+                <div
+                  key={tab.id}
+                  className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? (dragMerge ? 'tab-drop-target' : 'tab-reorder-target') : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                  onContextMenu={(e) => {
+                    if (tab.tabType === 'editor') {
+                      e.preventDefault();
+                      // Get file path from pane tree
+                      const getFilePath = (pane: any): string | null => {
+                        if (pane.type === 'editor' && pane.filePath) return pane.filePath;
+                        if (pane.children) {
+                          for (const c of pane.children) {
+                            const r = getFilePath(c);
+                            if (r) return r;
+                          }
                         }
-                      }
-                      return null;
-                    };
-                    const fp = getFilePath(tab.rootPane);
-                    if (fp) setContextMenu({ x: e.clientX, y: e.clientY, filePath: fp });
-                  }
-                }}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', tab.id);
-                  e.dataTransfer.effectAllowed = 'move';
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  setDragOverTabId(tab.id);
-                  setDragMerge(e.altKey);
-                }}
-                onDragLeave={() => { setDragOverTabId(null); setDragMerge(false); }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOverTabId(null);
-                  setDragMerge(false);
-                  const sourceTabId = e.dataTransfer.getData('text/plain');
-                  if (sourceTabId && sourceTabId !== tab.id) {
-                    if (e.altKey) {
-                      mergeTabInto(sourceTabId, tab.id);
-                    } else {
-                      reorderTab(sourceTabId, tab.id);
+                        return null;
+                      };
+                      const fp = getFilePath(tab.rootPane);
+                      if (fp) setContextMenu({ x: e.clientX, y: e.clientY, filePath: fp });
                     }
-                  }
-                }}
-              >
-                <span className="tab-icon"><AgentSigil id={tab.tabType} size={18} /></span>
-                {renamingTabId === tab.id ? (
-                  <input
-                    autoFocus
-                    className="tab-rename-input"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        if (renameValue.trim()) renameTab(tab.id, renameValue.trim());
-                        setRenamingTabId(null);
+                  }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', tab.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverTabId(tab.id);
+                    setDragMerge(e.altKey);
+                  }}
+                  onDragLeave={() => { setDragOverTabId(null); setDragMerge(false); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverTabId(null);
+                    setDragMerge(false);
+                    const sourceTabId = e.dataTransfer.getData('text/plain');
+                    if (sourceTabId && sourceTabId !== tab.id) {
+                      if (e.altKey) {
+                        mergeTabInto(sourceTabId, tab.id);
+                      } else {
+                        reorderTab(sourceTabId, tab.id);
                       }
-                      if (e.key === 'Escape') setRenamingTabId(null);
-                      e.stopPropagation();
-                    }}
-                    onBlur={() => {
-                      if (renameValue.trim()) renameTab(tab.id, renameValue.trim());
-                      setRenamingTabId(null);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      setRenamingTabId(tab.id);
-                      setRenameValue(tab.label);
-                    }}
-                  >
-                    {tab.label}
-                  </span>
-                )}
-                {(tab.tabType === 'claude' || tab.tabType === 'codex' || tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat') && (
-                  <span
-                    className="convert"
-                    title={tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat' ? 'Convert to terminal' : 'Convert to chat'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleConvertTab(tab.id);
-                    }}
-                  >
-                    ↔
-                  </span>
-                )}
-                <span
-                  className="close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCloseTab(tab.id);
+                    }
                   }}
                 >
-                  ×
-                </span>
+                  <span className="tab-icon"><AgentSigil id={tab.tabType} size={18} /></span>
+                  {renamingTabId === tab.id ? (
+                    <input
+                      autoFocus
+                      className="tab-rename-input"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          if (renameValue.trim()) renameTab(tab.id, renameValue.trim());
+                          setRenamingTabId(null);
+                        }
+                        if (e.key === 'Escape') setRenamingTabId(null);
+                        e.stopPropagation();
+                      }}
+                      onBlur={() => {
+                        if (renameValue.trim()) renameTab(tab.id, renameValue.trim());
+                        setRenamingTabId(null);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        setRenamingTabId(tab.id);
+                        setRenameValue(tab.label);
+                      }}
+                    >
+                      {tab.label}
+                    </span>
+                  )}
+                  {(tab.tabType === 'claude' || tab.tabType === 'codex' || tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat') && (
+                    <span
+                      className="convert"
+                      title={tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat' ? 'Convert to terminal' : 'Convert to chat'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleConvertTab(tab.id);
+                      }}
+                    >
+                      ↔
+                    </span>
+                  )}
+                  <span
+                    className="close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseTab(tab.id);
+                    }}
+                  >
+                    ×
+                  </span>
+                </div>
+              ))}
+              <div className="tab-add" onClick={() => setNewTabPickerVisible(true)} title="New session (⌘T)">
+                +
               </div>
-            ))}
-            <div className="tab-add" onClick={() => setNewTabPickerVisible(true)} title="New session (⌘T)">
-              +
             </div>
+            <WorkspaceToolbar
+              serverStatuses={activeWorkspaceStatuses}
+              envVars={activeWorkspaceEnv}
+              diffStats={diffStats}
+              popover={toolbarPopover}
+              busy={toolbarBusy === 'servers'}
+              sessionStatus={sessionStatus}
+              onTogglePopover={(next) => {
+                window.dispatchEvent(new Event('orion:close-workspace-inspector'));
+                setToolbarPopover((current) => current === next ? null : next);
+              }}
+              onStartServers={startServersForActiveWorkspace}
+              onStopServers={stopServersForActiveWorkspace}
+              onToggleDiff={() => {
+                setToolbarPopover(null);
+                toggleCodeReview();
+              }}
+            />
           </div>
 
           {/* Main terminal area */}
@@ -1788,6 +1904,106 @@ function App() {
       </div>
     </div>
   );
+}
+
+function WorkspaceToolbar({
+  serverStatuses,
+  envVars,
+  diffStats,
+  popover,
+  busy,
+  sessionStatus,
+  onTogglePopover,
+  onStartServers,
+  onStopServers,
+  onToggleDiff,
+}: {
+  serverStatuses: server.ServerStatus[];
+  envVars: Record<string, string>;
+  diffStats: DiffStats;
+  popover: 'servers' | 'env' | null;
+  busy: boolean;
+  sessionStatus: string;
+  onTogglePopover: (popover: 'servers' | 'env') => void;
+  onStartServers: () => void;
+  onStopServers: () => void;
+  onToggleDiff: () => void;
+}) {
+  const runningServers = serverStatuses.filter((status) => status.running);
+  const envEntries = Object.entries(envVars);
+  const serverAction = runningServers.length > 0 ? onStopServers : onStartServers;
+
+  return (
+    <div className="workspace-toolbar">
+      {serverStatuses.length > 0 && (
+        <button type="button" className="workspace-chip" onClick={() => onTogglePopover('servers')}>
+          <span className={`chip-dot ${runningServers.length > 0 ? 'running' : ''}`} />
+          <span>servers</span>
+          <b>{runningServers.length}/{serverStatuses.length}</b>
+        </button>
+      )}
+      {envEntries.length > 0 && (
+        <button type="button" className="workspace-chip" onClick={() => onTogglePopover('env')}>
+          <span>env</span>
+          <b>{envEntries.length}</b>
+        </button>
+      )}
+      <button type="button" className="workspace-chip diff-chip" onClick={onToggleDiff}>
+        <span className="diff-add">+{diffStats.added}</span>
+        <span className="diff-del">-{diffStats.removed}</span>
+      </button>
+      <span className="workspace-ready">{sessionStatus}</span>
+
+      {popover && (
+        <div className="toolbar-popover">
+          {popover === 'servers' ? (
+            <>
+              <div className="toolbar-popover-header">
+                <span>Servers · {runningServers.length}/{serverStatuses.length}</span>
+                <button type="button" className={runningServers.length > 0 ? 'stop' : 'start'} onClick={serverAction} disabled={busy}>
+                  {busy ? '...' : runningServers.length > 0 ? 'stop' : 'start'}
+                </button>
+              </div>
+              <div className="toolbar-popover-list">
+                {[...serverStatuses].sort(serverStatusSort).map((status) => (
+                  <div key={status.name} className="toolbar-popover-row">
+                    <span className={`server-dot ${status.running ? 'running' : 'stopped'}`}>●</span>
+                    <span>{status.name}</span>
+                    {status.port > 0 && <code>:{status.port}</code>}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="toolbar-popover-header">
+                <span>Env · {envEntries.length}</span>
+              </div>
+              <div className="toolbar-popover-list">
+                {envEntries.map(([key, value]) => (
+                  <button key={key} type="button" className="toolbar-popover-row env-row" onClick={() => navigator.clipboard.writeText(value)}>
+                    <span>{key}</span>
+                    <code>{maskToolbarValue(value)}</code>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function serverStatusSort(a: server.ServerStatus, b: server.ServerStatus) {
+  const order: Record<string, number> = { frontend: 0, backend: 1, sidekiq: 2 };
+  return (order[a.name] ?? 99) - (order[b.name] ?? 99);
+}
+
+function maskToolbarValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 14) return trimmed;
+  return `${trimmed.slice(0, 7)}...${trimmed.slice(-4)}`;
 }
 
 function parseChatMetadata(msg: any): { threadId?: string; model?: string; reasoningEffort?: string; approvalPolicy?: string; sandboxMode?: string; permissionMode?: string; collaborationMode?: string } {

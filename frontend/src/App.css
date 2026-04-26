@@ -294,6 +294,44 @@
   white-space: nowrap;
 }
 
+.sidebar-workspace-row {
+  position: relative;
+}
+
+.workspace-activity-badges {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 2px;
+}
+
+.workspace-activity-badges .agent-sigil + .agent-sigil {
+  margin-left: -4px;
+}
+
+.workspace-info-button {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.workspace-info-button:hover,
+.workspace-info-button.active {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  opacity: 1;
+}
+
 .ws-delete-icon {
   display: none;
   cursor: pointer;
@@ -317,6 +355,89 @@
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.workspace-inspector-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 88;
+  background: transparent;
+}
+
+.workspace-inspector-popover {
+  position: fixed;
+  z-index: 89;
+  width: min(370px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 70px));
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.42);
+}
+
+.workspace-inspector-header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.workspace-inspector-header .icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-green);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-green) 40%, transparent);
+}
+
+.workspace-inspector-header .icon.inactive {
+  background: var(--border-bright);
+  box-shadow: none;
+}
+
+.workspace-inspector-header strong,
+.workspace-inspector-header code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-inspector-header strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.workspace-inspector-header code {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.workspace-inspector-header button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-size);
+}
+
+.workspace-inspector-header button:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.workspace-inspector-popover .workspace-detail-minimal {
+  margin: 0;
+  padding: 14px 18px 18px;
 }
 
 /* Sidebar workspace actions */
@@ -2777,8 +2898,18 @@ button.workspace-min-row:hover em {
   gap: 2px;
   --wails-draggable: no-drag;
   -webkit-app-region: no-drag;
+  overflow: visible;
+  position: relative;
+}
+
+.tab-list {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   overflow-x: auto;
-  -webkit-app-region: no-drag;
+  overflow-y: hidden;
 }
 
 .tab {
@@ -2868,6 +2999,162 @@ button.workspace-min-row:hover em {
 .tab-add:hover {
   background: var(--bg-hover);
   color: var(--text-secondary);
+}
+
+.workspace-toolbar {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 6px 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.workspace-chip {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border-dim);
+  border-radius: 999px;
+  padding: 0 11px;
+  background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workspace-chip:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.workspace-chip b {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.chip-dot.running {
+  background: var(--accent-green);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-green) 42%, transparent);
+}
+
+.diff-chip {
+  gap: 9px;
+}
+
+.diff-add {
+  color: var(--accent-green);
+}
+
+.diff-del {
+  color: var(--accent-red);
+}
+
+.workspace-ready {
+  padding: 0 8px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.toolbar-popover {
+  position: absolute;
+  top: 36px;
+  right: 8px;
+  z-index: 80;
+  width: 300px;
+  max-height: min(420px, calc(100vh - 120px));
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.42);
+}
+
+.toolbar-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--border-dim);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.toolbar-popover-header button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.toolbar-popover-header button.start {
+  color: var(--accent-green);
+}
+
+.toolbar-popover-header button.stop {
+  color: var(--accent-red);
+}
+
+.toolbar-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 13px;
+}
+
+.toolbar-popover-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+}
+
+.toolbar-popover-row.env-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+
+.toolbar-popover-row.env-row:hover {
+  color: var(--text-primary);
+}
+
+.toolbar-popover-row span,
+.toolbar-popover-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-popover-row code {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
 }
 
 /* Terminal container */

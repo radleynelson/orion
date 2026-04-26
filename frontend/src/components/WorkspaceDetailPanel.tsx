@@ -141,8 +141,8 @@ function SessionRow({ tab, active, onOpen }: { tab: Tab; active: boolean; onOpen
 
 function sessionTitle(tab: Tab): string {
   if (tab.tabType === 'shell') return tab.label?.replace(/^Shell \d+$/, 'zsh') || 'zsh';
-  if (tab.tabType === 'claude' || tab.tabType === 'claude-chat') return 'Claude';
-  if (tab.tabType === 'codex' || tab.tabType === 'codex-chat') return 'Codex';
+  if (tab.tabType === 'claude' || tab.tabType === 'claude-chat') return tab.label || 'Claude';
+  if (tab.tabType === 'codex' || tab.tabType === 'codex-chat') return tab.label || 'Codex';
   return tab.label;
 }
 
