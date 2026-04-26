@@ -165,9 +165,8 @@ struct HeaderBar: View {
                 Button {
                     Task { await toggleServers() }
                 } label: {
-                    HeaderPill(
+                    ServerHeaderPill(
                         systemImage: serversRunning ? "stop.fill" : "play.fill",
-                        title: serversRunning ? "Stop" : "Start",
                         tint: serversRunning ? OrionTheme.accentRed : OrionTheme.accentGreen,
                         isLoading: isChangingServers
                     )
@@ -223,25 +222,22 @@ struct HeaderBar: View {
 
     @ViewBuilder
     private var titleView: some View {
-        HStack(spacing: 10) {
-            OrionMarkView(size: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(state.projectInfo?.name ?? "Orion")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(OrionTheme.textPrimary)
-                    if state.projects.count > 1 {
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(OrionTheme.textDim)
-                    }
-                }
-                if let workspace = state.activeWorkspace {
-                    Text(workspaceSubtitle(workspace))
-                        .font(.system(size: 11, design: .monospaced))
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(state.projectInfo?.name ?? "Orion")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                if state.projects.count > 1 {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(OrionTheme.textDim)
-                        .lineLimit(1)
                 }
+            }
+            if let workspace = state.activeWorkspace {
+                Text(workspaceSubtitle(workspace))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
             }
         }
     }
@@ -323,13 +319,7 @@ private struct DiffHeaderPill: View {
                 ProgressView()
                     .controlSize(.mini)
                     .tint(OrionTheme.accentBlue)
-            } else {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(OrionTheme.accentBlue)
-            }
-
-            if let stats {
+            } else if let stats {
                 Text("+\(stats.added)")
                     .foregroundStyle(OrionTheme.accentGreen)
                 Text("-\(stats.removed)")
@@ -348,14 +338,13 @@ private struct DiffHeaderPill: View {
     }
 }
 
-private struct HeaderPill: View {
+private struct ServerHeaderPill: View {
     let systemImage: String
-    let title: String
     let tint: Color
     var isLoading = false
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 0) {
             if isLoading {
                 ProgressView()
                     .controlSize(.mini)
@@ -365,11 +354,8 @@ private struct HeaderPill: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(tint)
             }
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(OrionTheme.textSecondary)
         }
-        .padding(.horizontal, 9)
+        .frame(width: 28)
         .frame(height: 28)
         .background(OrionTheme.bgSurface)
         .clipShape(Capsule())
