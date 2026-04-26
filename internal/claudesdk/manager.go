@@ -263,6 +263,10 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 	if permissionMode == "" {
 		permissionMode = defaultPermissionMode
 	}
+	threadID := strings.TrimSpace(options.ThreadID)
+	if threadID != "" && !validClaudeSessionForWorkspace(threadID, workspacePath) {
+		return nil, fmt.Errorf("Claude session not found for workspace: %s", threadID)
+	}
 	claudeExecutable := strings.TrimSpace(options.ClaudeExecutable)
 	if claudeExecutable == "" {
 		claudeExecutable = "claude"
@@ -286,7 +290,7 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		"--permission-mode", permissionMode,
 		"--claude-path", claudeExecutable,
 	}
-	if threadID := strings.TrimSpace(options.ThreadID); threadID != "" {
+	if threadID != "" {
 		args = append(args, "--resume", threadID)
 	}
 
@@ -661,14 +665,19 @@ func (s *Session) emit(msg Message) {
 }
 
 func ThreadIDForTmux(tmuxSession string, workspacePath string) string {
-	if id := tmuxOption(tmuxSession, "@orion_thread_id"); id != "" {
+	if workspacePath == "" {
+		workspacePath = tmuxCurrentPath(tmuxSession)
+	}
+	if id := tmuxOption(tmuxSession, "@orion_thread_id"); validClaudeSessionForWorkspace(id, workspacePath) {
 		return id
 	}
 	if ids := claudeSessionIDsForTmux(tmuxSession); len(ids) > 0 {
-		return ids[0]
-	}
-	if workspacePath == "" {
-		workspacePath = tmuxCurrentPath(tmuxSession)
+		for _, id := range ids {
+			if validClaudeSessionForWorkspace(id, workspacePath) {
+				return id
+			}
+		}
+		return ""
 	}
 	return latestSessionIDForWorkspace(workspacePath)
 }
@@ -729,11 +738,10 @@ func latestSessionIDForWorkspace(workspacePath string) string {
 	if workspacePath == "" {
 		return ""
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	dir := userClaudeProjectDir(workspacePath)
+	if dir == "" {
 		return ""
 	}
-	dir := filepath.Join(home, ".claude", "projects", claudeProjectDir(workspacePath))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
@@ -764,6 +772,28 @@ func latestSessionIDForWorkspace(workspacePath string) string {
 		return ""
 	}
 	return candidates[0].id
+}
+
+func validClaudeSessionForWorkspace(sessionID string, workspacePath string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	workspacePath = strings.TrimSpace(workspacePath)
+	if sessionID == "" || workspacePath == "" {
+		return false
+	}
+	path := filepath.Join(userClaudeProjectDir(workspacePath), sessionID+".jsonl")
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func userClaudeProjectDir(workspacePath string) string {
+	if configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configDir != "" {
+		return filepath.Join(configDir, "projects", claudeProjectDir(workspacePath))
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects", claudeProjectDir(workspacePath))
 }
 
 func tmuxOption(name string, option string) string {

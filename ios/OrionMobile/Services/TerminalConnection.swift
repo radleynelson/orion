@@ -347,7 +347,7 @@ final class CodexChatConnection {
         let encodedSession = sessionId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sessionId
         let route = isClaude ? "claude-chat" : "codex-chat"
         var query = "token=\(encoded)"
-        if !isClaude && !workspacePath.isEmpty {
+        if !workspacePath.isEmpty {
             let encodedWorkspace = workspacePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? workspacePath
             query += "&workspacePath=\(encodedWorkspace)"
         }

@@ -191,6 +191,14 @@ struct CodexLaunchOptions: Codable, Equatable {
     var collaborationMode = "default"
 }
 
+struct ClaudeLaunchOptions: Codable, Equatable {
+    var model: String?
+    var reasoningEffort: String?
+    var approvalPolicy: String?
+    var sandboxMode: String?
+    var permissionMode: String?
+}
+
 struct StartServersRequest: Codable {
     let repoRoot: String
     let workspacePath: String

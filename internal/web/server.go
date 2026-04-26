@@ -49,9 +49,16 @@ type AppAPI interface {
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
 	LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error)
 	ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error)
+	ConvertChatToTerminalWithOptions(repoRoot string, workspacePath string, sessionID string, chatKind string, model string, reasoningEffort string, permissionMode string, collaborationMode string) (string, error)
 	LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error)
+	LaunchClaudeChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error)
 	ResumeClaudeChat(repoRoot string, workspacePath string, threadID string) (*claudechat.SessionInfo, error)
+	ResumeClaudeChatWithOptions(repoRoot string, workspacePath string, threadID string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error)
 	ConvertTerminalToClaudeChat(repoRoot string, workspacePath string, tmuxSession string) (*claudechat.SessionInfo, error)
+	ConvertTerminalToClaudeChatWithOptions(repoRoot string, workspacePath string, tmuxSession string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error)
+	LaunchCodexChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error)
+	ResumeCodexChatWithOptions(repoRoot string, workspacePath string, threadID string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error)
+	ConvertTerminalToCodexChatWithOptions(repoRoot string, workspacePath string, tmuxSession string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error)
 	ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo
 	ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 	StartServers(repoRoot string, workspacePath string, isMain bool) ([]server.ServerStatus, error)
@@ -520,10 +527,14 @@ func (s *Server) handleConvertChatToTerminal(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
-		RepoRoot      string `json:"repoRoot"`
-		WorkspacePath string `json:"workspacePath"`
-		SessionID     string `json:"sessionId"`
-		ChatKind      string `json:"chatKind"`
+		RepoRoot          string `json:"repoRoot"`
+		WorkspacePath     string `json:"workspacePath"`
+		SessionID         string `json:"sessionId"`
+		ChatKind          string `json:"chatKind"`
+		Model             string `json:"model"`
+		ReasoningEffort   string `json:"reasoningEffort"`
+		PermissionMode    string `json:"permissionMode"`
+		CollaborationMode string `json:"collaborationMode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -533,7 +544,16 @@ func (s *Server) handleConvertChatToTerminal(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "repoRoot, workspacePath, sessionId, and chatKind required", http.StatusBadRequest)
 		return
 	}
-	tmuxSession, err := s.app.ConvertChatToTerminal(req.RepoRoot, req.WorkspacePath, req.SessionID, req.ChatKind)
+	tmuxSession, err := s.app.ConvertChatToTerminalWithOptions(
+		req.RepoRoot,
+		req.WorkspacePath,
+		req.SessionID,
+		req.ChatKind,
+		req.Model,
+		req.ReasoningEffort,
+		req.PermissionMode,
+		req.CollaborationMode,
+	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -557,10 +577,15 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.claudeMgr.List(paths))
 	case http.MethodPost:
 		var req struct {
-			RepoRoot      string `json:"repoRoot"`
-			WorkspacePath string `json:"workspacePath"`
-			ThreadID      string `json:"threadId"`
-			TmuxSession   string `json:"tmuxSession"`
+			RepoRoot        string `json:"repoRoot"`
+			WorkspacePath   string `json:"workspacePath"`
+			ThreadID        string `json:"threadId"`
+			TmuxSession     string `json:"tmuxSession"`
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoningEffort"`
+			ApprovalPolicy  string `json:"approvalPolicy"`
+			SandboxMode     string `json:"sandboxMode"`
+			PermissionMode  string `json:"permissionMode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -580,11 +605,37 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 		)
 		switch {
 		case strings.TrimSpace(req.ThreadID) != "":
-			info, err = s.app.ResumeClaudeChat(req.RepoRoot, req.WorkspacePath, req.ThreadID)
+			info, err = s.app.ResumeClaudeChatWithOptions(
+				req.RepoRoot,
+				req.WorkspacePath,
+				req.ThreadID,
+				req.Model,
+				req.ReasoningEffort,
+				req.ApprovalPolicy,
+				req.SandboxMode,
+				req.PermissionMode,
+			)
 		case strings.TrimSpace(req.TmuxSession) != "":
-			info, err = s.app.ConvertTerminalToClaudeChat(req.RepoRoot, req.WorkspacePath, req.TmuxSession)
+			info, err = s.app.ConvertTerminalToClaudeChatWithOptions(
+				req.RepoRoot,
+				req.WorkspacePath,
+				req.TmuxSession,
+				req.Model,
+				req.ReasoningEffort,
+				req.ApprovalPolicy,
+				req.SandboxMode,
+				req.PermissionMode,
+			)
 		default:
-			info, err = s.app.LaunchClaudeChat(req.RepoRoot, req.WorkspacePath)
+			info, err = s.app.LaunchClaudeChatWithOptions(
+				req.RepoRoot,
+				req.WorkspacePath,
+				req.Model,
+				req.ReasoningEffort,
+				req.ApprovalPolicy,
+				req.SandboxMode,
+				req.PermissionMode,
+			)
 		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -711,24 +762,44 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "workspacePath required", http.StatusBadRequest)
 			return
 		}
-		threadID := strings.TrimSpace(req.ThreadID)
-		if threadID == "" && strings.TrimSpace(req.TmuxSession) != "" {
-			threadID = codexchat.ThreadIDForTmux(req.TmuxSession, req.WorkspacePath)
-			if threadID == "" {
-				http.Error(w, "could not identify Codex thread for tmux session", http.StatusBadRequest)
-				return
-			}
+		var (
+			info *codexchat.SessionInfo
+			err  error
+		)
+		switch {
+		case strings.TrimSpace(req.ThreadID) != "":
+			info, err = s.app.ResumeCodexChatWithOptions(
+				req.RepoRoot,
+				req.WorkspacePath,
+				req.ThreadID,
+				req.Model,
+				req.ReasoningEffort,
+				req.ApprovalPolicy,
+				req.SandboxMode,
+				req.CollaborationMode,
+			)
+		case strings.TrimSpace(req.TmuxSession) != "":
+			info, err = s.app.ConvertTerminalToCodexChatWithOptions(
+				req.RepoRoot,
+				req.WorkspacePath,
+				req.TmuxSession,
+				req.Model,
+				req.ReasoningEffort,
+				req.ApprovalPolicy,
+				req.SandboxMode,
+				req.CollaborationMode,
+			)
+		default:
+			info, err = s.app.LaunchCodexChatWithOptions(
+				req.RepoRoot,
+				req.WorkspacePath,
+				req.Model,
+				req.ReasoningEffort,
+				req.ApprovalPolicy,
+				req.SandboxMode,
+				req.CollaborationMode,
+			)
 		}
-		info, err := s.codexMgr.StartWithOptions(codexchat.StartOptions{
-			WorkspacePath:     req.WorkspacePath,
-			Label:             "Codex Chat",
-			ThreadID:          threadID,
-			Model:             req.Model,
-			ReasoningEffort:   req.ReasoningEffort,
-			ApprovalPolicy:    req.ApprovalPolicy,
-			SandboxMode:       req.SandboxMode,
-			CollaborationMode: req.CollaborationMode,
-		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

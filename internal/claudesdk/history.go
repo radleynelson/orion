@@ -197,10 +197,9 @@ func historyTextFromContent(recordType string, raw json.RawMessage) string {
 			if recordType == "assistant" && normalize(stringValue(block["name"])) == "exitplanmode" {
 				input := mapValue(block["input"])
 				plan := strings.TrimSpace(stringValue(input["plan"]))
-				if plan == "" {
-					plan = compactAny(input)
+				if plan != "" {
+					texts = append(texts, planTitle(plan))
 				}
-				texts = append(texts, planTitle(plan))
 			}
 		}
 	}

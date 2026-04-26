@@ -2477,7 +2477,7 @@ struct CodexChatView: View {
             ("reasoning", metadata.reasoningEffort),
             ("approvals", approvalLabel(metadata.approvalPolicy)),
             ("sandbox", sandboxLabel(metadata.sandboxMode)),
-            ("mode", metadata.permissionMode ?? metadata.collaborationMode)
+            ("mode", modeLabel(metadata.permissionMode ?? metadata.collaborationMode))
         ]
         let visible = items.compactMap { item -> (String, String)? in
             let (label, value) = item
@@ -2582,7 +2582,6 @@ struct CodexChatView: View {
         let markdown = row.details ?? row.text
         let insights = planInsights(markdown)
         let sections = planSections(markdown)
-        let canApprove = connection.sessionType.lowercased().contains("claude")
         return HStack(alignment: .bottom, spacing: 8) {
             AgentSigilView(connection.sessionType, size: 24)
             VStack(alignment: .leading, spacing: 5) {
@@ -2655,12 +2654,10 @@ struct CodexChatView: View {
                         Button("Review diff") { state.showDiffReview = true }
                             .buttonStyle(.bordered)
                     }
-                    if canApprove {
-                        Button("Approve & run") { connection.approvePlan() }
-                            .buttonStyle(.borderedProminent)
-                            .tint(OrionTheme.accentBlue)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
+                    Button("Approve & run") { connection.approvePlan() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(OrionTheme.accentBlue)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 .padding(12)
                 .frame(maxWidth: 340, alignment: .leading)
@@ -3573,14 +3570,23 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
 }
 
 private func updatePermissionRow(_ rows: inout [CodexChatRow], update: CodexChatMessage, state: String) {
+    let requestedToolUseId = update.toolUseId?.trimmingCharacters(in: .whitespacesAndNewlines)
     for index in rows.indices.reversed() {
         guard rows[index].type == "permission_request" else { continue }
-        if let toolUseId = update.toolUseId, rows[index].toolUseId != toolUseId { continue }
-        rows[index].permissionState = state
-        if let text = update.text, !text.isEmpty, !isGenericPermissionAnswer(text) {
-            rows[index].answerText = text
-        }
+        if let requestedToolUseId, !requestedToolUseId.isEmpty, rows[index].toolUseId != requestedToolUseId { continue }
+        resolvePermissionRow(&rows[index], update: update, state: state)
         return
+    }
+    guard let fallbackIndex = rows.indices.reversed().first(where: {
+        rows[$0].type == "permission_request" && rows[$0].permissionState == "waiting"
+    }) else { return }
+    resolvePermissionRow(&rows[fallbackIndex], update: update, state: state)
+}
+
+private func resolvePermissionRow(_ row: inout CodexChatRow, update: CodexChatMessage, state: String) {
+    row.permissionState = state
+    if let text = update.text, !text.isEmpty, !isGenericPermissionAnswer(text) {
+        row.answerText = text
     }
 }
 
@@ -3848,6 +3854,26 @@ private func sandboxLabel(_ value: String?) -> String? {
     guard let value, !value.isEmpty else { return nil }
     if value == "danger-full-access" { return "workspace + network" }
     return value.replacingOccurrences(of: "-", with: " ")
+}
+
+private func modeLabel(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    switch value {
+    case "bypassPermissions", "never":
+        return "full access"
+    case "dontAsk":
+        return "don't ask"
+    case "default":
+        return "default"
+    case "plan":
+        return "plan"
+    case "approved":
+        return "approved"
+    default:
+        return value
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+    }
 }
 
 private func modelLabel(_ value: String) -> String {

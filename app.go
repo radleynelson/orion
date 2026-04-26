@@ -353,14 +353,18 @@ func (a *App) ConvertChatToTerminalWithOptions(repoRoot string, workspacePath st
 // --- Claude chat methods ---
 
 func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error) {
+	return a.LaunchClaudeChatWithOptions(repoRoot, workspacePath, "", "", "", "", "")
+}
+
+func (a *App) LaunchClaudeChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
 	return a.claudeMgr.StartWithOptions(claudechat.StartOptions{
 		WorkspacePath:    workspacePath,
 		Label:            "Claude Chat",
-		Model:            "claude-opus-4-7",
-		ReasoningEffort:  "xhigh",
-		ApprovalPolicy:   "never",
-		SandboxMode:      "danger-full-access",
-		PermissionMode:   "bypassPermissions",
+		Model:            firstNonEmpty(model, "claude-opus-4-7"),
+		ReasoningEffort:  firstNonEmpty(reasoningEffort, "xhigh"),
+		ApprovalPolicy:   firstNonEmpty(approvalPolicy, "never"),
+		SandboxMode:      firstNonEmpty(sandboxMode, "danger-full-access"),
+		PermissionMode:   firstNonEmpty(permissionMode, "bypassPermissions"),
 		ClaudeExecutable: "claude",
 	})
 }
@@ -402,7 +406,7 @@ func (a *App) ConvertTerminalToClaudeChatWithOptions(repoRoot string, workspaceP
 	}
 	threadID := claudechat.ThreadIDForTmux(tmuxSession, workspacePath)
 	if threadID == "" {
-		return nil, fmt.Errorf("could not identify Claude session for tmux session %s", tmuxSession)
+		return a.LaunchClaudeChatWithOptions(repoRoot, workspacePath, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
 	}
 	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
 }

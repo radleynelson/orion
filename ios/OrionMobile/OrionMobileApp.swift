@@ -334,7 +334,7 @@ final class AppState {
     }
 
     @discardableResult
-    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions = CodexLaunchOptions(), threadId: String? = nil) async throws -> SessionInfo {
+    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions? = CodexLaunchOptions(), threadId: String? = nil) async throws -> SessionInfo {
         guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
         let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, threadId: threadId, options: options)
         let session = SessionInfo(
@@ -367,7 +367,7 @@ final class AppState {
 
     @discardableResult
     func resumeCodexChat(workspacePath: String, threadId: String) async throws -> SessionInfo {
-        try await launchCodexChat(workspacePath: workspacePath, threadId: threadId)
+        try await launchCodexChat(workspacePath: workspacePath, options: nil, threadId: threadId)
     }
 
     @discardableResult
@@ -407,7 +407,12 @@ final class AppState {
         do {
             if session.isChat {
                 let kind = session.type == "claude-chat" ? "claude" : "codex"
-                let resp = try await client.convertChatToTerminal(repoRoot: root, workspacePath: session.workspacePath, sessionId: session.chatConnectionId, chatKind: kind)
+                let resp = try await client.convertChatToTerminal(
+                    repoRoot: root,
+                    workspacePath: session.workspacePath,
+                    sessionId: session.chatConnectionId,
+                    chatKind: kind
+                )
                 let label = kind == "claude" ? "Claude" : "Codex"
                 let converted = SessionInfo(
                     tmuxName: resp.tmuxSession,
@@ -440,8 +445,8 @@ final class AppState {
 
             guard session.type == "claude" || session.type == "codex" else { return }
             let resp = session.type == "claude"
-                ? try await client.launchClaudeChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession)
-                : try await client.launchCodexChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession)
+                ? try await client.launchClaudeChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession, options: claudeOptions(from: session))
+                : try await client.launchCodexChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession, options: codexOptions(from: session))
             let converted = SessionInfo(
                 tmuxName: resp.threadId ?? resp.id,
                 type: resp.type,
@@ -664,6 +669,38 @@ final class AppState {
         oldTerminal?.disconnect()
         oldChat?.disconnect()
         connection.connect(host: host, token: token)
+    }
+
+    private func codexOptions(from session: SessionInfo) -> CodexLaunchOptions? {
+        let hasMetadata = [session.model, session.reasoningEffort, session.approvalPolicy, session.sandboxMode, session.collaborationMode]
+            .contains { value in
+                guard let value else { return false }
+                return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        guard hasMetadata else { return nil }
+        return CodexLaunchOptions(
+            model: session.model ?? CodexLaunchOptions().model,
+            reasoningEffort: session.reasoningEffort ?? CodexLaunchOptions().reasoningEffort,
+            approvalPolicy: session.approvalPolicy ?? CodexLaunchOptions().approvalPolicy,
+            sandboxMode: session.sandboxMode ?? CodexLaunchOptions().sandboxMode,
+            collaborationMode: session.collaborationMode ?? CodexLaunchOptions().collaborationMode
+        )
+    }
+
+    private func claudeOptions(from session: SessionInfo) -> ClaudeLaunchOptions? {
+        let hasMetadata = [session.model, session.reasoningEffort, session.approvalPolicy, session.sandboxMode, session.permissionMode]
+            .contains { value in
+                guard let value else { return false }
+                return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        guard hasMetadata else { return nil }
+        return ClaudeLaunchOptions(
+            model: session.model,
+            reasoningEffort: session.reasoningEffort,
+            approvalPolicy: session.approvalPolicy,
+            sandboxMode: session.sandboxMode,
+            permissionMode: session.permissionMode
+        )
     }
 
     private func reconcileActiveWorkspaceSelection() {

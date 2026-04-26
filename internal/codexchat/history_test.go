@@ -207,4 +207,10 @@ func TestParseResumeIDs(t *testing.T) {
 	if len(got) != 1 || got[0] != "abc123" {
 		t.Fatalf("ParseResumeIDs with equals = %#v", got)
 	}
+
+	command = `codex resume --dangerously-bypass-approvals-and-sandbox --no-alt-screen -m gpt-5.5 -c model_reasoning_effort="xhigh" 019dc827-72fb-7100-9770-33b63986e2ea`
+	got = ParseResumeIDs(command)
+	if len(got) != 1 || got[0] != "019dc827-72fb-7100-9770-33b63986e2ea" {
+		t.Fatalf("ParseResumeIDs with options = %#v", got)
+	}
 }

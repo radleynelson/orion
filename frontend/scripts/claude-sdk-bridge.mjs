@@ -371,7 +371,10 @@ function normalizeAssistantEvent(event) {
     const toolName = String(block.name || 'Tool');
     const input = block.input && typeof block.input === 'object' ? block.input : {};
     if (normalize(toolName) === 'exitplanmode') {
-      const plan = String(input.plan || '').trim() || compact(input);
+      const plan = String(input.plan || '').trim();
+      if (!plan) {
+        continue;
+      }
       messages.push({
         id: `claude-${toolUseId}:plan`,
         type: 'plan',
@@ -424,10 +427,24 @@ function normalizeAssistantEvent(event) {
 }
 
 function normalizeUserEvent(event) {
-  const content = Array.isArray(event?.message?.content) ? event.message.content : [];
   const messages = [];
   const texts = [];
   const attachments = [];
+  const rawContent = event?.message?.content;
+  if (typeof rawContent === 'string') {
+    const text = rawContent.trim();
+    if (text) {
+      messages.push({
+        id: `claude-${event.uuid}:user`,
+        type: 'user',
+        role: 'user',
+        text,
+        attachments,
+      });
+    }
+    return messages;
+  }
+  const content = Array.isArray(rawContent) ? rawContent : [];
   for (const block of content) {
     const blockType = normalize(block?.type);
     if (blockType === 'text') {

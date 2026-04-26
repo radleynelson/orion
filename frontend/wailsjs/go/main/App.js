@@ -194,6 +194,10 @@ export function LaunchClaudeChat(arg1, arg2) {
   return window['go']['main']['App']['LaunchClaudeChat'](arg1, arg2);
 }
 
+export function LaunchClaudeChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['LaunchClaudeChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function LaunchCodexChat(arg1, arg2) {
   return window['go']['main']['App']['LaunchCodexChat'](arg1, arg2);
 }

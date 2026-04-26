@@ -333,11 +333,8 @@ func ParseResumeIDs(command string) []string {
 	for i, field := range fields {
 		switch {
 		case field == "resume":
-			for j := i + 1; j < len(fields); j++ {
-				if !strings.HasPrefix(fields[j], "-") {
-					ids = append(ids, strings.TrimSpace(fields[j]))
-					break
-				}
+			if id := resumePositionalID(fields[i+1:]); id != "" {
+				ids = append(ids, id)
 			}
 		case field == "--resume" || field == "-r":
 			if i+1 < len(fields) && !strings.HasPrefix(fields[i+1], "-") {
@@ -348,6 +345,29 @@ func ParseResumeIDs(command string) []string {
 		}
 	}
 	return ids
+}
+
+func resumePositionalID(fields []string) string {
+	for i := len(fields) - 1; i >= 0; i-- {
+		field := strings.TrimSpace(fields[i])
+		if field == "" || strings.HasPrefix(field, "-") {
+			continue
+		}
+		if i > 0 && resumeFlagConsumesValue(fields[i-1]) {
+			continue
+		}
+		return field
+	}
+	return ""
+}
+
+func resumeFlagConsumesValue(field string) bool {
+	switch strings.TrimSpace(field) {
+	case "-m", "--model", "-c", "--config", "-s", "--sandbox", "-C", "--cd", "--profile":
+		return true
+	default:
+		return false
+	}
 }
 
 func loadHistoryFromFile(path string, threadID string, workspacePath string) []Message {

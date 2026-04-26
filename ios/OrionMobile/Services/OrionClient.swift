@@ -26,8 +26,13 @@ actor OrionClient {
     }
     func createTerminal(tmuxSession: String) async throws -> CreateTerminalResponse { try await post("/api/terminal", body: ["tmuxSession": tmuxSession]) }
     func launchShell(repoRoot: String, workspacePath: String) async throws -> LaunchShellResponse { try await post("/api/shell", body: ["repoRoot": repoRoot, "workspacePath": workspacePath]) }
-    func convertChatToTerminal(repoRoot: String, workspacePath: String, sessionId: String, chatKind: String) async throws -> LaunchAgentResponse {
-        try await post("/api/convert-chat-to-terminal", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "sessionId": sessionId, "chatKind": chatKind])
+    func convertChatToTerminal(repoRoot: String, workspacePath: String, sessionId: String, chatKind: String, model: String? = nil, reasoningEffort: String? = nil, permissionMode: String? = nil, collaborationMode: String? = nil) async throws -> LaunchAgentResponse {
+        var body = ["repoRoot": repoRoot, "workspacePath": workspacePath, "sessionId": sessionId, "chatKind": chatKind]
+        if let model, !model.isEmpty { body["model"] = model }
+        if let reasoningEffort, !reasoningEffort.isEmpty { body["reasoningEffort"] = reasoningEffort }
+        if let permissionMode, !permissionMode.isEmpty { body["permissionMode"] = permissionMode }
+        if let collaborationMode, !collaborationMode.isEmpty { body["collaborationMode"] = collaborationMode }
+        return try await post("/api/convert-chat-to-terminal", body: body)
     }
 
     // Agents
@@ -36,15 +41,17 @@ actor OrionClient {
         try await post("/api/agent", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "agentType": agentType])
     }
 
-    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: CodexLaunchOptions = CodexLaunchOptions()) async throws -> LaunchCodexChatResponse {
+    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: CodexLaunchOptions? = CodexLaunchOptions()) async throws -> LaunchCodexChatResponse {
         var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
-        body["model"] = options.model
-        body["reasoningEffort"] = options.reasoningEffort
-        body["approvalPolicy"] = options.approvalPolicy
-        body["sandboxMode"] = options.sandboxMode
-        body["collaborationMode"] = options.collaborationMode
+        if let options {
+            body["model"] = options.model
+            body["reasoningEffort"] = options.reasoningEffort
+            body["approvalPolicy"] = options.approvalPolicy
+            body["sandboxMode"] = options.sandboxMode
+            body["collaborationMode"] = options.collaborationMode
+        }
         return try await post("/api/codex-chat", body: body)
     }
 
@@ -52,10 +59,15 @@ actor OrionClient {
         try await get("/api/codex-chat/history", query: ["workspace": workspacePath, "limit": String(limit)])
     }
 
-    func launchClaudeChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil) async throws -> LaunchClaudeChatResponse {
+    func launchClaudeChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: ClaudeLaunchOptions? = nil) async throws -> LaunchClaudeChatResponse {
         var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        if let model = options?.model, !model.isEmpty { body["model"] = model }
+        if let reasoningEffort = options?.reasoningEffort, !reasoningEffort.isEmpty { body["reasoningEffort"] = reasoningEffort }
+        if let approvalPolicy = options?.approvalPolicy, !approvalPolicy.isEmpty { body["approvalPolicy"] = approvalPolicy }
+        if let sandboxMode = options?.sandboxMode, !sandboxMode.isEmpty { body["sandboxMode"] = sandboxMode }
+        if let permissionMode = options?.permissionMode, !permissionMode.isEmpty { body["permissionMode"] = permissionMode }
         return try await post("/api/claude-chat", body: body)
     }
 
