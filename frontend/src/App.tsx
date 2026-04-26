@@ -11,7 +11,6 @@ import CommandPalette, { CommandPaletteItem } from './components/CommandPalette'
 import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
 import AgentSigil from './components/AgentSigil';
 import OrionMark from './components/OrionMark';
-import AgentLauncher, { AgentDock } from './components/AgentLauncher';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -310,8 +309,6 @@ function App() {
   const [searchEverywhereVisible, setSearchEverywhereVisible] = useState(false);
   const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
   const [newTabPickerVisible, setNewTabPickerVisible] = useState(false);
-  const [agentLauncherVisible, setAgentLauncherVisible] = useState(false);
-  const [agentLauncherKind, setAgentLauncherKind] = useState<'codex-chat' | 'claude-chat' | 'shell' | `agent:${string}`>('codex-chat');
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -326,16 +323,7 @@ function App() {
   const openCommandPalette = useCallback(() => {
     setSearchEverywhereVisible(false);
     setNewTabPickerVisible(false);
-    setAgentLauncherVisible(false);
     setCommandPaletteVisible(true);
-  }, []);
-
-  const openAgentLauncher = useCallback((kind: 'codex-chat' | 'claude-chat' | 'shell' | `agent:${string}` = 'codex-chat') => {
-    setSearchEverywhereVisible(false);
-    setCommandPaletteVisible(false);
-    setNewTabPickerVisible(false);
-    setAgentLauncherKind(kind);
-    setAgentLauncherVisible(true);
   }, []);
 
   useEffect(() => {
@@ -799,11 +787,6 @@ function App() {
         setCommandPaletteVisible(false);
         return;
       }
-      if (agentLauncherVisible && e.key === 'Escape') {
-        e.preventDefault();
-        setAgentLauncherVisible(false);
-        return;
-      }
       // Cmd+K / Cmd+Shift+P: command palette
       if (e.metaKey && ((!e.shiftKey && e.key.toLowerCase() === 'k') || (e.shiftKey && e.key.toLowerCase() === 'p'))) {
         e.preventDefault();
@@ -811,14 +794,7 @@ function App() {
         openCommandPalette();
         return;
       }
-      // Cmd+Shift+A: agent launcher
-      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'a') {
-        e.preventDefault();
-        e.stopPropagation();
-        openAgentLauncher();
-        return;
-      }
-      // Cmd+T: open New Tab picker (pick shell / claude / codex)
+      // Cmd+T: open New Session picker (pick shell / claude / codex)
       if (e.metaKey && !e.shiftKey && e.key === 't') {
         e.preventDefault();
         setNewTabPickerVisible(true);
@@ -955,12 +931,10 @@ function App() {
     activeTabId,
     activeTabs,
     activeWorkspacePath,
-    agentLauncherVisible,
     commandPaletteVisible,
     detachPane,
     handleClosePane,
     handleSplit,
-    openAgentLauncher,
     navigatePane,
     openCommandPalette,
     rotateSplit,
@@ -1116,19 +1090,8 @@ function App() {
 
     const commands: CommandPaletteItem[] = [
       {
-        id: 'agent-launcher',
-        title: 'Agent Launcher',
-        subtitle: 'Start or resume Codex, Claude, agents, and shells',
-        group: 'Agents',
-        icon: 'codex-chat',
-        shortcut: '⌘⇧A',
-        keywords: ['launcher', 'resume', 'history', 'model', 'reasoning'],
-        disabled: !hasActiveWorkspace,
-        run: () => openAgentLauncher(),
-      },
-      {
         id: 'new-tab',
-        title: 'New Tab',
+        title: 'New Session',
         subtitle: 'Pick Shell, Claude, Codex, or another configured agent',
         group: 'Create',
         icon: 'shell',
@@ -1364,7 +1327,6 @@ function App() {
     launchAgentTab,
     launchClaudeChatTab,
     launchCodexChatTab,
-    openAgentLauncher,
     openActiveWorkspaceInBrowser,
     openDiagnostics,
     openNewWorkspaceFlow,
@@ -1406,7 +1368,7 @@ function App() {
         <ActivityBar onOpenDiagnostics={openDiagnostics} diagnosticsActive={diagnosticsActive} />
         {sidebarMode && (
           <div className="sidebar-container" style={{ width: sidebarWidth }}>
-            {sidebarMode === 'workspaces' && <Sidebar />}
+            {sidebarMode === 'workspaces' && <Sidebar onNewSession={() => setNewTabPickerVisible(true)} />}
             {sidebarMode === 'files' && <FileExplorer />}
             {sidebarMode === 'search' && <GlobalSearch />}
             <div
@@ -1437,11 +1399,6 @@ function App() {
         )}
 
         <div className="workspace-area">
-          <AgentDock
-            activeWorkspace={activeWorkspace}
-            activeTabs={activeTabs}
-            onOpen={openAgentLauncher}
-          />
           <div
             className="terminal-area"
             style={{ width: codeReviewVisible ? `${100 - codeReviewWidth}%` : '100%' }}
@@ -1553,7 +1510,7 @@ function App() {
                 </span>
               </div>
             ))}
-            <div className="tab-add" onClick={() => setNewTabPickerVisible(true)} title="New tab (⌘T)">
+            <div className="tab-add" onClick={() => setNewTabPickerVisible(true)} title="New session (⌘T)">
               +
             </div>
           </div>
@@ -1705,21 +1662,11 @@ function App() {
         onClose={() => setCommandPaletteVisible(false)}
       />
 
-      {/* New tab picker (⌘T) */}
+      {/* New session picker (⌘T) */}
       <NewTabPicker
         visible={newTabPickerVisible}
         onClose={() => setNewTabPickerVisible(false)}
         onPick={handleNewTabPick}
-      />
-
-      <AgentLauncher
-        visible={agentLauncherVisible}
-        initialKind={agentLauncherKind}
-        project={project}
-        workspaces={workspaces}
-        activeWorkspacePath={activeWorkspacePath}
-        agentTypes={agentTypes}
-        onClose={() => setAgentLauncherVisible(false)}
       />
 
       {/* Context menu */}

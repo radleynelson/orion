@@ -61,7 +61,7 @@ export default function NewTabPicker({ visible, onClose, onPick }: Props) {
   return (
     <div className="search-overlay" onClick={onClose}>
       <div className="switcher-modal new-tab-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="switcher-title">New Tab</div>
+        <div className="switcher-title">New Session</div>
         {options.map((opt, i) => (
           <div
             key={keyFor(opt)}

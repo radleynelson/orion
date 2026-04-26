@@ -24,9 +24,12 @@ import {
   GetWorkspaceEnv,
   AllocatePorts,
 } from '../../wailsjs/go/main/App';
-import AgentSigil from './AgentSigil';
 import OrionMark from './OrionMark';
 import WorkspaceDetailPanel from './WorkspaceDetailPanel';
+
+interface SidebarProps {
+  onNewSession: () => void;
+}
 
 type CodexLaunchOptions = {
   model: string;
@@ -76,25 +79,7 @@ const REASONING_EFFORTS = [
   { value: 'xhigh', label: 'Extra high' },
 ];
 
-const APPROVAL_POLICIES = [
-  { value: 'never', label: 'Full access' },
-  { value: 'on-request', label: 'Ask first' },
-  { value: 'on-failure', label: 'On failure' },
-  { value: 'untrusted', label: 'Untrusted' },
-];
-
-const SANDBOX_MODES = [
-  { value: 'danger-full-access', label: 'Workspace + network' },
-  { value: 'workspace-write', label: 'Workspace write' },
-  { value: 'read-only', label: 'Read only' },
-];
-
-const COLLABORATION_MODES = [
-  { value: 'default', label: 'Default' },
-  { value: 'plan', label: 'Plan first' },
-];
-
-export default function Sidebar() {
+export default function Sidebar({ onNewSession }: SidebarProps) {
   const {
     project,
     setProject,
@@ -119,8 +104,6 @@ export default function Sidebar() {
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
-  const [codexLaunch, setCodexLaunch] = useState<{ workspacePath: string; options: CodexLaunchOptions } | null>(null);
-  const [launchingCodexChat, setLaunchingCodexChat] = useState(false);
 
   // Init is handled by App.tsx (which never unmounts)
 
@@ -308,16 +291,8 @@ export default function Sidebar() {
     }
   }, [project, agentTypes, addTab]);
 
-  const updateCodexLaunchOption = useCallback((key: keyof CodexLaunchOptions, value: string) => {
-    setCodexLaunch((current) => current ? {
-      ...current,
-      options: { ...current.options, [key]: value },
-    } : current);
-  }, []);
-
   const handleLaunchCodexChat = useCallback(async (wsPath: string, options: CodexLaunchOptions = DEFAULT_CODEX_OPTIONS) => {
     if (!project) return;
-    setLaunchingCodexChat(true);
     try {
       const session = await LaunchCodexChatWithOptions(
         project.root,
@@ -344,13 +319,10 @@ export default function Sidebar() {
         sandboxMode: session.sandboxMode,
         collaborationMode: session.collaborationMode,
       });
-      setCodexLaunch(null);
       return session;
     } catch (err) {
       console.error('Failed to launch Codex chat:', err);
       throw err;
-    } finally {
-      setLaunchingCodexChat(false);
     }
   }, [project, addTab]);
 
@@ -379,7 +351,7 @@ export default function Sidebar() {
       console.error('Failed to launch Claude chat:', err);
       throw err;
     }
-  }, [project, addServerTab]);
+  }, [project, addTab]);
 
   const handleLaunchShell = useCallback(async (wsPath: string) => {
     if (!project) return;
@@ -464,7 +436,7 @@ export default function Sidebar() {
     } catch (err) {
       console.error('Failed to start servers:', err);
     }
-  }, [project, addTab]);
+  }, [project, addServerTab]);
 
   const handleStopServers = useCallback(async (wsPath: string) => {
     if (!project) return;
@@ -482,15 +454,6 @@ export default function Sidebar() {
       }
     } catch (err) {
       console.error('Failed to stop servers:', err);
-    }
-  }, [project]);
-
-  const handleOpenBrowser = useCallback(async (wsPath: string) => {
-    if (!project) return;
-    try {
-      await OpenBrowser(project.root, wsPath);
-    } catch (err) {
-      console.error('Failed to open browser:', err);
     }
   }, [project]);
 
@@ -584,11 +547,12 @@ export default function Sidebar() {
           const wsHasAgent = tabs.some(
             (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex'),
           );
+          const active = ws.path === activeWorkspacePath;
 
           return (
             <div key={ws.path}>
               <div
-                className={`sidebar-item ${ws.path === activeWorkspacePath ? 'active' : ''}`}
+                className={`sidebar-item ${active ? 'active' : ''}`}
                 onClick={() => {
                   setActiveWorkspace(ws.path);
                   // Pre-allocate ports so agents/shells know them immediately
@@ -620,33 +584,19 @@ export default function Sidebar() {
                   </span>
                 )}
               </div>
-
+              {active && (
+                <WorkspaceDetailPanel
+                  workspace={ws}
+                  serverStatuses={serverStatuses[ws.path] || []}
+                  envVars={envVars}
+                  onStartServers={handleStartServers}
+                  onStopServers={handleStopServers}
+                  onNewSession={onNewSession}
+                />
+              )}
             </div>
           );
         })}
-
-        {activeWorkspacePath && (
-          (() => {
-            const activeWorkspace = workspaces.find((ws) => ws.path === activeWorkspacePath);
-            if (!activeWorkspace) return null;
-            return (
-              <WorkspaceDetailPanel
-                project={project}
-                workspace={activeWorkspace}
-                serverStatuses={serverStatuses[activeWorkspace.path] || []}
-                envVars={envVars}
-                agentTypes={agentTypes}
-                onLaunchAgent={handleLaunchAgent}
-                onLaunchCodexOptions={(workspacePath) => setCodexLaunch({ workspacePath, options: DEFAULT_CODEX_OPTIONS })}
-                onLaunchClaudeChat={handleLaunchClaudeChat}
-                onLaunchShell={handleLaunchShell}
-                onStartServers={handleStartServers}
-                onStopServers={handleStopServers}
-                onOpenBrowser={handleOpenBrowser}
-              />
-            );
-          })()
-        )}
 
         {creating && (
           <div className="workspace-create-overlay" onMouseDown={() => !creatingWorkspace && setCreating(false)}>
@@ -733,84 +683,9 @@ export default function Sidebar() {
             </div>
           </div>
         )}
-
-        {codexLaunch && (
-          <div className="codex-launch-overlay" onMouseDown={() => setCodexLaunch(null)}>
-            <div className="codex-launch-sheet" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="codex-launch-header">
-                <div className="codex-launch-title">
-                  <AgentSigil id="codex" size={28} strong />
-                  <div>
-                    <div>Start Codex Chat</div>
-                    <span>{workspaceLabel(workspaces.find((ws) => ws.path === codexLaunch.workspacePath))}</span>
-                  </div>
-                </div>
-                <button type="button" onClick={() => setCodexLaunch(null)}>×</button>
-              </div>
-
-              <div className="codex-launch-grid">
-                <label>
-                  <span>Model</span>
-                  <select value={codexLaunch.options.model} onChange={(e) => updateCodexLaunchOption('model', e.target.value)}>
-                    {CODEX_MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>Reasoning</span>
-                  <select value={codexLaunch.options.reasoningEffort} onChange={(e) => updateCodexLaunchOption('reasoningEffort', e.target.value)}>
-                    {REASONING_EFFORTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>Approvals</span>
-                  <select value={codexLaunch.options.approvalPolicy} onChange={(e) => updateCodexLaunchOption('approvalPolicy', e.target.value)}>
-                    {APPROVAL_POLICIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>Sandbox</span>
-                  <select value={codexLaunch.options.sandboxMode} onChange={(e) => updateCodexLaunchOption('sandboxMode', e.target.value)}>
-                    {SANDBOX_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-                <label className="codex-launch-wide">
-                  <span>Mode</span>
-                  <select value={codexLaunch.options.collaborationMode} onChange={(e) => updateCodexLaunchOption('collaborationMode', e.target.value)}>
-                    {COLLABORATION_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-              </div>
-
-              <div className="codex-launch-summary">
-                <span>{codexLaunch.options.model}</span>
-                <span>{codexLaunch.options.reasoningEffort}</span>
-                <span>{codexLaunch.options.approvalPolicy === 'never' ? 'full access' : codexLaunch.options.approvalPolicy}</span>
-                <span>{codexLaunch.options.sandboxMode === 'danger-full-access' ? 'workspace + network' : codexLaunch.options.sandboxMode}</span>
-                <span>{codexLaunch.options.collaborationMode}</span>
-              </div>
-
-              <div className="codex-launch-actions">
-                <button type="button" onClick={() => setCodexLaunch(null)}>Cancel</button>
-                <button
-                  type="button"
-                  className="codex-launch-primary"
-                  disabled={launchingCodexChat}
-                  onClick={() => handleLaunchCodexChat(codexLaunch.workspacePath, codexLaunch.options)}
-                >
-                  {launchingCodexChat ? 'Starting' : 'Start chat'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
-}
-
-function workspaceLabel(ws?: { name?: string; branch?: string; path?: string }): string {
-  if (!ws) return 'Active workspace';
-  return ws.branch || ws.name || ws.path || 'Active workspace';
 }
 
 function workspaceBaseRefs(mainBranch: string | undefined, workspaces: { branch?: string }[]): string[] {
