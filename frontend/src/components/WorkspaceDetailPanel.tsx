@@ -37,8 +37,8 @@ export default function WorkspaceDetailPanel({
   const envEntries = useMemo(() => Object.entries(envVars), [envVars]);
 
   useEffect(() => {
-    setEnvVisible(envEntries.length > 0);
-  }, [envEntries.length, workspace.path]);
+    setEnvVisible(false);
+  }, [workspace.path]);
 
   const openTab = useCallback((tab: Tab) => {
     setActiveWorkspace(tab.workspacePath);
