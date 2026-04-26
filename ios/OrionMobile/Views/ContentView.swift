@@ -130,6 +130,8 @@ struct HeaderBar: View {
     @Environment(AppState.self) private var state
     @State private var serverStatuses: [ServerStatus] = []
     @State private var isChangingServers = false
+    @State private var diffStats: DiffStats?
+    @State private var isLoadingDiffStats = false
 
     private var activeWorkspace: Workspace? { state.activeWorkspace }
     private var runningServers: [ServerStatus] { serverStatuses.filter(\.running) }
@@ -155,7 +157,7 @@ struct HeaderBar: View {
             Button {
                 state.showDiffReview = true
             } label: {
-                HeaderPill(systemImage: "doc.text.magnifyingglass", title: "Diff", tint: OrionTheme.accentBlue)
+                DiffHeaderPill(stats: diffStats, isLoading: isLoadingDiffStats)
             }
             .buttonStyle(.plain)
 
@@ -188,9 +190,14 @@ struct HeaderBar: View {
         .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
         .task(id: state.activeWorkspacePath) {
             await reloadServerStatuses()
+            await reloadDiffStats()
         }
         .onChange(of: state.sessions.count) { _, _ in
             Task { await reloadServerStatuses() }
+        }
+        .onChange(of: state.showDiffReview) { _, isShowing in
+            guard !isShowing else { return }
+            Task { await reloadDiffStats() }
         }
     }
 
@@ -257,6 +264,30 @@ struct HeaderBar: View {
         serverStatuses = await state.getServerStatuses(workspace: workspace)
     }
 
+    private func reloadDiffStats() async {
+        guard let workspace = activeWorkspace else {
+            diffStats = nil
+            return
+        }
+        let workspacePath = workspace.path
+        isLoadingDiffStats = true
+        defer { isLoadingDiffStats = false }
+
+        do {
+            let files = try await state.changedFiles(workspacePath: workspacePath)
+            var totals = DiffStats()
+            for file in files {
+                let diff = try await state.unifiedDiff(for: file, workspacePath: workspacePath)
+                totals.add(countDiffChanges(diff))
+            }
+            guard state.activeWorkspacePath == workspacePath else { return }
+            diffStats = totals.isEmpty ? nil : totals
+        } catch {
+            guard state.activeWorkspacePath == workspacePath else { return }
+            diffStats = nil
+        }
+    }
+
     private func toggleServers() async {
         guard let workspace = activeWorkspace else { return }
         isChangingServers = true
@@ -267,6 +298,53 @@ struct HeaderBar: View {
         }
         serverStatuses = await state.getServerStatuses(workspace: workspace)
         isChangingServers = false
+    }
+}
+
+private struct DiffStats: Equatable {
+    var added = 0
+    var removed = 0
+
+    var isEmpty: Bool { added == 0 && removed == 0 }
+
+    mutating func add(_ other: DiffStats) {
+        added += other.added
+        removed += other.removed
+    }
+}
+
+private struct DiffHeaderPill: View {
+    let stats: DiffStats?
+    var isLoading = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(OrionTheme.accentBlue)
+            } else {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(OrionTheme.accentBlue)
+            }
+
+            if let stats {
+                Text("+\(stats.added)")
+                    .foregroundStyle(OrionTheme.accentGreen)
+                Text("-\(stats.removed)")
+                    .foregroundStyle(OrionTheme.accentRed)
+            } else {
+                Text("Diff")
+                    .foregroundStyle(OrionTheme.textSecondary)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold, design: stats == nil ? .default : .monospaced))
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(OrionTheme.bgSurface)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.7))
     }
 }
 
@@ -2562,6 +2640,19 @@ private func parseMobileDiff(_ raw: String) -> [MobileDiffLine] {
             return MobileDiffLine(kind: .delete, text: String(line.dropFirst()))
         }
         return MobileDiffLine(kind: .context, text: line.hasPrefix(" ") ? String(line.dropFirst()) : line)
+    }
+}
+
+private func countDiffChanges(_ raw: String) -> DiffStats {
+    raw.split(separator: "\n", omittingEmptySubsequences: false).reduce(DiffStats()) { partial, part in
+        let line = String(part)
+        var next = partial
+        if line.hasPrefix("+"), !line.hasPrefix("+++ ") {
+            next.added += 1
+        } else if line.hasPrefix("-"), !line.hasPrefix("--- ") {
+            next.removed += 1
+        }
+        return next
     }
 }
 

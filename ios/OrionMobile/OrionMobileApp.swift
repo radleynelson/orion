@@ -242,8 +242,8 @@ final class AppState {
         return try await client.getChangedFiles(workspacePath: workspacePath, base: base)
     }
 
-    func unifiedDiff(for file: GitChangedFile, base: String = "") async throws -> String {
-        guard let client, let workspacePath = activeWorkspacePath else { return "" }
+    func unifiedDiff(for file: GitChangedFile, workspacePath explicitWorkspacePath: String? = nil, base: String = "") async throws -> String {
+        guard let client, let workspacePath = explicitWorkspacePath ?? activeWorkspacePath else { return "" }
         return try await client.getUnifiedDiff(workspacePath: workspacePath, base: base, filePath: file.path)
     }
 
