@@ -35,6 +35,15 @@ func TestEnsureDefaultFileCreatesOrionTomlWithoutModels(t *testing.T) {
 	if got := strings.TrimSpace(cfg.Agents["claude"].Model); got != "" {
 		t.Fatalf("Claude model = %q, want empty", got)
 	}
+	if got := strings.TrimSpace(cfg.Agents["claude"].Command); got != "claude --dangerously-skip-permissions" {
+		t.Fatalf("Claude command = %q, want minimal full-permission command", got)
+	}
+	if got := strings.TrimSpace(cfg.Agents["claude"].ReasoningEffort); got != "" {
+		t.Fatalf("Claude reasoning effort = %q, want empty", got)
+	}
+	if got := strings.TrimSpace(cfg.Agents["claude"].SandboxMode); got != "" {
+		t.Fatalf("Claude sandbox mode = %q, want empty", got)
+	}
 	if got := strings.TrimSpace(cfg.Agents["codex"].Model); got != "" {
 		t.Fatalf("Codex model = %q, want empty", got)
 	}

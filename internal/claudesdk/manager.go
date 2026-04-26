@@ -23,14 +23,11 @@ import (
 )
 
 const (
-	SessionType            = "claude-chat"
-	Provider               = "claude"
-	ViewModeChat           = "chat"
-	ViewModeTerminal       = "terminal"
-	defaultReasoningEffort = "xhigh"
-	defaultApprovalPolicy  = "never"
-	defaultSandboxMode     = "danger-full-access"
-	defaultPermissionMode  = "bypassPermissions"
+	SessionType           = "claude-chat"
+	Provider              = "claude"
+	ViewModeChat          = "chat"
+	ViewModeTerminal      = "terminal"
+	defaultPermissionMode = "bypassPermissions"
 )
 
 type SessionInfo struct {
@@ -244,17 +241,8 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 	}
 	model := strings.TrimSpace(options.Model)
 	reasoningEffort := strings.TrimSpace(options.ReasoningEffort)
-	if reasoningEffort == "" {
-		reasoningEffort = defaultReasoningEffort
-	}
 	approvalPolicy := strings.TrimSpace(options.ApprovalPolicy)
-	if approvalPolicy == "" {
-		approvalPolicy = defaultApprovalPolicy
-	}
 	sandboxMode := strings.TrimSpace(options.SandboxMode)
-	if sandboxMode == "" {
-		sandboxMode = defaultSandboxMode
-	}
 	permissionMode := strings.TrimSpace(options.PermissionMode)
 	if permissionMode == "" {
 		permissionMode = defaultPermissionMode
@@ -279,14 +267,20 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		script,
 		"--workspace", workspacePath,
 		"--label", label,
-		"--effort", reasoningEffort,
-		"--approval-policy", approvalPolicy,
-		"--sandbox-mode", sandboxMode,
 		"--permission-mode", permissionMode,
 		"--claude-path", claudeExecutable,
 	}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if reasoningEffort != "" {
+		args = append(args, "--effort", reasoningEffort)
+	}
+	if approvalPolicy != "" {
+		args = append(args, "--approval-policy", approvalPolicy)
+	}
+	if sandboxMode != "" {
+		args = append(args, "--sandbox-mode", sandboxMode)
 	}
 	if threadID != "" {
 		args = append(args, "--resume", threadID)

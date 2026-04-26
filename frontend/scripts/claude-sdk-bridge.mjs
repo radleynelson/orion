@@ -14,9 +14,9 @@ const args = parseArgs(process.argv.slice(2));
 const workspacePath = requiredArg('workspace');
 const label = args.label || 'Claude Chat';
 const model = args.model || '';
-const reasoningEffort = args.effort || 'xhigh';
-const approvalPolicy = args['approval-policy'] || 'never';
-const sandboxMode = args['sandbox-mode'] || 'danger-full-access';
+const reasoningEffort = args.effort || '';
+const approvalPolicy = args['approval-policy'] || '';
+const sandboxMode = args['sandbox-mode'] || '';
 const permissionMode = args['permission-mode'] || 'bypassPermissions';
 const claudePath = args['claude-path'] || 'claude';
 const resumeThreadId = args.resume || '';
@@ -71,7 +71,6 @@ function sessionOptions() {
   const options = {
     cwd: workspacePath,
     pathToClaudeCodeExecutable: claudePath,
-    effort: reasoningEffort,
     permissionMode: currentPermissionMode,
     allowDangerouslySkipPermissions: true,
     settingSources: ['user', 'project', 'local'],
@@ -98,6 +97,9 @@ function sessionOptions() {
   };
   if (model) {
     options.model = model;
+  }
+  if (reasoningEffort) {
+    options.effort = reasoningEffort;
   }
   return options;
 }

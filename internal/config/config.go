@@ -152,11 +152,8 @@ copy = [
 [agents.claude]
 label = "Claude"
 provider = "claude"
-command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
-reasoning_effort = "xhigh"
-approval_policy = "never"
+command = "claude --dangerously-skip-permissions"
 permission_mode = "bypassPermissions"
-sandbox_mode = "danger-full-access"
 
 [agents.codex]
 label = "Codex"
@@ -243,16 +240,7 @@ func normalizeAgent(name string, agent AgentConfig) AgentConfig {
 	switch provider {
 	case "claude":
 		if strings.TrimSpace(agent.Command) == "" {
-			agent.Command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
-		}
-		if strings.TrimSpace(agent.ReasoningEffort) == "" {
-			agent.ReasoningEffort = "xhigh"
-		}
-		if strings.TrimSpace(agent.ApprovalPolicy) == "" {
-			agent.ApprovalPolicy = "never"
-		}
-		if strings.TrimSpace(agent.SandboxMode) == "" {
-			agent.SandboxMode = "danger-full-access"
+			agent.Command = "claude --dangerously-skip-permissions"
 		}
 		if strings.TrimSpace(agent.PermissionMode) == "" {
 			agent.PermissionMode = "bypassPermissions"

@@ -252,7 +252,7 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	} else {
 		switch agentType {
 		case "claude":
-			agentCmd = "claude --dangerously-skip-permissions --effort xhigh --chrome"
+			agentCmd = "claude --dangerously-skip-permissions"
 			agentProvider = "claude"
 			agentLabel = "Claude"
 		case "codex":

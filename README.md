@@ -79,10 +79,8 @@ NEXT_PUBLIC_API_URL = "http://localhost:{{backend.port}}/api/"
 [agents.claude]
 label = "Claude"
 provider = "claude"
-command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
-reasoning_effort = "xhigh"
+command = "claude --dangerously-skip-permissions"
 permission_mode = "bypassPermissions"
-sandbox_mode = "danger-full-access"
 
 [agents.codex]
 label = "Codex"
