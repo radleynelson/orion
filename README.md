@@ -38,7 +38,7 @@ On first launch, click **"Open project..."** in the sidebar and select a git rep
 
 ## Configuration
 
-Create a `.orion.toml` in your project root to configure Orion for that repo. This is the canonical config file name; if you have an older `.orion.config.toml`, rename it to `.orion.toml`.
+Orion uses `.orion.toml` in your project root to configure that repo. If you open a git repository that does not have `.orion.toml`, Orion creates a small default config with Claude and Codex agents enabled at full-permission settings. If the repo has an older `.orion.config.toml`, Orion can still read it, but new projects should use `.orion.toml`.
 
 ### Full Example
 
@@ -80,7 +80,6 @@ NEXT_PUBLIC_API_URL = "http://localhost:{{backend.port}}/api/"
 label = "Claude"
 provider = "claude"
 command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
-model = "claude-opus-4-7"
 reasoning_effort = "xhigh"
 permission_mode = "bypassPermissions"
 sandbox_mode = "danger-full-access"
@@ -89,7 +88,6 @@ sandbox_mode = "danger-full-access"
 label = "Codex"
 provider = "codex"
 command = "codex --dangerously-bypass-approvals-and-sandbox"
-model = "gpt-5.4"
 reasoning_effort = "xhigh"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
@@ -119,9 +117,11 @@ Desktop defaults to terminal when creating a configured agent. Mobile defaults C
 
 If you omit `provider`, Orion infers it only for agents named `claude` or `codex` for backward compatibility. Other command-only agents stay terminal-only.
 
+Model is optional. Leave `model` out to let Claude Code or Codex use their current default model; set it only when you intentionally want to pin a specific model for that project or agent.
+
 ### Backward Compatibility
 
-If no `.orion.toml` exists, Orion falls back to `.radconfig` (simple list of files to copy, one per line).
+If a repo only has `.radconfig` (simple list of files to copy, one per line), Orion uses that list to seed the generated `.orion.toml` credentials section.
 
 ### Port Behavior
 

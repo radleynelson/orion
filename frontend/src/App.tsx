@@ -55,7 +55,7 @@ import {
 } from '../wailsjs/go/main/App';
 
 const DEFAULT_CODEX_CHAT_OPTIONS = {
-  model: 'gpt-5.4',
+  model: '',
   reasoningEffort: 'xhigh',
   approvalPolicy: 'never',
   sandboxMode: 'danger-full-access',

@@ -27,7 +27,6 @@ const (
 	Provider               = "claude"
 	ViewModeChat           = "chat"
 	ViewModeTerminal       = "terminal"
-	defaultModel           = "claude-opus-4-7"
 	defaultReasoningEffort = "xhigh"
 	defaultApprovalPolicy  = "never"
 	defaultSandboxMode     = "danger-full-access"
@@ -244,9 +243,6 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		label = "Claude Chat"
 	}
 	model := strings.TrimSpace(options.Model)
-	if model == "" {
-		model = defaultModel
-	}
 	reasoningEffort := strings.TrimSpace(options.ReasoningEffort)
 	if reasoningEffort == "" {
 		reasoningEffort = defaultReasoningEffort
@@ -283,12 +279,14 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		script,
 		"--workspace", workspacePath,
 		"--label", label,
-		"--model", model,
 		"--effort", reasoningEffort,
 		"--approval-policy", approvalPolicy,
 		"--sandbox-mode", sandboxMode,
 		"--permission-mode", permissionMode,
 		"--claude-path", claudeExecutable,
+	}
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	if threadID != "" {
 		args = append(args, "--resume", threadID)

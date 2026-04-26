@@ -192,7 +192,7 @@ struct CodexHistoryThread: Codable, Identifiable {
 }
 
 struct CodexLaunchOptions: Codable, Equatable {
-    var model = "gpt-5.4"
+    var model = ""
     var reasoningEffort = "xhigh"
     var approvalPolicy = "never"
     var sandboxMode = "danger-full-access"

@@ -23,7 +23,6 @@ const (
 	Provider               = "codex"
 	ViewModeChat           = "chat"
 	ViewModeTerminal       = "terminal"
-	defaultModel           = "gpt-5.4"
 	defaultReasoningEffort = "xhigh"
 	defaultApprovalPolicy  = "never"
 	defaultSandboxMode     = "danger-full-access"
@@ -118,9 +117,6 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		label = "Codex Chat"
 	}
 	model := strings.TrimSpace(options.Model)
-	if model == "" {
-		model = defaultModel
-	}
 	reasoningEffort := strings.TrimSpace(options.ReasoningEffort)
 	if reasoningEffort == "" {
 		reasoningEffort = defaultReasoningEffort
@@ -427,18 +423,22 @@ func (s *Session) send(text string, attachments []chatattachments.Attachment, co
 		})
 	}
 
+	settings := map[string]any{
+		"reasoning_effort":       s.reasoningEffort,
+		"developer_instructions": nil,
+	}
+	if s.model != "" {
+		settings["model"] = s.model
+	}
+
 	params := map[string]any{
 		"threadId":       s.threadID,
 		"input":          input,
 		"approvalPolicy": s.approvalPolicy,
 		"effort":         s.reasoningEffort,
 		"collaborationMode": map[string]any{
-			"mode": collaborationMode,
-			"settings": map[string]any{
-				"model":                  s.model,
-				"reasoning_effort":       s.reasoningEffort,
-				"developer_instructions": nil,
-			},
+			"mode":     collaborationMode,
+			"settings": settings,
 		},
 	}
 
@@ -528,10 +528,12 @@ func (s *Session) bootstrap() error {
 		"cwd":                    s.workspacePath,
 		"approvalPolicy":         s.approvalPolicy,
 		"sandbox":                s.sandboxMode,
-		"model":                  s.model,
 		"effort":                 s.reasoningEffort,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if s.model != "" {
+		params["model"] = s.model
 	}
 	if s.threadID != "" {
 		method = "thread/resume"

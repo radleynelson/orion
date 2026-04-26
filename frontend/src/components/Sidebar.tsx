@@ -49,7 +49,7 @@ type NewWorkspaceDraft = {
 };
 
 const DEFAULT_CODEX_OPTIONS: CodexLaunchOptions = {
-  model: 'gpt-5.4',
+  model: '',
   reasoningEffort: 'xhigh',
   approvalPolicy: 'never',
   sandboxMode: 'danger-full-access',
@@ -80,6 +80,7 @@ function codexOptionsForAgent(agent?: main.AgentTypeInfo): CodexLaunchOptions {
 }
 
 const CODEX_MODELS = [
+  { value: '', label: 'Default' },
   { value: 'gpt-5.5', label: 'GPT-5.5' },
   { value: 'gpt-5.4', label: 'GPT-5.4' },
   { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },

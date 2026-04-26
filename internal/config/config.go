@@ -1,11 +1,18 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+)
+
+const (
+	FileName       = ".orion.toml"
+	LegacyFileName = ".orion.config.toml"
 )
 
 // OrionConfig represents the per-repo .orion.toml configuration.
@@ -42,11 +49,17 @@ type AgentConfig struct {
 }
 
 // Load reads .orion.toml from a repo root.
-// Falls back to .radconfig for backward compatibility.
+// Falls back to legacy .orion.config.toml and .radconfig for backward compatibility.
 func Load(repoRoot string) *OrionConfig {
 	// Try .orion.toml first
-	tomlPath := filepath.Join(repoRoot, ".orion.toml")
+	tomlPath := filepath.Join(repoRoot, FileName)
 	if cfg, err := loadTOML(tomlPath); err == nil {
+		return cfg
+	}
+
+	// Fall back to the old config name if a repo already has one.
+	legacyPath := filepath.Join(repoRoot, LegacyFileName)
+	if cfg, err := loadTOML(legacyPath); err == nil {
 		return cfg
 	}
 
@@ -63,6 +76,97 @@ func Load(repoRoot string) *OrionConfig {
 		},
 		Agents: defaultAgents(),
 	}
+}
+
+func HasProjectConfig(repoRoot string) bool {
+	for _, name := range []string{FileName, LegacyFileName} {
+		if _, err := os.Stat(filepath.Join(repoRoot, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func EnsureDefaultFile(repoRoot string) (bool, error) {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return false, fmt.Errorf("repo root required")
+	}
+	if HasProjectConfig(repoRoot) {
+		return false, nil
+	}
+	credentials := defaultCredentialFiles()
+	if cfg, err := loadRadConfig(filepath.Join(repoRoot, ".radconfig")); err == nil && len(cfg.Credentials.Copy) > 0 {
+		credentials = cfg.Credentials.Copy
+	}
+	path := filepath.Join(repoRoot, FileName)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer file.Close()
+	if _, err := file.WriteString(defaultFileContents(credentials)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func DefaultFileContents() string {
+	return defaultFileContents(defaultCredentialFiles())
+}
+
+func defaultCredentialFiles() []string {
+	return []string{".env", ".env.local", ".env.development", ".env.development.local"}
+}
+
+func defaultFileContents(credentials []string) string {
+	var credentialLines []string
+	for _, credential := range credentials {
+		credential = strings.TrimSpace(credential)
+		if credential == "" {
+			continue
+		}
+		credentialLines = append(credentialLines, "  "+strconv.Quote(credential)+",")
+	}
+	if len(credentialLines) == 0 {
+		credentialLines = []string{
+			`  ".env",`,
+			`  ".env.local",`,
+			`  ".env.development",`,
+			`  ".env.development.local",`,
+		}
+	}
+
+	return strings.TrimSpace(`# Orion project config.
+# Orion generated this file because the project did not have one yet.
+# Model is intentionally omitted so Claude/Codex use their current default.
+
+[credentials]
+copy = [
+`+strings.Join(credentialLines, "\n")+`
+]
+
+[agents.claude]
+label = "Claude"
+provider = "claude"
+command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
+reasoning_effort = "xhigh"
+approval_policy = "never"
+permission_mode = "bypassPermissions"
+sandbox_mode = "danger-full-access"
+
+[agents.codex]
+label = "Codex"
+provider = "codex"
+command = "codex --dangerously-bypass-approvals-and-sandbox"
+reasoning_effort = "xhigh"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+collaboration_mode = "default"
+`) + "\n"
 }
 
 func loadTOML(path string) (*OrionConfig, error) {
@@ -141,9 +245,6 @@ func normalizeAgent(name string, agent AgentConfig) AgentConfig {
 		if strings.TrimSpace(agent.Command) == "" {
 			agent.Command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
 		}
-		if strings.TrimSpace(agent.Model) == "" {
-			agent.Model = "claude-opus-4-7"
-		}
 		if strings.TrimSpace(agent.ReasoningEffort) == "" {
 			agent.ReasoningEffort = "xhigh"
 		}
@@ -159,9 +260,6 @@ func normalizeAgent(name string, agent AgentConfig) AgentConfig {
 	case "codex":
 		if strings.TrimSpace(agent.Command) == "" {
 			agent.Command = "codex --dangerously-bypass-approvals-and-sandbox"
-		}
-		if strings.TrimSpace(agent.Model) == "" {
-			agent.Model = "gpt-5.4"
 		}
 		if strings.TrimSpace(agent.ReasoningEffort) == "" {
 			agent.ReasoningEffort = "xhigh"

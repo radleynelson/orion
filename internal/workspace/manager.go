@@ -53,6 +53,9 @@ func (m *Manager) GetProjectInfo(path string) (*ProjectInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := config.EnsureDefaultFile(root); err != nil {
+		return nil, fmt.Errorf("create default %s: %w", config.FileName, err)
+	}
 	return &ProjectInfo{
 		Name:       filepath.Base(root),
 		Root:       root,

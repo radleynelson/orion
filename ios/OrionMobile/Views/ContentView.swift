@@ -956,7 +956,7 @@ private struct QuickAskSheet: View {
                     .pickerStyle(.segmented)
                     if provider == "codex-chat" {
                         Picker("Model", selection: $codexOptions.model) {
-                            ForEach(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
+                            ForEach(["", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
                                 Text(modelLabel($0)).tag($0)
                             }
                         }
@@ -1890,7 +1890,7 @@ private struct NewWorktreeSheet: View {
                     }
                     if draft.startWith == "codex-chat" {
                         Picker("Model", selection: $draft.codexOptions.model) {
-                            ForEach(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
+                            ForEach(["", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
                                 Text(modelLabel($0)).tag($0)
                             }
                         }
@@ -2202,7 +2202,7 @@ private struct CodexLaunchOptionsSheet: View {
     let onCancel: () -> Void
     let onLaunch: () -> Void
 
-    private let models = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+    private let models = ["", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
     private let efforts = ["low", "medium", "high", "xhigh"]
     private let approvals = ["never", "on-request", "on-failure", "untrusted"]
     private let sandboxes = ["danger-full-access", "workspace-write", "read-only"]
@@ -4423,6 +4423,7 @@ private func modeLabel(_ value: String?) -> String? {
 
 private func modelLabel(_ value: String) -> String {
     switch value {
+    case "": return "Default"
     case "gpt-5.4-mini": return "GPT-5.4 Mini"
     case "gpt-5.3-codex": return "GPT-5.3 Codex"
     case "gpt-5.3-codex-spark": return "GPT-5.3 Codex Spark"

@@ -13,7 +13,7 @@ const args = parseArgs(process.argv.slice(2));
 
 const workspacePath = requiredArg('workspace');
 const label = args.label || 'Claude Chat';
-const model = args.model || 'claude-opus-4-7';
+const model = args.model || '';
 const reasoningEffort = args.effort || 'xhigh';
 const approvalPolicy = args['approval-policy'] || 'never';
 const sandboxMode = args['sandbox-mode'] || 'danger-full-access';
@@ -68,10 +68,9 @@ async function main() {
 }
 
 function sessionOptions() {
-  return {
+  const options = {
     cwd: workspacePath,
     pathToClaudeCodeExecutable: claudePath,
-    model,
     effort: reasoningEffort,
     permissionMode: currentPermissionMode,
     allowDangerouslySkipPermissions: true,
@@ -97,6 +96,10 @@ function sessionOptions() {
       });
     },
   };
+  if (model) {
+    options.model = model;
+  }
+  return options;
 }
 
 async function consumeStream() {

@@ -46,7 +46,7 @@ actor OrionClient {
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
         if let options {
-            body["model"] = options.model
+            if !options.model.isEmpty { body["model"] = options.model }
             body["reasoningEffort"] = options.reasoningEffort
             body["approvalPolicy"] = options.approvalPolicy
             body["sandboxMode"] = options.sandboxMode
