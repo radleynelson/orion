@@ -38,7 +38,7 @@ On first launch, click **"Open project..."** in the sidebar and select a git rep
 
 ## Configuration
 
-Create a `.orion.toml` in your project root to configure Orion for that repo.
+Create a `.orion.toml` in your project root to configure Orion for that repo. This is the canonical config file name; if you have an older `.orion.config.toml`, rename it to `.orion.toml`.
 
 ### Full Example
 
@@ -74,20 +74,50 @@ dir = "backend"
 [servers.frontend.env]
 NEXT_PUBLIC_API_URL = "http://localhost:{{backend.port}}/api/"
 
-# Agent definitions — each becomes a sidebar button
+# Agent definitions. Claude/Codex agents are provider-aware: Orion can start
+# the same configured agent as either a terminal session or a chat session.
 [agents.claude]
-command = "claude --dangerously-skip-permissions"
+label = "Claude"
+provider = "claude"
+command = "claude --dangerously-skip-permissions --effort xhigh --chrome"
+model = "claude-opus-4-7"
+reasoning_effort = "xhigh"
+permission_mode = "bypassPermissions"
+sandbox_mode = "danger-full-access"
 
 [agents.codex]
+label = "Codex"
+provider = "codex"
 command = "codex --dangerously-bypass-approvals-and-sandbox"
+model = "gpt-5.4"
+reasoning_effort = "xhigh"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+collaboration_mode = "default"
 
-# Custom agents
+# Custom agents are terminal-only unless Orion learns their provider.
 [agents.reviewer]
+label = "Review"
 command = "claude --dangerously-skip-permissions --prompt 'Review code changes for bugs'"
 
 [agents.tests]
+label = "Tests"
 command = "./scripts/watch-tests.sh"
 ```
+
+### Agent Providers
+
+Agents are the source of truth for Claude, Codex, and custom launch behavior. `provider` tells Orion what kind of agent the entry represents:
+
+| Provider | Supported views | Behavior |
+|----------|-----------------|----------|
+| `claude` | terminal + chat | Terminal uses `command`; chat uses the Claude Code SDK bridge with the same model/reasoning/permission defaults. |
+| `codex` | terminal + chat | Terminal uses `command`; chat uses `codex app-server` with the same model/reasoning/approval defaults. |
+| unset/custom | terminal only | Orion runs `command` in tmux and does not offer chat conversion. |
+
+Desktop defaults to terminal when creating a configured agent. Mobile defaults Claude/Codex agents to chat. After a session exists, its current view is session state: switching from terminal to chat, or chat to terminal, is explicit and keeps the same provider thread when possible.
+
+If you omit `provider`, Orion infers it only for agents named `claude` or `codex` for backward compatibility. Other command-only agents stay terminal-only.
 
 ### Backward Compatibility
 

@@ -56,6 +56,21 @@ const DEFAULT_CODEX_CHAT_OPTIONS = {
   collaborationMode: 'default',
 };
 
+function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefined {
+  const provider = (agent?.provider || agent?.name || '').toLowerCase();
+  return provider === 'claude' || provider === 'codex' ? provider : undefined;
+}
+
+function codexOptionsForAgent(agent?: main.AgentTypeInfo) {
+  return {
+    model: agent?.model || DEFAULT_CODEX_CHAT_OPTIONS.model,
+    reasoningEffort: agent?.reasoningEffort || DEFAULT_CODEX_CHAT_OPTIONS.reasoningEffort,
+    approvalPolicy: agent?.approvalPolicy || DEFAULT_CODEX_CHAT_OPTIONS.approvalPolicy,
+    sandboxMode: agent?.sandboxMode || DEFAULT_CODEX_CHAT_OPTIONS.sandboxMode,
+    collaborationMode: agent?.collaborationMode || DEFAULT_CODEX_CHAT_OPTIONS.collaborationMode,
+  };
+}
+
 function App() {
   const {
     project,
@@ -383,18 +398,28 @@ function App() {
     }
   }, [activeWorkspacePath, tabs, addTab]);
 
-  const launchAgentTab = useCallback(async (agentName: string, label: string) => {
+  const launchAgentTab = useCallback(async (agent: main.AgentTypeInfo) => {
     if (!project || !activeWorkspacePath) return;
     try {
-      const tmuxSession = await LaunchAgent(project.root, activeWorkspacePath, agentName);
+      const tmuxSession = await LaunchAgent(project.root, activeWorkspacePath, agent.name);
       const termId = generateId('term');
       await CreateAttachedTerminal(termId, tmuxSession);
+      const provider = agentProvider(agent);
       addTab({
         id: generateId('tab'),
-        label,
+        label: agent.label,
         rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-        tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
+        tabType: provider || 'shell',
         workspacePath: activeWorkspacePath,
+        provider,
+        viewMode: 'terminal',
+        runtimeSessionId: tmuxSession,
+        model: agent.model,
+        reasoningEffort: agent.reasoningEffort,
+        approvalPolicy: agent.approvalPolicy,
+        sandboxMode: agent.sandboxMode,
+        permissionMode: agent.permissionMode,
+        collaborationMode: agent.collaborationMode,
       });
     } catch (err) {
       console.error('Failed to launch agent:', err);
@@ -403,15 +428,16 @@ function App() {
 
   const launchCodexChatTab = useCallback(async () => {
     if (!project || !activeWorkspacePath) return;
+    const options = codexOptionsForAgent(agentTypes.find((agent) => agentProvider(agent) === 'codex'));
     try {
       const session = await LaunchCodexChatWithOptions(
         project.root,
         activeWorkspacePath,
-        DEFAULT_CODEX_CHAT_OPTIONS.model,
-        DEFAULT_CODEX_CHAT_OPTIONS.reasoningEffort,
-        DEFAULT_CODEX_CHAT_OPTIONS.approvalPolicy,
-        DEFAULT_CODEX_CHAT_OPTIONS.sandboxMode,
-        DEFAULT_CODEX_CHAT_OPTIONS.collaborationMode,
+        options.model,
+        options.reasoningEffort,
+        options.approvalPolicy,
+        options.sandboxMode,
+        options.collaborationMode,
       );
       addTab({
         id: generateId('tab'),
@@ -432,7 +458,7 @@ function App() {
     } catch (err) {
       console.error('Failed to launch Codex chat:', err);
     }
-  }, [project, activeWorkspacePath, addTab]);
+  }, [project, activeWorkspacePath, agentTypes, addTab]);
 
   const launchClaudeChatTab = useCallback(async () => {
     if (!project || !activeWorkspacePath) return;
@@ -461,8 +487,11 @@ function App() {
 
   const handleNewTabPick = useCallback((choice: NewTabChoice) => {
     if (choice.kind === 'shell') createNewShell();
-    else launchAgentTab(choice.name, choice.label);
-  }, [createNewShell, launchAgentTab]);
+    else {
+      const agent = agentTypes.find((candidate) => candidate.name === choice.name);
+      if (agent) launchAgentTab(agent);
+    }
+  }, [agentTypes, createNewShell, launchAgentTab]);
 
   // Open a Diagnostics tab globally: if one exists anywhere, switch to its
   // workspace and focus it. Otherwise create a new one in the active workspace.
@@ -1172,10 +1201,10 @@ function App() {
         title: `Start ${agent.label}`,
         subtitle: activeWorkspaceName,
         group: 'Agents',
-        icon: agent.name,
+        icon: agent.provider || agent.name,
         keywords: ['terminal', 'agent', agent.name, agent.label],
         disabled: !hasActiveWorkspace,
-        run: () => launchAgentTab(agent.name, agent.label),
+        run: () => launchAgentTab(agent),
       })),
       {
         id: 'new-workspace',

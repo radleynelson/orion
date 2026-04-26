@@ -147,6 +147,14 @@ struct AgentType: Codable, Identifiable {
     var id: String { name }
     let name: String
     let label: String
+    let provider: String?
+    let model: String?
+    let reasoningEffort: String?
+    let approvalPolicy: String?
+    let sandboxMode: String?
+    let permissionMode: String?
+    let collaborationMode: String?
+    let chatCapable: Bool?
 }
 
 struct LaunchAgentResponse: Codable {

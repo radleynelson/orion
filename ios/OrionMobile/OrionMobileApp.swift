@@ -321,14 +321,43 @@ final class AppState {
     func launchAgent(workspacePath: String, agentType: String) async throws {
         guard let client, let root = selectedProject else { return }
         let resp = try await client.launchAgent(repoRoot: root, workspacePath: workspacePath, agentType: agentType)
-        let label = String(agentType.prefix(1)).uppercased() + agentType.dropFirst()
-        let session = SessionInfo(tmuxName: resp.tmuxSession, type: agentType, label: label, workspacePath: workspacePath)
+        let agent = agentTypes.first { $0.name == agentType }
+        let provider = agentProvider(agent)
+        let label = agent?.label ?? String(agentType.prefix(1)).uppercased() + agentType.dropFirst()
+        let session = SessionInfo(
+            tmuxName: resp.tmuxSession,
+            type: provider ?? agentType,
+            label: label,
+            workspacePath: workspacePath,
+            provider: provider,
+            viewMode: "terminal",
+            runtimeSessionId: resp.tmuxSession,
+            model: agent?.model,
+            reasoningEffort: agent?.reasoningEffort,
+            approvalPolicy: agent?.approvalPolicy,
+            sandboxMode: agent?.sandboxMode,
+            permissionMode: agent?.permissionMode,
+            collaborationMode: agent?.collaborationMode
+        )
         phoneLaunchedSessions[resp.tmuxSession] = session
         await refreshSessions()
         if let refreshed = sessions.first(where: { $0.tmuxName == resp.tmuxSession }) {
             try await activateSession(refreshed)
         } else {
             try await activateSession(session)
+        }
+    }
+
+    @discardableResult
+    func launchPreferredAgent(workspacePath: String, agent: AgentType) async throws -> SessionInfo? {
+        switch agentProvider(agent) {
+        case "codex":
+            return try await launchCodexChat(workspacePath: workspacePath, options: codexOptions(from: agent))
+        case "claude":
+            return try await launchClaudeChat(workspacePath: workspacePath, options: claudeOptions(from: agent))
+        default:
+            try await launchAgent(workspacePath: workspacePath, agentType: agent.name)
+            return sessions.first { $0.workspacePath == workspacePath && $0.label == agent.label }
         }
     }
 
@@ -370,9 +399,9 @@ final class AppState {
     }
 
     @discardableResult
-    func launchClaudeChat(workspacePath: String) async throws -> SessionInfo {
+    func launchClaudeChat(workspacePath: String, options: ClaudeLaunchOptions? = nil) async throws -> SessionInfo {
         guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
-        let resp = try await client.launchClaudeChat(repoRoot: root, workspacePath: workspacePath)
+        let resp = try await client.launchClaudeChat(repoRoot: root, workspacePath: workspacePath, options: options)
         let session = SessionInfo(
             tmuxName: resp.threadId ?? resp.id,
             type: resp.type,
@@ -686,6 +715,16 @@ final class AppState {
         )
     }
 
+    private func codexOptions(from agent: AgentType) -> CodexLaunchOptions {
+        CodexLaunchOptions(
+            model: agent.model ?? CodexLaunchOptions().model,
+            reasoningEffort: agent.reasoningEffort ?? CodexLaunchOptions().reasoningEffort,
+            approvalPolicy: agent.approvalPolicy ?? CodexLaunchOptions().approvalPolicy,
+            sandboxMode: agent.sandboxMode ?? CodexLaunchOptions().sandboxMode,
+            collaborationMode: agent.collaborationMode ?? CodexLaunchOptions().collaborationMode
+        )
+    }
+
     private func claudeOptions(from session: SessionInfo) -> ClaudeLaunchOptions? {
         let hasMetadata = [session.model, session.reasoningEffort, session.approvalPolicy, session.sandboxMode, session.permissionMode]
             .contains { value in
@@ -700,6 +739,21 @@ final class AppState {
             sandboxMode: session.sandboxMode,
             permissionMode: session.permissionMode
         )
+    }
+
+    private func claudeOptions(from agent: AgentType) -> ClaudeLaunchOptions {
+        ClaudeLaunchOptions(
+            model: agent.model,
+            reasoningEffort: agent.reasoningEffort,
+            approvalPolicy: agent.approvalPolicy,
+            sandboxMode: agent.sandboxMode,
+            permissionMode: agent.permissionMode
+        )
+    }
+
+    private func agentProvider(_ agent: AgentType?) -> String? {
+        let provider = (agent?.provider ?? agent?.name ?? "").lowercased()
+        return provider == "claude" || provider == "codex" ? provider : nil
     }
 
     private func reconcileActiveWorkspaceSelection() {

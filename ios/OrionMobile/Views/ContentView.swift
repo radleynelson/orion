@@ -802,14 +802,14 @@ private struct MobileWorkspaceCard: View {
                             Button {
                                 Task {
                                     do {
-                                        try await state.launchAgent(workspacePath: workspace.path, agentType: agent.name)
+                                        _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
                                         await onRefresh()
                                     } catch {
                                         state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
                                     }
                                 }
                             } label: {
-                                Label(agent.label, systemImage: agentIcon(agent.name))
+                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
                             }
                         }
                     }
@@ -1234,7 +1234,7 @@ private struct WorkspaceDetailSheet: View {
                             Button {
                                 Task {
                                     do {
-                                        try await state.launchAgent(workspacePath: workspace.path, agentType: agent.name)
+                                        _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
                                         await onRefresh()
                                         onClose()
                                     } catch {
@@ -1242,7 +1242,7 @@ private struct WorkspaceDetailSheet: View {
                                     }
                                 }
                             } label: {
-                                Label(agent.label, systemImage: agentIcon(agent.name))
+                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
                             }
                         }
                     }
@@ -1770,11 +1770,11 @@ struct WorkspaceSection: View {
                         ForEach(state.agentTypes) { agent in
                             Button {
                                 Task {
-                                    try? await state.launchAgent(workspacePath: workspace.path, agentType: agent.name)
+                                    _ = try? await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
                                     state.showWorkspaces = false
                                 }
                             } label: {
-                                Label(agent.label, systemImage: agentIcon(agent.name))
+                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
                             }
                         }
                     }
@@ -2313,28 +2313,20 @@ private struct NewSessionMenu: View {
 
     var body: some View {
         Menu {
+            if !state.agentTypes.isEmpty {
+                ForEach(state.agentTypes) { agent in
+                    Button {
+                        Task { await launch { _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent) } }
+                    } label: {
+                        Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
+                    }
+                }
+                Divider()
+            }
             Button {
                 Task { await launch { try await state.launchShell(workspacePath: workspace.path) } }
             } label: {
                 Label("Shell", systemImage: "terminal")
-            }
-            Button { showingCodexOptions = true } label: {
-                Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
-            }
-            Button {
-                Task { await launch { _ = try await state.launchClaudeChat(workspacePath: workspace.path) } }
-            } label: {
-                Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
-            }
-            if !state.agentTypes.isEmpty {
-                Divider()
-                ForEach(state.agentTypes) { agent in
-                    Button {
-                        Task { await launch { try await state.launchAgent(workspacePath: workspace.path, agentType: agent.name) } }
-                    } label: {
-                        Label(agent.label, systemImage: agentIcon(agent.name))
-                    }
-                }
             }
         } label: {
             menuLabel

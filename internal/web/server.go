@@ -35,8 +35,16 @@ import (
 // This avoids circular imports with the main package.
 // AgentType represents an available agent type from config.
 type AgentType struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
+	Name              string `json:"name"`
+	Label             string `json:"label"`
+	Provider          string `json:"provider,omitempty"`
+	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
+	SandboxMode       string `json:"sandboxMode,omitempty"`
+	PermissionMode    string `json:"permissionMode,omitempty"`
+	CollaborationMode string `json:"collaborationMode,omitempty"`
+	ChatCapable       bool   `json:"chatCapable"`
 }
 
 type AppAPI interface {
@@ -958,8 +966,22 @@ func (s *Server) handleLaunchAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	label := strings.ToUpper(req.AgentType[:1]) + req.AgentType[1:]
-	s.app.EmitSessionCreated(tmuxSession, req.AgentType, label, req.WorkspacePath)
+	sessionType := req.AgentType
+	label := req.AgentType
+	for _, agent := range s.app.GetAgentNames(req.RepoRoot) {
+		if agent.Name != req.AgentType {
+			continue
+		}
+		label = agent.Label
+		if strings.TrimSpace(agent.Provider) != "" {
+			sessionType = agent.Provider
+		}
+		break
+	}
+	if label == "" {
+		label = "Agent"
+	}
+	s.app.EmitSessionCreated(tmuxSession, sessionType, label, req.WorkspacePath)
 	writeJSON(w, map[string]string{"tmuxSession": tmuxSession})
 }
 

@@ -240,18 +240,29 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 
 	// Determine command from config or defaults
 	var agentCmd string
+	var agentProvider string
+	var agentLabel string
 	if agentCfg, ok := cfg.Agents[agentType]; ok {
 		agentCmd = agentCfg.Command
+		agentProvider = agentCfg.Provider
+		agentLabel = agentCfg.Label
 	} else {
 		switch agentType {
 		case "claude":
 			agentCmd = "claude --dangerously-skip-permissions --effort xhigh --chrome"
+			agentProvider = "claude"
+			agentLabel = "Claude"
 		case "codex":
 			agentCmd = "codex --dangerously-bypass-approvals-and-sandbox"
+			agentProvider = "codex"
+			agentLabel = "Codex"
 		}
 	}
 
-	sessionType := normalizeSessionType(agentType)
+	sessionType := normalizeSessionType(agentProvider)
+	if sessionType == "" {
+		sessionType = normalizeSessionType(agentType)
+	}
 	if sessionType == "" {
 		sessionType = sessionTypeForCommand(agentCmd)
 	}
@@ -262,13 +273,17 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	}
 
 	// Install notification hooks for Claude so Orion sees Stop/Notification events.
-	if agentType == "claude" {
+	if sessionType == "claude" {
 		if scriptPath, err := notify.InstallHookScript(); err == nil {
 			notify.InstallWorkspaceHooks(workspacePath, scriptPath)
 		}
 	}
 
-	return m.launchCommand(repoRoot, workspacePath, agentCmd, sessionType, labelForType(sessionType))
+	label := strings.TrimSpace(agentLabel)
+	if label == "" {
+		label = labelForType(sessionType)
+	}
+	return m.launchCommand(repoRoot, workspacePath, agentCmd, sessionType, label)
 }
 
 // LaunchCommand creates a tmux session and sends a specific command.

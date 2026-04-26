@@ -63,6 +63,21 @@ const DEFAULT_WORKSPACE_DRAFT: NewWorkspaceDraft = {
   codexOptions: DEFAULT_CODEX_OPTIONS,
 };
 
+function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefined {
+  const provider = (agent?.provider || agent?.name || '').toLowerCase();
+  return provider === 'claude' || provider === 'codex' ? provider : undefined;
+}
+
+function codexOptionsForAgent(agent?: main.AgentTypeInfo): CodexLaunchOptions {
+  return {
+    model: agent?.model || DEFAULT_CODEX_OPTIONS.model,
+    reasoningEffort: agent?.reasoningEffort || DEFAULT_CODEX_OPTIONS.reasoningEffort,
+    approvalPolicy: agent?.approvalPolicy || DEFAULT_CODEX_OPTIONS.approvalPolicy,
+    sandboxMode: agent?.sandboxMode || DEFAULT_CODEX_OPTIONS.sandboxMode,
+    collaborationMode: agent?.collaborationMode || DEFAULT_CODEX_OPTIONS.collaborationMode,
+  };
+}
+
 const CODEX_MODELS = [
   { value: 'gpt-5.5', label: 'GPT-5.5' },
   { value: 'gpt-5.4', label: 'GPT-5.4' },
@@ -276,32 +291,40 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       const termId = generateId('term');
       await CreateAttachedTerminal(termId, tmuxSession);
       const agent = agentTypes.find((a) => a.name === agentName);
+      const provider = agentProvider(agent);
       addTab({
         id: generateId('tab'),
         label: agent?.label || agentName,
         rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-        tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
+        tabType: provider || 'shell',
         workspacePath: wsPath,
-        provider: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : undefined,
+        provider,
         viewMode: 'terminal',
         runtimeSessionId: tmuxSession,
+        model: agent?.model,
+        reasoningEffort: agent?.reasoningEffort,
+        approvalPolicy: agent?.approvalPolicy,
+        sandboxMode: agent?.sandboxMode,
+        permissionMode: agent?.permissionMode,
+        collaborationMode: agent?.collaborationMode,
       });
     } catch (err) {
       console.error('Failed to launch agent:', err);
     }
   }, [project, agentTypes, addTab]);
 
-  const handleLaunchCodexChat = useCallback(async (wsPath: string, options: CodexLaunchOptions = DEFAULT_CODEX_OPTIONS) => {
+  const handleLaunchCodexChat = useCallback(async (wsPath: string, options?: CodexLaunchOptions) => {
     if (!project) return;
+    const selected = options || codexOptionsForAgent(agentTypes.find((agent) => agentProvider(agent) === 'codex'));
     try {
       const session = await LaunchCodexChatWithOptions(
         project.root,
         wsPath,
-        options.model,
-        options.reasoningEffort,
-        options.approvalPolicy,
-        options.sandboxMode,
-        options.collaborationMode,
+        selected.model,
+        selected.reasoningEffort,
+        selected.approvalPolicy,
+        selected.sandboxMode,
+        selected.collaborationMode,
       );
       addTab({
         id: generateId('tab'),
@@ -324,7 +347,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       console.error('Failed to launch Codex chat:', err);
       throw err;
     }
-  }, [project, addTab]);
+  }, [project, agentTypes, addTab]);
 
   const handleLaunchClaudeChat = useCallback(async (wsPath: string) => {
     if (!project) return;

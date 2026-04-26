@@ -266,7 +266,15 @@ export namespace codexchat {
 export namespace config {
 
 	export class AgentConfig {
+	    Label: string;
+	    Provider: string;
 	    Command: string;
+	    Model: string;
+	    ReasoningEffort: string;
+	    ApprovalPolicy: string;
+	    SandboxMode: string;
+	    PermissionMode: string;
+	    CollaborationMode: string;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentConfig(source);
@@ -274,7 +282,15 @@ export namespace config {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Label = source["Label"];
+	        this.Provider = source["Provider"];
 	        this.Command = source["Command"];
+	        this.Model = source["Model"];
+	        this.ReasoningEffort = source["ReasoningEffort"];
+	        this.ApprovalPolicy = source["ApprovalPolicy"];
+	        this.SandboxMode = source["SandboxMode"];
+	        this.PermissionMode = source["PermissionMode"];
+	        this.CollaborationMode = source["CollaborationMode"];
 	    }
 	}
 	export class CredentialsConfig {
@@ -617,6 +633,14 @@ export namespace main {
 	    name: string;
 	    command: string;
 	    label: string;
+	    provider?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    permissionMode?: string;
+	    collaborationMode?: string;
+	    chatCapable: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentTypeInfo(source);
@@ -627,6 +651,14 @@ export namespace main {
 	        this.name = source["name"];
 	        this.command = source["command"];
 	        this.label = source["label"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
+	        this.collaborationMode = source["collaborationMode"];
+	        this.chatCapable = source["chatCapable"];
 	    }
 	}
 
@@ -741,6 +773,14 @@ export namespace web {
 	export class AgentType {
 	    name: string;
 	    label: string;
+	    provider?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    permissionMode?: string;
+	    collaborationMode?: string;
+	    chatCapable: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentType(source);
@@ -750,6 +790,14 @@ export namespace web {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.label = source["label"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
+	        this.collaborationMode = source["collaborationMode"];
+	        this.chatCapable = source["chatCapable"];
 	    }
 	}
 
