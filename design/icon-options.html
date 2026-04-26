@@ -494,6 +494,87 @@
     .agent-review { --agent: var(--amber); --agent-deep: #c58330; }
     .agent-scribe { --agent: var(--rose); --agent-deep: #b66585; }
     .agent-ops { --agent: var(--cyan); --agent-deep: #3da6ad; }
+    .agent-test { --agent: #9bc5ff; --agent-deep: #5a8be8; }
+    .agent-debug { --agent: #f2998f; --agent-deep: #b95c52; }
+    .agent-deploy { --agent: #a9d18e; --agent-deep: #69a34e; }
+    .agent-data { --agent: #a7b4ff; --agent-deep: #6979d9; }
+    .agent-design { --agent: #ef9fbd; --agent-deep: #b66585; }
+    .agent-security { --agent: #f0bc72; --agent-deep: #b57b32; }
+    .agent-browser { --agent: #7dd8dc; --agent-deep: #3da6ad; }
+    .agent-automate { --agent: #d4b5ff; --agent-deep: #8e65da; }
+
+    .brand-comparison {
+      display: grid;
+      gap: 12px;
+    }
+
+    .brand-row {
+      display: grid;
+      grid-template-columns: 128px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255,255,255,.025);
+    }
+
+    .brand-row strong {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .brand-note {
+      color: var(--dim);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .brand-sigil {
+      width: 28px;
+      height: 28px;
+      display: inline-grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border-radius: 8px;
+      border: 1px solid var(--line-2);
+      background: #f2eee6;
+      color: #24211e;
+      box-shadow: 0 10px 24px rgba(0,0,0,.18);
+    }
+
+    .brand-sigil.codex-brand {
+      background: #111315;
+      color: #f2f5f2;
+      border-color: rgba(255,255,255,.18);
+    }
+
+    .role-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+    }
+
+    .role-chip {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255,255,255,.025);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .role-chip span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     .context-strip {
       display: flex;
@@ -611,6 +692,7 @@
       .context-strip { flex-wrap: wrap; }
       .mock-window { grid-template-columns: 48px 1fr; }
       .content-area { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+      .role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -653,6 +735,77 @@
     <symbol id="i-spark" viewBox="0 0 24 24">
       <path d="M12 4v16"></path><path d="M4 12h16"></path><path d="M7 7l10 10"></path><path d="M17 7 7 17"></path>
     </symbol>
+    <symbol id="i-claude-brand" viewBox="0 0 24 24">
+      <path d="M12 4.4v15.2M5.4 8.2l13.2 7.6M18.6 8.2 5.4 15.8"></path>
+      <circle cx="12" cy="12" r="2.4"></circle>
+    </symbol>
+    <symbol id="i-codex-brand" viewBox="0 0 24 24">
+      <path d="M8.2 5.2h7.6l3.8 6.8-3.8 6.8H8.2L4.4 12l3.8-6.8z"></path>
+      <path d="M8.4 12h7.2M12 5.4v13.2"></path>
+    </symbol>
+    <symbol id="i-orion-true" viewBox="0 0 44 44">
+      <path d="M15 10 21 18 29 11"></path>
+      <path d="M21 18 20 23 22 27 23 32"></path>
+      <path d="M20 23 16 34M22 27l9 6"></path>
+      <circle cx="15" cy="10" r="2.4"></circle>
+      <circle cx="29" cy="11" r="2.2"></circle>
+      <circle cx="21" cy="18" r="1.8"></circle>
+      <circle cx="20" cy="23" r="1.8"></circle>
+      <circle cx="22" cy="27" r="1.8"></circle>
+      <circle cx="16" cy="34" r="2.3"></circle>
+      <circle cx="31" cy="33" r="2.5"></circle>
+    </symbol>
+    <symbol id="i-orion-belt" viewBox="0 0 44 44">
+      <path d="M10 30 18 23 26 19 35 14"></path>
+      <circle cx="12" cy="29" r="2.3"></circle>
+      <circle cx="18" cy="23" r="2.7"></circle>
+      <circle cx="26" cy="19" r="2.7"></circle>
+      <circle cx="34" cy="15" r="2.3"></circle>
+    </symbol>
+    <symbol id="i-orion-frame" viewBox="0 0 44 44">
+      <path d="M14 9 29 11 31 33 16 34 14 9z"></path>
+      <path d="M19 20 22 22 25 24"></path>
+      <circle cx="14" cy="9" r="2.2"></circle>
+      <circle cx="29" cy="11" r="2"></circle>
+      <circle cx="19" cy="20" r="1.9"></circle>
+      <circle cx="22" cy="22" r="1.9"></circle>
+      <circle cx="25" cy="24" r="1.9"></circle>
+      <circle cx="16" cy="34" r="2.2"></circle>
+      <circle cx="31" cy="33" r="2.4"></circle>
+    </symbol>
+    <symbol id="i-list" viewBox="0 0 24 24">
+      <path d="M8 7h11M8 12h11M8 17h11"></path><circle cx="5" cy="7" r="1"></circle><circle cx="5" cy="12" r="1"></circle><circle cx="5" cy="17" r="1"></circle>
+    </symbol>
+    <symbol id="i-beaker" viewBox="0 0 24 24">
+      <path d="M9 4h6"></path><path d="M10 4v5l-5 8a2 2 0 0 0 1.7 3h10.6A2 2 0 0 0 19 17l-5-8V4"></path><path d="M8 15h8"></path>
+    </symbol>
+    <symbol id="i-bug" viewBox="0 0 24 24">
+      <path d="M8 9a4 4 0 0 1 8 0v7a4 4 0 0 1-8 0V9z"></path><path d="M12 5v3"></path><path d="M5 11h3M16 11h3M5 17h3M16 17h3"></path>
+    </symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24">
+      <path d="M7 17c-1.4-3 .2-7 4-10 2.5-2 5.2-2.7 7-2-0.2 2.8-1.5 5.2-3.8 7.2-3.1 2.7-6.5 3.7-7.2 4.8z"></path><path d="M7 17l-3 3 4-1 1-2"></path><circle cx="15" cy="8" r="1.6"></circle>
+    </symbol>
+    <symbol id="i-book" viewBox="0 0 24 24">
+      <path d="M5 5.5c2.7-.8 4.8-.2 7 1.2 2.2-1.4 4.3-2 7-1.2v13c-2.7-.8-4.8-.2-7 1.2-2.2-1.4-4.3-2-7-1.2v-13z"></path><path d="M12 6.7v13"></path>
+    </symbol>
+    <symbol id="i-database" viewBox="0 0 24 24">
+      <ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path>
+    </symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24">
+      <path d="M12 4a8 8 0 0 0-2 15.8c1 .2 1.6-.5 1.4-1.5-.2-1 .4-1.8 1.5-1.8H15a5 5 0 0 0 0-10.1A8.5 8.5 0 0 0 12 4z"></path><circle cx="8.5" cy="10" r="1"></circle><circle cx="11.5" cy="8" r="1"></circle><circle cx="14.5" cy="10" r="1"></circle>
+    </symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24">
+      <path d="M12 4 19 7v5c0 4-2.6 7-7 8-4.4-1-7-4-7-8V7l7-3z"></path><path d="M9 12l2 2 4-5"></path>
+    </symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8"></circle><path d="M4 12h16"></path><path d="M12 4c2.2 2.4 3.2 5 3.2 8s-1 5.6-3.2 8c-2.2-2.4-3.2-5-3.2-8s1-5.6 3.2-8z"></path>
+    </symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24">
+      <path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"></path>
+    </symbol>
+    <symbol id="i-broom" viewBox="0 0 24 24">
+      <path d="M14 4l6 6"></path><path d="M12 8l4 4-7 7H5v-4l7-7z"></path><path d="M5 19h6"></path>
+    </symbol>
   </svg>
 
   <main class="page">
@@ -670,8 +823,8 @@
         <div class="section-note">The current rail mixes text glyphs with different optical weights. These options normalize every icon to a 19px box inside the existing 38px hit target.</div>
       </div>
       <div class="grid four">
-        <div class="option-card">
-          <div class="option-label"><strong>A. Precision line</strong><span class="tag">closest to current UI</span></div>
+        <div class="option-card selected">
+          <div class="option-label"><strong>A. Precision line</strong><span class="tag">selected activity family</span></div>
           <div class="sample">
             <div class="mock-window compact">
               <div class="activity">
@@ -743,9 +896,35 @@
     <section class="section">
       <div class="section-head">
         <h2>Orion project mark</h2>
-        <div class="section-note">The project mark needs to work at 28px in the header and 44px in empty/dashboard contexts. I would avoid making it too detailed.</div>
+        <div class="section-note">New direction: make the mark read more like the actual Orion constellation, especially the three-star belt. The first three are constellation-forward variants; the older marks remain below for comparison.</div>
       </div>
       <div class="mark-row">
+        <div class="option-card selected mark-tile">
+          <div class="mark soft"><svg width="34" height="34" viewBox="0 0 44 44">
+            <path d="M15 10 21 18 29 11M21 18 20 23 22 27 23 32M20 23 16 34M22 27l9 6" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" opacity=".78"></path>
+            <circle cx="15" cy="10" r="2.3" fill="#7ca9f7"></circle><circle cx="29" cy="11" r="2.1" fill="#7ca9f7"></circle>
+            <circle cx="21" cy="18" r="1.9" fill="#eeeeef"></circle><circle cx="20" cy="23" r="1.9" fill="#eeeeef"></circle><circle cx="22" cy="27" r="1.9" fill="#eeeeef"></circle>
+            <circle cx="16" cy="34" r="2.2" fill="#7ca9f7"></circle><circle cx="31" cy="33" r="2.4" fill="#7ca9f7"></circle>
+          </svg></div>
+          <div class="mark-name">O7 - true Orion constellation</div>
+        </div>
+        <div class="option-card mark-tile">
+          <div class="mark dark"><svg width="34" height="34" viewBox="0 0 44 44">
+            <path d="M10 30 18 23 26 19 35 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+            <circle cx="12" cy="29" r="2.2" fill="#7ca9f7"></circle><circle cx="18" cy="23" r="2.8" fill="#eeeeef"></circle><circle cx="26" cy="19" r="2.8" fill="#eeeeef"></circle><circle cx="34" cy="15" r="2.2" fill="#7ca9f7"></circle>
+          </svg></div>
+          <div class="mark-name">O8 - belt-forward minimal</div>
+        </div>
+        <div class="option-card mark-tile">
+          <div class="mark"><svg width="34" height="34" viewBox="0 0 44 44">
+            <path d="M14 9 29 11 31 33 16 34 14 9z" fill="none" stroke="rgba(234,234,236,.56)" stroke-width="1.15" stroke-linejoin="round"></path>
+            <path d="M19 20 22 22 25 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+            <circle cx="14" cy="9" r="2.1" fill="#7ca9f7"></circle><circle cx="29" cy="11" r="2" fill="#7ca9f7"></circle>
+            <circle cx="19" cy="20" r="2" fill="#eeeeef"></circle><circle cx="22" cy="22" r="2" fill="#eeeeef"></circle><circle cx="25" cy="24" r="2" fill="#eeeeef"></circle>
+            <circle cx="16" cy="34" r="2.1" fill="#7ca9f7"></circle><circle cx="31" cy="33" r="2.3" fill="#7ca9f7"></circle>
+          </svg></div>
+          <div class="mark-name">O9 - chart tile</div>
+        </div>
         <div class="option-card mark-tile">
           <div class="mark soft"><svg width="32" height="32" viewBox="0 0 44 44"><path d="M9 29c7-10 17-16 27-13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path><circle cx="13" cy="26" r="2.5" fill="currentColor"></circle><circle cx="22" cy="21" r="3" fill="#eeeeef"></circle><circle cx="31" cy="18" r="2.4" fill="currentColor"></circle></svg></div>
           <div class="mark-name">O1 - cleaned constellation</div>
@@ -779,6 +958,29 @@
         <div class="section-note">This is the system question: provider identity, role identity, or both. These rows show Claude, Codex, shell, and custom agents in the same size family.</div>
       </div>
       <div class="grid two">
+        <div class="option-card">
+          <div class="option-label"><strong>Brand assets for Claude/Codex</strong><span class="tag">mockup only</span></div>
+          <div class="sample brand-comparison">
+            <div class="brand-row">
+              <strong>Sessions</strong>
+              <div class="agent-icons">
+                <span class="brand-sigil"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-claude-brand"></use></svg></span>
+                <span class="brand-sigil codex-brand"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-codex-brand"></use></svg></span>
+                <span class="sigil agent-shell"><svg class="glyph"><use href="#i-shell"></use></svg></span>
+                <span class="sigil agent-review"><svg class="glyph"><use href="#i-target"></use></svg></span>
+              </div>
+            </div>
+            <div class="brand-row">
+              <strong>Tabs</strong>
+              <div class="agent-icons">
+                <div class="tab active"><span class="brand-sigil"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-claude-brand"></use></svg></span>Claude Chat</div>
+                <div class="tab"><span class="brand-sigil codex-brand"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-codex-brand"></use></svg></span>Codex</div>
+              </div>
+            </div>
+            <div class="brand-note">Technically possible if we bundle approved SVG assets or use package-provided icons. This board uses placeholders to judge shape, scale, and contrast before making that decision.</div>
+          </div>
+        </div>
+
         <div class="option-card">
           <div class="option-label"><strong>A. Provider sigils</strong><span class="tag">best for Claude/Codex clarity</span></div>
           <div class="sample agent-samples">
@@ -849,6 +1051,30 @@
             </div></div>
           </div>
         </div>
+
+        <div class="option-card">
+          <div class="option-label"><strong>E. Custom role picker</strong><span class="tag">limited icon set</span></div>
+          <div class="sample">
+            <div class="role-grid">
+              <div class="role-chip"><span class="sigil agent-review"><svg class="glyph"><use href="#i-target"></use></svg></span><span>review</span></div>
+              <div class="role-chip"><span class="sigil agent-scribe"><svg class="glyph"><use href="#i-pen"></use></svg></span><span>write</span></div>
+              <div class="role-chip"><span class="sigil agent-ops"><svg class="glyph"><use href="#i-list"></use></svg></span><span>plan</span></div>
+              <div class="role-chip"><span class="sigil agent-test"><svg class="glyph"><use href="#i-beaker"></use></svg></span><span>test</span></div>
+              <div class="role-chip"><span class="sigil agent-debug"><svg class="glyph"><use href="#i-bug"></use></svg></span><span>debug</span></div>
+              <div class="role-chip"><span class="sigil agent-deploy"><svg class="glyph"><use href="#i-rocket"></use></svg></span><span>deploy</span></div>
+              <div class="role-chip"><span class="sigil agent-ops"><svg class="glyph"><use href="#i-server"></use></svg></span><span>ops</span></div>
+              <div class="role-chip"><span class="sigil agent-data"><svg class="glyph"><use href="#i-database"></use></svg></span><span>data</span></div>
+              <div class="role-chip"><span class="sigil agent-design"><svg class="glyph"><use href="#i-palette"></use></svg></span><span>design</span></div>
+              <div class="role-chip"><span class="sigil agent-security"><svg class="glyph"><use href="#i-shield"></use></svg></span><span>security</span></div>
+              <div class="role-chip"><span class="sigil agent-browser"><svg class="glyph"><use href="#i-globe"></use></svg></span><span>browser</span></div>
+              <div class="role-chip"><span class="sigil agent-automate"><svg class="glyph"><use href="#i-bolt"></use></svg></span><span>automate</span></div>
+              <div class="role-chip"><span class="sigil agent-shell"><svg class="glyph"><use href="#i-shell"></use></svg></span><span>shell</span></div>
+              <div class="role-chip"><span class="sigil agent-codex"><svg class="glyph"><use href="#i-branch"></use></svg></span><span>branch</span></div>
+              <div class="role-chip"><span class="sigil agent-test"><svg class="glyph"><use href="#i-book"></use></svg></span><span>docs</span></div>
+              <div class="role-chip"><span class="sigil agent-review"><svg class="glyph"><use href="#i-broom"></use></svg></span><span>clean</span></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -865,12 +1091,15 @@
           <div class="icon-button"><svg class="glyph"><use href="#i-diag"></use></svg></div>
         </div>
         <div class="mini-header">
-          <div class="mark soft"><svg width="30" height="30" viewBox="0 0 44 44"><path d="M8 30c7-11 17-17 28-14" fill="none" stroke="currentColor" stroke-width="1.9"></path><circle cx="12" cy="27" r="2.5" fill="currentColor"></circle><circle cx="21" cy="21" r="3.2" fill="#eeeeef"></circle><circle cx="32" cy="18" r="2.5" fill="currentColor"></circle></svg></div>
+          <div class="mark soft"><svg width="30" height="30" viewBox="0 0 44 44">
+            <path d="M15 10 21 18 29 11M21 18 20 23 22 27 23 32M20 23 16 34M22 27l9 6" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" opacity=".78"></path>
+            <circle cx="15" cy="10" r="2.3" fill="#7ca9f7"></circle><circle cx="29" cy="11" r="2.1" fill="#7ca9f7"></circle><circle cx="21" cy="18" r="1.9" fill="#eeeeef"></circle><circle cx="20" cy="23" r="1.9" fill="#eeeeef"></circle><circle cx="22" cy="27" r="1.9" fill="#eeeeef"></circle><circle cx="16" cy="34" r="2.2" fill="#7ca9f7"></circle><circle cx="31" cy="33" r="2.4" fill="#7ca9f7"></circle>
+          </svg></div>
           <div><div class="project-name">slant</div><div class="project-path">/Users/rad_nelson/Desktop/code/slant</div></div>
         </div>
         <div class="mini-tabs">
-          <div class="tab active"><span class="sigil agent-claude"><svg class="glyph"><use href="#i-moon"></use></svg></span>Claude Chat</div>
-          <div class="tab"><span class="sigil agent-codex"><svg class="glyph"><use href="#i-chevron"></use></svg></span>Codex</div>
+          <div class="tab active"><span class="brand-sigil"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-claude-brand"></use></svg></span>Claude Chat</div>
+          <div class="tab"><span class="brand-sigil codex-brand"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-codex-brand"></use></svg></span>Codex</div>
           <div class="tab"><span class="sigil agent-shell"><svg class="glyph"><use href="#i-shell"></use></svg></span>Shell</div>
           <div class="tab"><span class="sigil agent-review"><svg class="glyph"><use href="#i-target"></use></svg></span>Reviewer</div>
         </div>
@@ -885,17 +1114,17 @@
       <div class="recommendation">
         <div class="text-panel">
           <h3>Simple config surface</h3>
-          <p>Use provider as the base identity, then let optional agent fields customize the badge.</p>
+          <p>Use provider as the base identity for Claude/Codex, then let optional agent fields choose from a small role icon set for custom agents.</p>
           <ul>
-            <li><code>provider = "claude"</code> or <code>provider = "codex"</code> picks the base glyph.</li>
-            <li><code>icon = "review"</code>, <code>"scribe"</code>, <code>"ops"</code>, <code>"shell"</code> maps to a small built-in set.</li>
+            <li><code>provider = "claude"</code> or <code>provider = "codex"</code> can map to official provider art if we decide to bundle it.</li>
+            <li><code>icon = "review"</code>, <code>"test"</code>, <code>"deploy"</code>, <code>"data"</code>, etc. maps to the fixed picker above.</li>
             <li><code>color = "amber"</code> or a hex value controls custom roles.</li>
             <li>If no icon exists, use initials plus a deterministic hash color.</li>
           </ul>
         </div>
         <div class="text-panel">
           <h3>My read</h3>
-          <p>I would use A for the activity rail, O2 or O4 for Orion, and C for custom agents. That keeps Claude and Codex recognizable, but custom agents can still feel personal without requiring every agent to have a bespoke logo.</p>
+          <p>Based on your notes: A is the activity rail direction. For the project mark, O7 is the strongest new pass because it reads as Orion, not just generic connected nodes. For agents, the brand-icon route is possible, but I would only do it with bundled/approved SVG assets; custom agents should use the limited role picker so the system stays controlled.</p>
           <div style="height:14px"></div>
           <div class="swatches">
             <span class="swatch" style="background:var(--purple)"></span>
