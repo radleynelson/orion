@@ -11,7 +11,7 @@ struct MainView: View {
     var body: some View {
         VStack(spacing: 0) {
             HeaderBar()
-            if !state.showHome && !state.visibleTabs.isEmpty { TabStrip() }
+            if !state.showHome && (state.activeWorkspace != nil || !state.visibleTabs.isEmpty) { TabStrip() }
             if state.isReconnecting {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini).tint(OrionTheme.accentYellow)
@@ -31,9 +31,7 @@ struct MainView: View {
             }
             ZStack {
                 OrionTheme.bgTerminal.ignoresSafeArea()
-                if state.showHome {
-                    MobileHomeView()
-                } else if let activeSession = state.activeSession,
+                if let activeSession = state.activeSession,
                    state.activeSessionShowsChat,
                    let connection = state.activeChatConnection,
                    connection.sessionId == activeSession.chatConnectionId {
@@ -82,19 +80,17 @@ struct MainView: View {
                     ProgressView()
                         .controlSize(.regular)
                         .tint(OrionTheme.accentBlue)
+                } else if let workspace = state.activeWorkspace {
+                    WorkspaceEmptyView(workspace: workspace)
                 } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "terminal").font(.system(size: 40)).foregroundStyle(OrionTheme.textDim)
-                        Text(emptyStateTitle).font(.subheadline).foregroundStyle(OrionTheme.textDim)
-                        Button("Open Home") { state.showHome = true }.buttonStyle(.bordered).tint(OrionTheme.accentBlue)
-                    }
+                    WorkspaceEmptyView(workspace: nil)
                 }
             }
             if !state.showHome && state.activeSession != nil && !state.activeSessionShowsChat { TerminalToolbar() }
         }
         .background(OrionTheme.bgPrimary)
         .sheet(isPresented: Binding(get: { state.showWorkspaces }, set: { state.showWorkspaces = $0 })) {
-            WorkspaceSheet().presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+            WorkspaceSheet().presentationDetents([.height(420), .large]).presentationDragIndicator(.visible)
         }
         .sheet(isPresented: Binding(get: { state.showSettings }, set: { state.showSettings = $0 })) {
             SettingsView().presentationDetents([.medium]).presentationDragIndicator(.visible)
@@ -126,12 +122,6 @@ struct MainView: View {
         }
     }
 
-    private var emptyStateTitle: String {
-        if let workspace = state.activeWorkspace {
-            return "Open a session in \(workspace.name)"
-        }
-        return "Open a session from workspaces"
-    }
 }
 
 // MARK: - Header with Project Switcher
@@ -141,13 +131,9 @@ struct HeaderBar: View {
     var body: some View {
         HStack(spacing: 12) {
             Button {
-                if state.showHome {
-                    state.showWorkspaces = true
-                } else {
-                    state.showHome = true
-                }
+                state.showWorkspaces = true
             } label: {
-                Image(systemName: state.showHome ? "sidebar.left" : "house")
+                Image(systemName: "sidebar.left")
                     .font(.system(size: 18))
                     .foregroundStyle(OrionTheme.textSecondary)
             }
@@ -226,6 +212,49 @@ struct HeaderBar: View {
 }
 
 // MARK: - Mobile Home
+
+private struct WorkspaceEmptyView: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            OrionMarkView(size: 44)
+            VStack(spacing: 5) {
+                Text(workspace?.name ?? "No workspace selected")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(subtitle)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+            if let workspace {
+                NewSessionMenu(workspace: workspace, style: .prominent)
+            } else {
+                Button { state.showWorkspaces = true } label: {
+                    Label("Choose workspace", systemImage: "sidebar.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 16)
+                        .frame(height: 38)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(OrionTheme.accentBlue)
+            }
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var subtitle: String {
+        guard let workspace else { return "Open a workspace to start a session." }
+        if workspace.isMain { return "Main workspace" }
+        return workspace.branch.isEmpty ? workspace.name : workspace.branch
+    }
+}
 
 private struct MobileHomeView: View {
     @Environment(AppState.self) private var state
@@ -1324,7 +1353,7 @@ private struct EmptyDetailRow: View {
     }
 }
 
-// MARK: - Workspace Sheet (native List with swipe-to-delete)
+// MARK: - Workspace Sheet
 
 struct WorkspaceSheet: View {
     @Environment(AppState.self) private var state
@@ -1332,29 +1361,66 @@ struct WorkspaceSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(state.workspaces) { ws in
-                    WorkspaceSection(workspace: ws)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Workspaces")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                        Text(state.projectInfo?.name ?? "Orion")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await state.refreshSessions() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .frame(width: 34, height: 34)
+                            .background(OrionTheme.bgSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    Button { showingNewWorktree = true } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                            .frame(width: 34, height: 34)
+                            .background(OrionTheme.bgSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(OrionTheme.bgPrimary)
-            .navigationTitle("Workspaces")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { state.showWorkspaces = false }.foregroundStyle(OrionTheme.accentBlue)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 14) {
-                        Button { Task { await state.refreshSessions() } } label: {
-                            Image(systemName: "arrow.clockwise").foregroundStyle(OrionTheme.accentBlue)
-                        }
-                        Button { showingNewWorktree = true } label: {
-                            Image(systemName: "plus").foregroundStyle(OrionTheme.accentBlue)
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(state.workspaces) { workspace in
+                            WorkspaceSwitcherRow(workspace: workspace)
                         }
                     }
+                    .padding(.bottom, 10)
+                }
+
+                Button { showingNewWorktree = true } label: {
+                    Label("New workspace", systemImage: "plus")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(OrionTheme.bgSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+            .background(OrionTheme.bgPrimary.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { state.showWorkspaces = false }
+                        .foregroundStyle(OrionTheme.accentBlue)
                 }
             }
             .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
@@ -1384,6 +1450,67 @@ struct WorkspaceSheet: View {
                 .presentationDragIndicator(.visible)
             }
         }
+    }
+}
+
+private struct WorkspaceSwitcherRow: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+
+    private var sessions: [SessionInfo] {
+        state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" }
+    }
+
+    private var isActive: Bool { state.activeWorkspacePath == workspace.path }
+
+    var body: some View {
+        Button {
+            Task {
+                await state.activateWorkspace(workspace.path)
+                state.showWorkspaces = false
+            }
+        } label: {
+            HStack(spacing: 11) {
+                Circle()
+                    .fill(isActive ? OrionTheme.accentBlue : sessions.isEmpty ? OrionTheme.border : OrionTheme.accentGreen)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: isActive ? OrionTheme.accentBlue.opacity(0.45) : .clear, radius: 5)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(workspace.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                            .lineLimit(1)
+                        if workspace.isMain {
+                            Text("MAIN")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(OrionTheme.accentBlue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(OrionTheme.accentBlue.opacity(0.15))
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        }
+                    }
+                    Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(sessions.isEmpty ? "idle" : "\(sessions.count)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 58)
+            .background(isActive ? OrionTheme.bgSurface : OrionTheme.bgSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isActive ? OrionTheme.accentBlue.opacity(0.24) : OrionTheme.borderDim, lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -2020,14 +2147,136 @@ private struct CodexLaunchOptionsSheet: View {
 
 // MARK: - Tabs
 
+private enum NewSessionMenuStyle {
+    case tabBar
+    case prominent
+}
+
+private struct NewSessionMenu: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+    var style: NewSessionMenuStyle = .tabBar
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
+
+    var body: some View {
+        Menu {
+            Button {
+                Task { await launch { try await state.launchShell(workspacePath: workspace.path) } }
+            } label: {
+                Label("Shell", systemImage: "terminal")
+            }
+            Button { showingCodexOptions = true } label: {
+                Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
+            }
+            Button {
+                Task { await launch { _ = try await state.launchClaudeChat(workspacePath: workspace.path) } }
+            } label: {
+                Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
+            }
+            if !state.agentTypes.isEmpty {
+                Divider()
+                ForEach(state.agentTypes) { agent in
+                    Button {
+                        Task { await launch { try await state.launchAgent(workspacePath: workspace.path, agentType: agent.name) } }
+                    } label: {
+                        Label(agent.label, systemImage: agentIcon(agent.name))
+                    }
+                }
+            }
+        } label: {
+            menuLabel
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingCodexOptions) {
+            CodexLaunchOptionsSheet(
+                workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                options: $codexOptions,
+                onCancel: { showingCodexOptions = false },
+                onLaunch: {
+                    let selected = codexOptions
+                    showingCodexOptions = false
+                    Task {
+                        await launch {
+                            _ = try await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                        }
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private var menuLabel: some View {
+        switch style {
+        case .tabBar:
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OrionTheme.textPrimary)
+                .frame(width: 34, height: 30)
+                .background(OrionTheme.bgSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+        case .prominent:
+            Label("New session", systemImage: "plus")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(hex: 0x18233A))
+                .padding(.horizontal, 17)
+                .frame(height: 38)
+                .background(OrionTheme.accentBlue)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    private func launch(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            state.showWorkspaces = false
+        } catch {
+            state.showTransientError("Failed to start session: \(error.localizedDescription)")
+        }
+    }
+}
+
 struct TabStrip: View {
     @Environment(AppState.self) private var state
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) { ForEach(state.visibleTabs) { tab in TabPill(tab: tab, isActive: tab.id == state.activeTabId) } }
-                .padding(.horizontal, 10)
+        HStack(spacing: 7) {
+            if let workspace = state.activeWorkspace {
+                NewSessionMenu(workspace: workspace, style: .tabBar)
+            } else {
+                Button { state.showWorkspaces = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(width: 34, height: 30)
+                }
+                .buttonStyle(.plain)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if state.visibleTabs.isEmpty {
+                        Text(state.activeWorkspace?.name ?? "Workspace")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .frame(height: 30)
+                    } else {
+                        ForEach(state.visibleTabs) { tab in
+                            TabPill(tab: tab, isActive: tab.id == state.activeTabId)
+                        }
+                    }
+                }
                 .padding(.vertical, 6)
-        }.frame(height: 44).background(OrionTheme.bgSecondary).overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 44)
+        .background(OrionTheme.bgSecondary)
+        .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
     }
 }
 
@@ -2043,6 +2292,7 @@ struct TabPill: View {
                         .font(.system(size: 12, weight: isActive ? .medium : .regular))
                         .foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
                         .lineLimit(1)
+                        .frame(maxWidth: 130, alignment: .leading)
                 }
                 .padding(.leading, 4)
                 .padding(.trailing, 6)

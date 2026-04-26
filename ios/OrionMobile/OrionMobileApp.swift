@@ -60,7 +60,7 @@ final class AppState {
     let voiceConnection = VoiceConnection()
     var voiceModeEnabled = false
     var lastVoiceText: String?
-    var showHome = true
+    var showHome = false
     var showWorkspaces = false
     var showSettings = false
     var showDiffReview = false
@@ -149,7 +149,7 @@ final class AppState {
         workspaces = []
         sessions = []
         phoneLaunchedSessions = [:]
-        showHome = true
+        showHome = false
         activeWorkspacePath = nil
         activeTabId = nil
         selectedSessionByWorkspace = [:]
@@ -192,7 +192,7 @@ final class AppState {
             disconnectActiveTerminal()
             sessions = []
             phoneLaunchedSessions = [:]
-            showHome = true
+            showHome = false
             activeWorkspacePath = nil
             activeTabId = nil
             selectedSessionByWorkspace = [:]
@@ -502,7 +502,7 @@ final class AppState {
     }
 
     func activateWorkspace(_ path: String) async {
-        showHome = true
+        showHome = false
         activeWorkspacePath = path
         await ensureWorkspaceSelectionAttached()
     }
