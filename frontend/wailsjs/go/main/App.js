@@ -194,8 +194,16 @@ export function LaunchShell(arg1, arg2) {
   return window['go']['main']['App']['LaunchShell'](arg1, arg2);
 }
 
+export function ListClaudeChatHistory(arg1, arg2) {
+  return window['go']['main']['App']['ListClaudeChatHistory'](arg1, arg2);
+}
+
 export function ListClaudeChatSessions(arg1) {
   return window['go']['main']['App']['ListClaudeChatSessions'](arg1);
+}
+
+export function ListCodexChatHistory(arg1, arg2) {
+  return window['go']['main']['App']['ListCodexChatHistory'](arg1, arg2);
 }
 
 export function ListCodexChatSessions(arg1) {

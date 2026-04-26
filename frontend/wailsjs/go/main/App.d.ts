@@ -109,7 +109,11 @@ export function LaunchCodexChatWithOptions(arg1:string,arg2:string,arg3:string,a
 
 export function LaunchShell(arg1:string,arg2:string):Promise<string>;
 
+export function ListClaudeChatHistory(arg1:string,arg2:number):Promise<Array<claudesdk.HistoryThread>>;
+
 export function ListClaudeChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;
+
+export function ListCodexChatHistory(arg1:string,arg2:number):Promise<Array<codexchat.HistoryThread>>;
 
 export function ListCodexChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;
 

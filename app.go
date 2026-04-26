@@ -418,6 +418,10 @@ func (a *App) GetClaudeChatMessages(sessionID string) []claudechat.Message {
 	return session.Messages()
 }
 
+func (a *App) ListClaudeChatHistory(workspacePath string, limit int) []claudechat.HistoryThread {
+	return claudechat.ListHistory(workspacePath, limit)
+}
+
 func (a *App) SendClaudeChatMessage(sessionID string, text string, attachments []chatattachments.Attachment) error {
 	session, ok := a.claudeMgr.Get(sessionID)
 	if !ok {
@@ -526,6 +530,10 @@ func (a *App) GetCodexChatMessages(sessionID string) []codexchat.Message {
 		return nil
 	}
 	return session.Messages()
+}
+
+func (a *App) ListCodexChatHistory(workspacePath string, limit int) []codexchat.HistoryThread {
+	return codexchat.ListHistory(workspacePath, limit)
 }
 
 func (a *App) SendCodexChatMessage(sessionID string, text string, attachments []chatattachments.Attachment) error {

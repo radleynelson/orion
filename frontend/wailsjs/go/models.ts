@@ -25,6 +25,28 @@ export namespace chatattachments {
 
 export namespace claudesdk {
 
+	export class HistoryThread {
+	    threadId: string;
+	    workspacePath?: string;
+	    model?: string;
+	    updatedAt: string;
+	    messageCount: number;
+	    preview?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new HistoryThread(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.threadId = source["threadId"];
+	        this.workspacePath = source["workspacePath"];
+	        this.model = source["model"];
+	        this.updatedAt = source["updatedAt"];
+	        this.messageCount = source["messageCount"];
+	        this.preview = source["preview"];
+	    }
+	}
 	export class Message {
 	    id: string;
 	    sessionId: string;
@@ -124,6 +146,28 @@ export namespace claudesdk {
 
 export namespace codexchat {
 
+	export class HistoryThread {
+	    threadId: string;
+	    workspacePath?: string;
+	    model?: string;
+	    updatedAt: string;
+	    messageCount: number;
+	    preview?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new HistoryThread(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.threadId = source["threadId"];
+	        this.workspacePath = source["workspacePath"];
+	        this.model = source["model"];
+	        this.updatedAt = source["updatedAt"];
+	        this.messageCount = source["messageCount"];
+	        this.preview = source["preview"];
+	    }
+	}
 	export class Message {
 	    id: string;
 	    sessionId: string;

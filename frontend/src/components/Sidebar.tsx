@@ -26,6 +26,7 @@ import {
 } from '../../wailsjs/go/main/App';
 import AgentSigil from './AgentSigil';
 import OrionMark from './OrionMark';
+import WorkspaceDetailPanel from './WorkspaceDetailPanel';
 
 type CodexLaunchOptions = {
   model: string;
@@ -103,7 +104,6 @@ export default function Sidebar() {
     setActiveWorkspace,
     addTab,
     addServerTab,
-    serverTabs,
     tabs,
     workspaceActive,
     setWorkspaceActive,
@@ -119,7 +119,6 @@ export default function Sidebar() {
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
-  const [envVisible, setEnvVisible] = useState(false);
   const [codexLaunch, setCodexLaunch] = useState<{ workspacePath: string; options: CodexLaunchOptions } | null>(null);
   const [launchingCodexChat, setLaunchingCodexChat] = useState(false);
 
@@ -380,7 +379,7 @@ export default function Sidebar() {
       console.error('Failed to launch Claude chat:', err);
       throw err;
     }
-  }, [project, addTab]);
+  }, [project, addServerTab]);
 
   const handleLaunchShell = useCallback(async (wsPath: string) => {
     if (!project) return;
@@ -484,7 +483,7 @@ export default function Sidebar() {
     } catch (err) {
       console.error('Failed to stop servers:', err);
     }
-  }, [project, tabs]);
+  }, [project]);
 
   const handleOpenBrowser = useCallback(async (wsPath: string) => {
     if (!project) return;
@@ -622,98 +621,32 @@ export default function Sidebar() {
                 )}
               </div>
 
-              {/* Actions when workspace is selected */}
-              {ws.path === activeWorkspacePath && (
-                <>
-                  {/* Dynamic agent buttons from config */}
-                  <div className="sidebar-actions">
-                    {agentTypes.map((agent) => (
-                      <span
-                        key={agent.name}
-                        className="sidebar-action"
-                        onClick={() => handleLaunchAgent(ws.path, agent.name)}
-                        title={agent.command}
-                      >
-                        <AgentSigil id={agent.name} size={16} /> {agent.label}
-                      </span>
-                    ))}
-                    <span className="sidebar-action" onClick={() => setCodexLaunch({ workspacePath: ws.path, options: DEFAULT_CODEX_OPTIONS })}>
-                      <AgentSigil id="codex" size={16} /> Codex Chat
-                    </span>
-                    <span className="sidebar-action" onClick={() => handleLaunchClaudeChat(ws.path)}>
-                      <AgentSigil id="claude" size={16} /> Claude Chat
-                    </span>
-                    <span className="sidebar-action" onClick={() => handleLaunchShell(ws.path)}>
-                      <AgentSigil id="shell" size={16} /> Shell
-                    </span>
-                  </div>
-
-                  {/* Server controls */}
-                  <div className="sidebar-actions">
-                    {!wsHasServers ? (
-                      <span className="sidebar-action" onClick={() => handleStartServers(ws.path, ws.isMain)} style={{ color: 'var(--accent-green)' }}>
-                        ▶ Start Servers
-                      </span>
-                    ) : (
-                      <>
-                        <span className="sidebar-action" onClick={() => handleStopServers(ws.path)} style={{ color: 'var(--accent-red)' }}>
-                          ■ Stop
-                        </span>
-                        <span className="sidebar-action" onClick={() => handleOpenBrowser(ws.path)} style={{ color: 'var(--accent-cyan)' }}>
-                          ◎ Browser
-                        </span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Server port display */}
-                  {wsStatuses.length > 0 && (
-                    <div className="sidebar-servers">
-                      {[...wsStatuses].sort((a, b) => {
-                        const order: Record<string, number> = { frontend: 0, backend: 1, sidekiq: 2 };
-                        return (order[a.name] ?? 99) - (order[b.name] ?? 99);
-                      }).map((srv) => (
-                        <div key={srv.name} className="sidebar-server">
-                          <span className={`server-dot ${srv.running ? 'running' : 'stopped'}`}>●</span>
-                          <span className="server-name">{srv.name}</span>
-                          {srv.port > 0 && <span className="server-port">:{srv.port}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Environment variables panel */}
-                  {Object.keys(envVars).length > 0 && ws.path === activeWorkspacePath && (
-                    <div className="sidebar-env">
-                      <div
-                        className="sidebar-env-header"
-                        onClick={() => setEnvVisible(!envVisible)}
-                      >
-                        <span>{envVisible ? '▾' : '▸'} Env</span>
-                      </div>
-                      {envVisible && (
-                        <div className="sidebar-env-list">
-                          {Object.entries(envVars).map(([key, val]) => (
-                            <div
-                              key={key}
-                              className="sidebar-env-item"
-                              onClick={() => navigator.clipboard.writeText(val)}
-                              title="Click to copy"
-                            >
-                              <span className="env-key">{key}</span>
-                              <span className="env-val">{val}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-
             </div>
           );
         })}
+
+        {activeWorkspacePath && (
+          (() => {
+            const activeWorkspace = workspaces.find((ws) => ws.path === activeWorkspacePath);
+            if (!activeWorkspace) return null;
+            return (
+              <WorkspaceDetailPanel
+                project={project}
+                workspace={activeWorkspace}
+                serverStatuses={serverStatuses[activeWorkspace.path] || []}
+                envVars={envVars}
+                agentTypes={agentTypes}
+                onLaunchAgent={handleLaunchAgent}
+                onLaunchCodexOptions={(workspacePath) => setCodexLaunch({ workspacePath, options: DEFAULT_CODEX_OPTIONS })}
+                onLaunchClaudeChat={handleLaunchClaudeChat}
+                onLaunchShell={handleLaunchShell}
+                onStartServers={handleStartServers}
+                onStopServers={handleStopServers}
+                onOpenBrowser={handleOpenBrowser}
+              />
+            );
+          })()
+        )}
 
         {creating && (
           <div className="workspace-create-overlay" onMouseDown={() => !creatingWorkspace && setCreating(false)}>
