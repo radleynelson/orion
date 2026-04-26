@@ -335,15 +335,26 @@ async function emitHistory(sessionId) {
   const history = await getSessionMessages(sessionId, { dir: workspacePath });
   for (const entry of history) {
     const messages = entry.type === 'assistant'
-      ? normalizeAssistantEvent(entry)
-      : normalizeUserEvent(entry);
+      ? normalizeAssistantEvent(entry, { historical: true })
+      : normalizeUserEvent(entry, { historical: true });
     for (const message of messages) {
-      emitMessage(message);
+      emitMessage(markHistoricalMessage(message));
     }
+  }
+  if (!running) {
+    emitStatus('idle');
   }
 }
 
-function normalizeAssistantEvent(event) {
+function markHistoricalMessage(message) {
+  if (!message || message.subtype) {
+    return message;
+  }
+  return { ...message, subtype: 'history' };
+}
+
+function normalizeAssistantEvent(event, options = {}) {
+  const historical = Boolean(options.historical);
   const content = Array.isArray(event?.message?.content) ? event.message.content : [];
   const messages = [];
   const texts = [];
@@ -400,7 +411,9 @@ function normalizeAssistantEvent(event) {
         text: extractQuestion(input),
         details: compact(input),
       });
-      emitStatus('waiting_input', 'Waiting for your answer');
+      if (!historical) {
+        emitStatus('waiting_input', 'Waiting for your answer');
+      }
       continue;
     }
     if (isPlanPlumbingTool(toolName, input)) {
@@ -414,7 +427,9 @@ function normalizeAssistantEvent(event) {
       text: toolName,
       details: compact(input),
     });
-    emitStatus('running', `Using ${toolName}`);
+    if (!historical) {
+      emitStatus('running', `Using ${toolName}`);
+    }
   }
   if (texts.length) {
     const text = texts.join('');

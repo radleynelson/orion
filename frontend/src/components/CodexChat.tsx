@@ -491,7 +491,10 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
       }
     }
     if (msg.type === "tool") {
-      rows.push({ ...msg, toolStatus: "running" });
+      rows.push({
+        ...msg,
+        toolStatus: msg.subtype === "history" ? "complete" : "running",
+      });
       continue;
     }
     if (msg.type === "permission_request") {
@@ -665,9 +668,12 @@ function liveActivityItems(
     });
   }
 
-  const runningTools = rows.filter(
-    (row) => row.type === "tool" && row.toolStatus === "running",
-  );
+  const runningTools =
+    lastStatus === "running"
+      ? rows.filter(
+          (row) => row.type === "tool" && row.toolStatus === "running",
+        )
+      : [];
   const latestTool = runningTools[runningTools.length - 1];
   if (latestTool) {
     items.push({
