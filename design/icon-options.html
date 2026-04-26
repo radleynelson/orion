@@ -549,6 +549,53 @@
       border-color: rgba(255,255,255,.18);
     }
 
+    .brand-sigil.openai-slot,
+    .brand-sigil.claude-slot {
+      font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .02em;
+    }
+
+    .brand-sigil.claude-slot {
+      background: #f5eee3;
+      color: #2c211a;
+    }
+
+    .brand-sigil.openai-slot {
+      background: #0f1011;
+      color: #f6f4ef;
+    }
+
+    .official-slot-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+    }
+
+    .official-slot {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(255,255,255,.025);
+    }
+
+    .official-slot-head {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--text);
+      font-weight: 650;
+      font-size: 13px;
+    }
+
+    .official-slot-copy {
+      margin-top: 8px;
+      color: var(--dim);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
     .role-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -773,6 +820,26 @@
       <circle cx="16" cy="34" r="2.2"></circle>
       <circle cx="31" cy="33" r="2.4"></circle>
     </symbol>
+    <symbol id="i-orion-hourglass" viewBox="0 0 44 44">
+      <path d="M14 8 18 20 14 35M30 10 26 24 31 35M14 8 30 10M14 35 31 35M18 20 22 22 26 24M22 22 22 28 23 32"></path>
+      <circle cx="14" cy="8" r="2.5"></circle><circle cx="30" cy="10" r="2.2"></circle>
+      <circle cx="18" cy="20" r="1.9"></circle><circle cx="22" cy="22" r="2"></circle><circle cx="26" cy="24" r="1.9"></circle>
+      <circle cx="22" cy="28" r="1.5"></circle><circle cx="23" cy="32" r="1.6"></circle>
+      <circle cx="14" cy="35" r="2.2"></circle><circle cx="31" cy="35" r="2.7"></circle>
+    </symbol>
+    <symbol id="i-orion-belt-sword" viewBox="0 0 44 44">
+      <path d="M11 14 18 21M33 15 26 24M18 21 22 22.5 26 24M22 22.5 22 29 23.5 34M13 35 22 22.5 32 35"></path>
+      <circle cx="11" cy="14" r="2.2"></circle><circle cx="33" cy="15" r="2"></circle>
+      <circle cx="18" cy="21" r="2.3"></circle><circle cx="22" cy="22.5" r="2.5"></circle><circle cx="26" cy="24" r="2.3"></circle>
+      <circle cx="22" cy="29" r="1.7"></circle><circle cx="23.5" cy="34" r="1.6"></circle>
+      <circle cx="13" cy="35" r="2"></circle><circle cx="32" cy="35" r="2.4"></circle>
+    </symbol>
+    <symbol id="i-orion-o-belt" viewBox="0 0 44 44">
+      <path d="M13 11c4.8-5.3 14.5-5 18.6 1.2 4.4 6.8 1.2 18.4-6.8 22.4-7.8 3.9-16.3-.8-17-8.8-.4-5 1.3-10.6 5.2-14.8z"></path>
+      <path d="M15 22 21.5 23.3 28 24.7"></path>
+      <circle cx="15" cy="22" r="2.2"></circle><circle cx="21.5" cy="23.3" r="2.5"></circle><circle cx="28" cy="24.7" r="2.2"></circle>
+      <circle cx="16" cy="11" r="1.7"></circle><circle cx="29" cy="13" r="1.7"></circle><circle cx="17" cy="34" r="1.8"></circle><circle cx="30" cy="33" r="2"></circle>
+    </symbol>
     <symbol id="i-list" viewBox="0 0 24 24">
       <path d="M8 7h11M8 12h11M8 17h11"></path><circle cx="5" cy="7" r="1"></circle><circle cx="5" cy="12" r="1"></circle><circle cx="5" cy="17" r="1"></circle>
     </symbol>
@@ -896,10 +963,48 @@
     <section class="section">
       <div class="section-head">
         <h2>Orion project mark</h2>
-        <div class="section-note">New direction: make the mark read more like the actual Orion constellation, especially the three-star belt. The first three are constellation-forward variants; the older marks remain below for comparison.</div>
+        <div class="section-note">Second pass: make the constellation legible as Orion first. These emphasize the shoulder stars, the three-star belt, the sword, and the Rigel/Saiph base instead of generic connected dots.</div>
       </div>
       <div class="mark-row">
         <div class="option-card selected mark-tile">
+          <div class="mark soft"><svg width="36" height="36" viewBox="0 0 44 44">
+            <path d="M14 8 18 20 14 35M30 10 26 24 31 35M14 8 30 10M14 35 31 35M18 20 22 22 26 24M22 22 22 28 23 32" fill="none" stroke="rgba(238,238,239,.72)" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path>
+            <circle cx="14" cy="8" r="2.5" fill="#f0bc72"></circle><circle cx="30" cy="10" r="2.2" fill="#7ca9f7"></circle>
+            <circle cx="18" cy="20" r="1.9" fill="#eeeeef"></circle><circle cx="22" cy="22" r="2" fill="#eeeeef"></circle><circle cx="26" cy="24" r="1.9" fill="#eeeeef"></circle>
+            <circle cx="22" cy="28" r="1.45" fill="#a9a8b1"></circle><circle cx="23" cy="32" r="1.55" fill="#a9a8b1"></circle>
+            <circle cx="14" cy="35" r="2.2" fill="#7ca9f7"></circle><circle cx="31" cy="35" r="2.7" fill="#eeeeef"></circle>
+          </svg></div>
+          <div class="mark-name">O10 - Orion hourglass</div>
+        </div>
+        <div class="option-card mark-tile">
+          <div class="mark dark"><svg width="36" height="36" viewBox="0 0 44 44">
+            <path d="M11 14 18 21M33 15 26 24M18 21 22 22.5 26 24M22 22.5 22 29 23.5 34M13 35 22 22.5 32 35" fill="none" stroke="rgba(238,238,239,.7)" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"></path>
+            <circle cx="11" cy="14" r="2.2" fill="#f0bc72"></circle><circle cx="33" cy="15" r="2" fill="#7ca9f7"></circle>
+            <circle cx="18" cy="21" r="2.3" fill="#eeeeef"></circle><circle cx="22" cy="22.5" r="2.5" fill="#eeeeef"></circle><circle cx="26" cy="24" r="2.3" fill="#eeeeef"></circle>
+            <circle cx="22" cy="29" r="1.65" fill="#a9a8b1"></circle><circle cx="23.5" cy="34" r="1.55" fill="#a9a8b1"></circle>
+            <circle cx="13" cy="35" r="2" fill="#7ca9f7"></circle><circle cx="32" cy="35" r="2.4" fill="#eeeeef"></circle>
+          </svg></div>
+          <div class="mark-name">O11 - belt + sword</div>
+        </div>
+        <div class="option-card mark-tile">
+          <div class="mark"><svg width="36" height="36" viewBox="0 0 44 44">
+            <path d="M13 11c4.8-5.3 14.5-5 18.6 1.2 4.4 6.8 1.2 18.4-6.8 22.4-7.8 3.9-16.3-.8-17-8.8-.4-5 1.3-10.6 5.2-14.8z" fill="none" stroke="rgba(238,238,239,.62)" stroke-width="1.45" stroke-linecap="round"></path>
+            <path d="M15 22 21.5 23.3 28 24.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+            <circle cx="15" cy="22" r="2.2" fill="#eeeeef"></circle><circle cx="21.5" cy="23.3" r="2.5" fill="#eeeeef"></circle><circle cx="28" cy="24.7" r="2.2" fill="#eeeeef"></circle>
+            <circle cx="16" cy="11" r="1.7" fill="#f0bc72"></circle><circle cx="29" cy="13" r="1.7" fill="#7ca9f7"></circle><circle cx="17" cy="34" r="1.8" fill="#7ca9f7"></circle><circle cx="30" cy="33" r="2" fill="#eeeeef"></circle>
+          </svg></div>
+          <div class="mark-name">O12 - O plus belt</div>
+        </div>
+        <div class="option-card mark-tile">
+          <div class="mark bare"><svg width="42" height="42" viewBox="0 0 44 44">
+            <path d="M18 20 22 22 26 24M22 22 22 29" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"></path>
+            <circle cx="14" cy="8" r="2.2" fill="#f0bc72"></circle><circle cx="30" cy="10" r="2" fill="#7ca9f7"></circle>
+            <circle cx="18" cy="20" r="2.5" fill="#eeeeef"></circle><circle cx="22" cy="22" r="2.7" fill="#eeeeef"></circle><circle cx="26" cy="24" r="2.5" fill="#eeeeef"></circle>
+            <circle cx="22" cy="29" r="1.8" fill="#a9a8b1"></circle><circle cx="14" cy="35" r="2" fill="#7ca9f7"></circle><circle cx="31" cy="35" r="2.4" fill="#eeeeef"></circle>
+          </svg></div>
+          <div class="mark-name">O13 - no connector chart</div>
+        </div>
+        <div class="option-card mark-tile">
           <div class="mark soft"><svg width="34" height="34" viewBox="0 0 44 44">
             <path d="M15 10 21 18 29 11M21 18 20 23 22 27 23 32M20 23 16 34M22 27l9 6" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" opacity=".78"></path>
             <circle cx="15" cy="10" r="2.3" fill="#7ca9f7"></circle><circle cx="29" cy="11" r="2.1" fill="#7ca9f7"></circle>
@@ -959,8 +1064,22 @@
       </div>
       <div class="grid two">
         <div class="option-card">
-          <div class="option-label"><strong>Brand assets for Claude/Codex</strong><span class="tag">mockup only</span></div>
+          <div class="option-label"><strong>Official provider art</strong><span class="tag">bundle asset slots</span></div>
           <div class="sample brand-comparison">
+            <div class="official-slot-grid">
+              <div class="official-slot">
+                <div class="official-slot-head"><span class="brand-sigil claude-slot">SVG</span>Claude</div>
+                <div class="official-slot-copy">Use the official Claude/Anthropic SVG if we can bundle it locally.</div>
+              </div>
+              <div class="official-slot">
+                <div class="official-slot-head"><span class="brand-sigil openai-slot">SVG</span>Codex</div>
+                <div class="official-slot-copy">Use OpenAI/Codex product art if an approved standalone icon exists.</div>
+              </div>
+              <div class="official-slot">
+                <div class="official-slot-head"><span class="sigil agent-review"><svg class="glyph"><use href="#i-target"></use></svg></span>Custom</div>
+                <div class="official-slot-copy">Custom agents stay in Orion's role icon system, not external brand art.</div>
+              </div>
+            </div>
             <div class="brand-row">
               <strong>Sessions</strong>
               <div class="agent-icons">
@@ -977,7 +1096,7 @@
                 <div class="tab"><span class="brand-sigil codex-brand"><svg class="glyph" viewBox="0 0 24 24"><use href="#i-codex-brand"></use></svg></span>Codex</div>
               </div>
             </div>
-            <div class="brand-note">Technically possible if we bundle approved SVG assets or use package-provided icons. This board uses placeholders to judge shape, scale, and contrast before making that decision.</div>
+            <div class="brand-note">Technically possible: the cleanest path is <code>provider = "claude"</code> or <code>provider = "codex"</code> mapping to locally bundled provider SVGs. This board still uses placeholders so we can judge scale without accidentally treating a traced logo as production-ready.</div>
           </div>
         </div>
 
@@ -1092,8 +1211,8 @@
         </div>
         <div class="mini-header">
           <div class="mark soft"><svg width="30" height="30" viewBox="0 0 44 44">
-            <path d="M15 10 21 18 29 11M21 18 20 23 22 27 23 32M20 23 16 34M22 27l9 6" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" opacity=".78"></path>
-            <circle cx="15" cy="10" r="2.3" fill="#7ca9f7"></circle><circle cx="29" cy="11" r="2.1" fill="#7ca9f7"></circle><circle cx="21" cy="18" r="1.9" fill="#eeeeef"></circle><circle cx="20" cy="23" r="1.9" fill="#eeeeef"></circle><circle cx="22" cy="27" r="1.9" fill="#eeeeef"></circle><circle cx="16" cy="34" r="2.2" fill="#7ca9f7"></circle><circle cx="31" cy="33" r="2.4" fill="#7ca9f7"></circle>
+            <path d="M14 8 18 20 14 35M30 10 26 24 31 35M14 8 30 10M14 35 31 35M18 20 22 22 26 24M22 22 22 28 23 32" fill="none" stroke="rgba(238,238,239,.72)" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path>
+            <circle cx="14" cy="8" r="2.5" fill="#f0bc72"></circle><circle cx="30" cy="10" r="2.2" fill="#7ca9f7"></circle><circle cx="18" cy="20" r="1.9" fill="#eeeeef"></circle><circle cx="22" cy="22" r="2" fill="#eeeeef"></circle><circle cx="26" cy="24" r="1.9" fill="#eeeeef"></circle><circle cx="22" cy="28" r="1.45" fill="#a9a8b1"></circle><circle cx="23" cy="32" r="1.55" fill="#a9a8b1"></circle><circle cx="14" cy="35" r="2.2" fill="#7ca9f7"></circle><circle cx="31" cy="35" r="2.7" fill="#eeeeef"></circle>
           </svg></div>
           <div><div class="project-name">slant</div><div class="project-path">/Users/rad_nelson/Desktop/code/slant</div></div>
         </div>
@@ -1124,7 +1243,7 @@
         </div>
         <div class="text-panel">
           <h3>My read</h3>
-          <p>Based on your notes: A is the activity rail direction. For the project mark, O7 is the strongest new pass because it reads as Orion, not just generic connected nodes. For agents, the brand-icon route is possible, but I would only do it with bundled/approved SVG assets; custom agents should use the limited role picker so the system stays controlled.</p>
+          <p>Based on your notes: A is the activity rail direction. For the project mark, O10 is the strongest pass because it finally reads like Orion: shoulders, belt, sword, and base. For agents, the official-brand route is possible, but I would only do it with bundled/approved SVG assets; custom agents should use the limited role picker so the system stays controlled.</p>
           <div style="height:14px"></div>
           <div class="swatches">
             <span class="swatch" style="background:var(--purple)"></span>
