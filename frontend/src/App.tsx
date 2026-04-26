@@ -9,13 +9,14 @@ import CodeReviewPane from './components/CodeReviewPane';
 import SearchEverywhere from './components/SearchEverywhere';
 import CommandPalette, { CommandPaletteItem } from './components/CommandPalette';
 import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
+import ConversionHistoryPicker, { ConversionHistoryCandidate } from './components/ConversionHistoryPicker';
 import AgentSigil from './components/AgentSigil';
 import OrionMark from './components/OrionMark';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { parseUnifiedDiff } from './lib/diffParser';
 import { EventsOn } from '../wailsjs/runtime/runtime';
-import { main, server } from '../wailsjs/go/models';
+import { claudesdk, codexchat, main, server } from '../wailsjs/go/models';
 import {
   AllocatePorts,
   ConvertChatToTerminalWithOptions,
@@ -27,6 +28,8 @@ import {
   ResumeCodexChatWithOptions,
   ConvertTerminalToClaudeChatWithOptions,
   ConvertTerminalToCodexChatWithOptions,
+  ListClaudeChatHistory,
+  ListCodexChatHistory,
   SaveTabs,
   GetLastProject,
   GetProjectInfo,
@@ -63,6 +66,14 @@ const DEFAULT_CODEX_CHAT_OPTIONS = {
 };
 
 type DiffStats = { files: number; added: number; removed: number; loading: boolean };
+type AgentKind = 'claude' | 'codex';
+type ConversionPickerState = {
+  kind: AgentKind;
+  tabId: string;
+  workspacePath: string;
+  error: string;
+  candidates: ConversionHistoryCandidate[];
+};
 
 function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefined {
   const provider = (agent?.provider || agent?.name || '').toLowerCase();
@@ -346,6 +357,9 @@ function App() {
   const [activeWorkspaceStatuses, setActiveWorkspaceStatuses] = useState<server.ServerStatus[]>([]);
   const [activeWorkspaceEnv, setActiveWorkspaceEnv] = useState<Record<string, string>>({});
   const [diffStats, setDiffStats] = useState<DiffStats>({ files: 0, added: 0, removed: 0, loading: false });
+  const [conversionPicker, setConversionPicker] = useState<ConversionPickerState | null>(null);
+  const [conversionPickerBusy, setConversionPickerBusy] = useState(false);
+  const [conversionNotice, setConversionNotice] = useState<string | null>(null);
   const [toolbarPopover, setToolbarPopover] = useState<'servers' | 'env' | null>(null);
   const [toolbarBusy, setToolbarBusy] = useState<'servers' | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -356,6 +370,12 @@ function App() {
   useEffect(() => {
     localStorage.setItem('orion.sidebarWidth', String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!conversionNotice) return;
+    const timer = window.setTimeout(() => setConversionNotice(null), 7000);
+    return () => window.clearTimeout(timer);
+  }, [conversionNotice]);
 
   const openCommandPalette = useCallback(() => {
     setSearchEverywhereVisible(false);
@@ -738,6 +758,116 @@ function App() {
     removeTab(tabId);
   }, [tabs, removeTab, getAllTerminalIds, getChatSessions]);
 
+  const replaceTerminalWithChat = useCallback(async (
+    tab: Tab,
+    kind: AgentKind,
+    session: claudesdk.SessionInfo | codexchat.SessionInfo,
+  ) => {
+    for (const termId of getAllTerminalIds(tab)) {
+      try { await CloseTerminal(termId); } catch {}
+    }
+    addTab({
+      id: generateId('tab'),
+      label: chatTabLabel(kind, session?.label),
+      rootPane: {
+        type: 'chat',
+        id: generateId('pane'),
+        chatSessionId: session.id,
+        chatThreadId: session.threadId,
+        chatKind: kind,
+      } as PaneLeaf,
+      tabType: kind === 'claude' ? 'claude-chat' : 'codex-chat',
+      workspacePath: tab.workspacePath,
+      provider: kind,
+      viewMode: 'chat',
+      runtimeSessionId: session.id,
+      threadId: session.threadId || tab.threadId,
+      model: session.model || tab.model,
+      reasoningEffort: session.reasoningEffort || tab.reasoningEffort,
+      approvalPolicy: session.approvalPolicy || tab.approvalPolicy,
+      sandboxMode: session.sandboxMode || tab.sandboxMode,
+      permissionMode: kind === 'claude'
+        ? (session as claudesdk.SessionInfo).permissionMode || tab.permissionMode
+        : tab.permissionMode,
+      collaborationMode: kind === 'codex'
+        ? (session as codexchat.SessionInfo).collaborationMode || tab.collaborationMode
+        : tab.collaborationMode,
+    });
+    removeTab(tab.id);
+  }, [addTab, getAllTerminalIds, removeTab]);
+
+  const openConversionHistoryPicker = useCallback(async (
+    kind: AgentKind,
+    tab: Tab,
+    err: unknown,
+  ) => {
+    const message = errorMessage(err);
+    try {
+      const rawHistory = kind === 'claude'
+        ? await ListClaudeChatHistory(tab.workspacePath, 25)
+        : await ListCodexChatHistory(tab.workspacePath, 25);
+      const candidates = (rawHistory || [])
+        .filter((thread) => thread.threadId && thread.messageCount > 0)
+        .map(normalizeHistoryCandidate);
+
+      if (candidates.length === 0) {
+        setConversionNotice(message || `No saved ${kind === 'claude' ? 'Claude' : 'Codex'} history was found for this workspace.`);
+        return;
+      }
+
+      setConversionPicker({
+        kind,
+        tabId: tab.id,
+        workspacePath: tab.workspacePath,
+        error: message,
+        candidates,
+      });
+      setConversionNotice(null);
+    } catch (historyErr) {
+      setConversionNotice(errorMessage(historyErr) || message || 'Could not load saved chat history.');
+    }
+  }, []);
+
+  const handlePickConversionHistory = useCallback(async (threadId: string) => {
+    if (!conversionPicker || !project) return;
+    const tab = useStore.getState().tabs.find((candidate) => candidate.id === conversionPicker.tabId);
+    if (!tab) {
+      setConversionPicker(null);
+      setConversionNotice('The terminal tab is no longer available.');
+      return;
+    }
+    setConversionPickerBusy(true);
+    try {
+      const session = conversionPicker.kind === 'claude'
+        ? await ResumeClaudeChatWithOptions(
+            project.root,
+            tab.workspacePath,
+            threadId,
+            tab.model || '',
+            tab.reasoningEffort || '',
+            tab.approvalPolicy || '',
+            tab.sandboxMode || '',
+            tab.permissionMode || '',
+          )
+        : await ResumeCodexChatWithOptions(
+            project.root,
+            tab.workspacePath,
+            threadId,
+            tab.model || '',
+            tab.reasoningEffort || '',
+            tab.approvalPolicy || '',
+            tab.sandboxMode || '',
+            tab.collaborationMode || '',
+          );
+      await replaceTerminalWithChat(tab, conversionPicker.kind, session);
+      setConversionPicker(null);
+    } catch (err) {
+      setConversionPicker((current) => current ? { ...current, error: errorMessage(err) || 'Could not resume selected history.' } : current);
+    } finally {
+      setConversionPickerBusy(false);
+    }
+  }, [conversionPicker, project, replaceTerminalWithChat]);
+
   const handleConvertTab = useCallback(async (tabId: string) => {
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab || !project) return;
@@ -800,26 +930,7 @@ function App() {
             tab.sandboxMode || '',
             tab.permissionMode || '',
           );
-          for (const termId of getAllTerminalIds(tab)) {
-            try { await CloseTerminal(termId); } catch {}
-          }
-          addTab({
-            id: generateId('tab'),
-            label: session?.label ? `${session.label} Chat` : 'Claude Chat',
-            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
-            tabType: 'claude-chat',
-            workspacePath: tab.workspacePath,
-            provider: 'claude',
-            viewMode: 'chat',
-            runtimeSessionId: session.id,
-            threadId: session.threadId || tab.threadId,
-            model: session.model || tab.model,
-            reasoningEffort: session.reasoningEffort || tab.reasoningEffort,
-            approvalPolicy: session.approvalPolicy || tab.approvalPolicy,
-            sandboxMode: session.sandboxMode || tab.sandboxMode,
-            permissionMode: session.permissionMode || tab.permissionMode,
-          });
-          removeTab(tab.id);
+          await replaceTerminalWithChat(tab, 'claude', session);
           return;
         }
         const termId = getAllTerminalIds(tab)[0];
@@ -836,31 +947,13 @@ function App() {
           tab.sandboxMode || '',
           tab.collaborationMode || '',
         );
-        for (const termId of getAllTerminalIds(tab)) {
-          try { await CloseTerminal(termId); } catch {}
-        }
-        addTab({
-          id: generateId('tab'),
-          label: session?.label || 'Codex Chat',
-          rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
-          tabType: 'codex-chat',
-          workspacePath: tab.workspacePath,
-          provider: 'codex',
-          viewMode: 'chat',
-          runtimeSessionId: session.id,
-          threadId: session.threadId || tab.threadId,
-          model: session.model || tab.model,
-          reasoningEffort: session.reasoningEffort || tab.reasoningEffort,
-          approvalPolicy: session.approvalPolicy || tab.approvalPolicy,
-          sandboxMode: session.sandboxMode || tab.sandboxMode,
-          collaborationMode: session.collaborationMode || tab.collaborationMode,
-        });
-        removeTab(tab.id);
+        await replaceTerminalWithChat(tab, 'codex', session);
       } catch (err) {
         console.error('Failed to convert terminal to chat:', err);
+        await openConversionHistoryPicker(kind, tab, err);
       }
     }
-  }, [tabs, project, getChatSessions, addTab, removeTab, getAllTerminalIds]);
+  }, [tabs, project, getChatSessions, addTab, removeTab, getAllTerminalIds, replaceTerminalWithChat, openConversionHistoryPicker]);
 
   // Persist tabs to disk whenever they change (for recovery on restart)
   useEffect(() => {
@@ -1851,6 +1944,29 @@ function App() {
         onPick={handleNewTabPick}
       />
 
+      {/* Terminal-to-chat history picker */}
+      {conversionPicker && (
+        <ConversionHistoryPicker
+          visible={Boolean(conversionPicker)}
+          kind={conversionPicker.kind}
+          workspacePath={conversionPicker.workspacePath}
+          error={conversionPicker.error}
+          candidates={conversionPicker.candidates}
+          busy={conversionPickerBusy}
+          onClose={() => {
+            if (!conversionPickerBusy) setConversionPicker(null);
+          }}
+          onPick={handlePickConversionHistory}
+        />
+      )}
+
+      {conversionNotice && (
+        <div className="conversion-toast" role="status">
+          <span>{conversionNotice}</span>
+          <button type="button" onClick={() => setConversionNotice(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
+
       {/* Context menu */}
       {contextMenu && (
         <div
@@ -2050,6 +2166,31 @@ function updateChatPaneThreadId(pane: Pane, sessionId: string, threadId?: string
     ...pane,
     children: pane.children.map((child) => updateChatPaneThreadId(child, sessionId, threadId)),
   };
+}
+
+function normalizeHistoryCandidate(thread: claudesdk.HistoryThread | codexchat.HistoryThread): ConversionHistoryCandidate {
+  return {
+    threadId: thread.threadId,
+    updatedAt: thread.updatedAt,
+    messageCount: thread.messageCount,
+    preview: thread.preview,
+    model: thread.model,
+  };
+}
+
+function chatTabLabel(kind: AgentKind, label?: string) {
+  const fallback = kind === 'claude' ? 'Claude Chat' : 'Codex Chat';
+  const value = (label || fallback).trim() || fallback;
+  return value.toLowerCase().endsWith(' chat') ? value : `${value} Chat`;
+}
+
+function errorMessage(err: unknown) {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object' && 'message' in err) {
+    return String((err as { message?: unknown }).message || '');
+  }
+  return String(err || '');
 }
 
 export default App;
