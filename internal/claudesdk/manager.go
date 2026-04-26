@@ -573,7 +573,11 @@ func (s *Session) handleEnvelope(envelope bridgeEnvelope) {
 		s.mu.Unlock()
 		s.readyOnce.Do(func() { close(s.ready) })
 		s.emitSessionMetadata("Claude chat ready")
-		s.setStatus("idle", "")
+		if s.currentStatus() == "running" {
+			s.setStatus("running", "Claude is thinking")
+		} else {
+			s.setStatus("idle", "")
+		}
 	case "status":
 		s.setStatus(firstNonEmpty(envelope.Status, "idle"), envelope.Text)
 	case "message":
@@ -587,6 +591,12 @@ func (s *Session) handleEnvelope(envelope bridgeEnvelope) {
 	default:
 		s.emit(Message{Type: "system", Text: envelope.Type, Details: compactAny(envelope)})
 	}
+}
+
+func (s *Session) currentStatus() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.status
 }
 
 func (s *Session) emitSessionMetadata(text string) {

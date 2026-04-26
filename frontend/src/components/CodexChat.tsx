@@ -504,7 +504,39 @@ function mergeRows(messages: ChatMessage[], assistantName: string): ChatRow[] {
     }
     rows.push({ ...msg });
   }
+  appendLiveLoadingRow(rows, messages, assistantName);
   return rows;
+}
+
+function appendLiveLoadingRow(
+  rows: ChatRow[],
+  messages: ChatMessage[],
+  assistantName: string,
+) {
+  const status = [...messages]
+    .reverse()
+    .find((msg) => msg.type === "status" && msg.status);
+  if (status?.status !== "running") return;
+
+  const last = rows[rows.length - 1];
+  if (last?.type === "loading") return;
+  if (last?.type === "tool" && last.toolStatus === "running") return;
+  if (last?.type === "thinking_delta") return;
+  if (last?.type === "assistant" && last.merged) return;
+  if (last?.type === "permission_request" && last.permissionState === "waiting") {
+    return;
+  }
+  if (last?.type === "plan" && last.planState === "waiting") return;
+
+  rows.push({
+    id: `live-loading-${status.id}`,
+    sessionId: status.sessionId,
+    threadId: status.threadId,
+    type: "loading",
+    role: "assistant",
+    text: status.text || `${assistantName} is thinking`,
+    createdAt: status.createdAt,
+  });
 }
 
 function updatePermissionRow(

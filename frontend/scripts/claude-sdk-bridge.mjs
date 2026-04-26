@@ -136,7 +136,7 @@ function handleStreamEvent(event) {
       if (event.subtype === 'init') {
         threadId = event.session_id || threadId;
         emitSessionMetadata(event.model || model, currentPermissionMode);
-        emitStatus('idle');
+        emitStatus(running ? 'running' : 'idle', running ? 'Claude is thinking' : '');
       } else if (event.subtype === 'status') {
         if (running) {
           emitStatus('running', statusText(event));

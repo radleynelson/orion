@@ -4044,7 +4044,36 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             toolStatus: nil
         ))
     }
+    appendLiveLoadingRow(&rows, messages: messages, assistantName: assistantName)
     return rows
+}
+
+private func appendLiveLoadingRow(_ rows: inout [CodexChatRow], messages: [CodexChatMessage], assistantName: String) {
+    guard let status = messages.reversed().first(where: { $0.type == "status" && $0.status != nil }),
+          status.status == "running" else {
+        return
+    }
+    if let last = rows.last {
+        if last.type == "loading" { return }
+        if last.type == "tool" && last.toolStatus == "running" { return }
+        if last.type == "thinking_delta" { return }
+        if last.type == "assistant" && last.id.hasPrefix("assistant-stream-") { return }
+        if last.type == "permission_request" && last.permissionState == "waiting" { return }
+        if last.type == "plan" && last.planState == "waiting" { return }
+    }
+    rows.append(CodexChatRow(
+        id: "live-loading-\(status.id)",
+        type: "loading",
+        label: assistantName,
+        text: status.text?.isEmpty == false ? status.text! : "\(assistantName) is thinking",
+        details: nil,
+        toolUseId: nil,
+        planPath: nil,
+        attachments: [],
+        resultText: nil,
+        resultDetails: nil,
+        toolStatus: nil
+    ))
 }
 
 private func updatePermissionRow(_ rows: inout [CodexChatRow], update: CodexChatMessage, state: String) {

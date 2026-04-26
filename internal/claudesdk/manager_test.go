@@ -44,6 +44,33 @@ func TestParseClaudeSessionIDs(t *testing.T) {
 	}
 }
 
+func TestSessionEnvelopeDoesNotClearRunningStatus(t *testing.T) {
+	session := &Session{
+		manager:     NewManager(),
+		id:          "claude-chat-test",
+		label:       "Claude Chat",
+		status:      "running",
+		ready:       make(chan struct{}),
+		subscribers: make(map[chan Message]struct{}),
+	}
+
+	session.handleEnvelope(bridgeEnvelope{
+		Type:     "session",
+		ThreadID: "thread-1",
+		Model:    "claude-opus-4-7",
+	})
+
+	if got := session.currentStatus(); got != "running" {
+		t.Fatalf("status = %q, want running", got)
+	}
+
+	for _, msg := range session.Messages() {
+		if msg.Type == "status" && msg.Status == "idle" {
+			t.Fatalf("session init emitted idle while turn was running: %#v", msg)
+		}
+	}
+}
+
 func TestValidClaudeSessionForWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
