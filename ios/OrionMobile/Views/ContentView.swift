@@ -128,51 +128,90 @@ struct MainView: View {
 
 struct HeaderBar: View {
     @Environment(AppState.self) private var state
+    @State private var serverStatuses: [ServerStatus] = []
+    @State private var isChangingServers = false
+
+    private var activeWorkspace: Workspace? { state.activeWorkspace }
+    private var runningServers: [ServerStatus] { serverStatuses.filter(\.running) }
+    private var serversRunning: Bool { !runningServers.isEmpty }
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 state.showWorkspaces = true
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 18))
                     .foregroundStyle(OrionTheme.textSecondary)
+                    .frame(width: 32, height: 32)
             }
-            Spacer()
+            .buttonStyle(.plain)
 
-            // Project switcher in the header
-            if state.projects.count > 1 {
-                Menu {
-                    ForEach(state.projects, id: \.self) { p in
-                        Button {
-                            Task { try? await state.selectProject(p) }
-                        } label: {
-                            Label((p as NSString).lastPathComponent,
-                                  systemImage: p == state.selectedProject ? "checkmark" : "folder")
-                        }
-                    }
+            projectSwitcher
+                .frame(maxWidth: 148, alignment: .leading)
+
+            Spacer(minLength: 4)
+
+            Button {
+                state.showDiffReview = true
+            } label: {
+                HeaderPill(systemImage: "doc.text.magnifyingglass", title: "Diff", tint: OrionTheme.accentBlue)
+            }
+            .buttonStyle(.plain)
+
+            if activeWorkspace != nil {
+                Button {
+                    Task { await toggleServers() }
                 } label: {
-                    titleView
+                    HeaderPill(
+                        systemImage: serversRunning ? "stop.fill" : "play.fill",
+                        title: serversRunning ? "Stop" : "Start",
+                        tint: serversRunning ? OrionTheme.accentRed : OrionTheme.accentGreen,
+                        isLoading: isChangingServers
+                    )
                 }
-            } else {
+                .buttonStyle(.plain)
+                .disabled(isChangingServers)
+            }
+
+            Button { state.showSettings = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 54)
+        .background(OrionTheme.bgPrimary)
+        .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
+        .task(id: state.activeWorkspacePath) {
+            await reloadServerStatuses()
+        }
+        .onChange(of: state.sessions.count) { _, _ in
+            Task { await reloadServerStatuses() }
+        }
+    }
+
+    @ViewBuilder
+    private var projectSwitcher: some View {
+        if state.projects.count > 1 {
+            Menu {
+                ForEach(state.projects, id: \.self) { p in
+                    Button {
+                        Task { try? await state.selectProject(p) }
+                    } label: {
+                        Label((p as NSString).lastPathComponent,
+                              systemImage: p == state.selectedProject ? "checkmark" : "folder")
+                    }
+                }
+            } label: {
                 titleView
             }
-
-            Spacer()
-            HStack(spacing: 5) {
-                Circle().fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed).frame(width: 6, height: 6)
-                Text(state.isConnected ? "Live" : "Off")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(state.isConnected ? OrionTheme.textSecondary : OrionTheme.textDim)
-            }
-            Button { state.showDiffReview = true } label: {
-                Image(systemName: "doc.text.magnifyingglass").font(.system(size: 15)).foregroundStyle(OrionTheme.textSecondary)
-            }
-            Button { state.showSettings = true } label: {
-                Image(systemName: "gearshape").font(.system(size: 16)).foregroundStyle(OrionTheme.textSecondary)
-            }
+        } else {
+            titleView
         }
-        .padding(.horizontal, 14).frame(height: 54).background(OrionTheme.bgSecondary)
-        .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
     }
 
     @ViewBuilder
@@ -208,6 +247,55 @@ struct HeaderBar: View {
             return workspace.branch
         }
         return workspace.name
+    }
+
+    private func reloadServerStatuses() async {
+        guard let workspace = activeWorkspace else {
+            serverStatuses = []
+            return
+        }
+        serverStatuses = await state.getServerStatuses(workspace: workspace)
+    }
+
+    private func toggleServers() async {
+        guard let workspace = activeWorkspace else { return }
+        isChangingServers = true
+        if serversRunning {
+            await state.stopServers(workspace: workspace)
+        } else {
+            await state.startServers(workspace: workspace)
+        }
+        serverStatuses = await state.getServerStatuses(workspace: workspace)
+        isChangingServers = false
+    }
+}
+
+private struct HeaderPill: View {
+    let systemImage: String
+    let title: String
+    let tint: Color
+    var isLoading = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(tint)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(tint)
+            }
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(OrionTheme.textSecondary)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(OrionTheme.bgSurface)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.7))
     }
 }
 
@@ -2546,6 +2634,28 @@ private struct PendingChatImage: Identifiable {
     }
 }
 
+private struct CompactChatChip: View {
+    let title: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(tint)
+                .frame(width: 5, height: 5)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(OrionTheme.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(OrionTheme.bgPrimary.opacity(0.55))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.5))
+    }
+}
+
 struct CodexChatView: View {
     @Environment(AppState.self) private var state
     let connection: CodexChatConnection
@@ -2566,39 +2676,9 @@ struct CodexChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    AgentSigilView(connection.sessionType, size: 34, strong: true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(assistantName)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(OrionTheme.textPrimary)
-                        Text(statusLabel)
-                            .font(.system(size: 11))
-                            .foregroundStyle(OrionTheme.textDim)
-                    }
-                    Spacer()
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(connectionBadgeColor)
-                            .frame(width: 7, height: 7)
-                        Text(connectionBadgeText)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(connectionBadgeForeground)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
-                }
-                if let sessionMetadata {
-                    modeStrip(sessionMetadata)
-                }
-                if !liveActivityItems.isEmpty {
-                    liveActivityStrip(liveActivityItems)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            compactHeader
+                .padding(.horizontal, 12)
+                .frame(height: 42)
             .background(OrionTheme.bgSecondary)
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
@@ -2655,6 +2735,44 @@ struct CodexChatView: View {
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await loadPhotoAttachments(items) }
+        }
+    }
+
+    private var compactHeader: some View {
+        HStack(spacing: 8) {
+            AgentSigilView(connection.sessionType, size: 24, strong: true)
+            Text(assistantName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OrionTheme.textPrimary)
+                .lineLimit(1)
+
+            if let mode = compactModeLabel(sessionMetadata) {
+                CompactChatChip(title: mode, tint: mode == "plan" ? OrionTheme.accentBlue : OrionTheme.textDim)
+            }
+
+            if let activity = liveActivityItems.first {
+                CompactChatChip(
+                    title: activity.value.map { "\(activity.label) \($0)" } ?? activity.label,
+                    tint: liveActivityColor(activity.kind)
+                )
+            } else {
+                Text(statusLabel)
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(connectionBadgeColor)
+                    .frame(width: 6, height: 6)
+                Text(connectionBadgeText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(connectionBadgeForeground)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -2718,6 +2836,17 @@ struct CodexChatView: View {
 
     private var liveActivityItems: [MobileLiveActivityItem] {
         liveChatActivityItems(messages: connection.messages, rows: chatRows, assistantName: assistantName)
+    }
+
+    private func compactModeLabel(_ metadata: ChatSessionMetadata?) -> String? {
+        guard let metadata else { return nil }
+        let rawMode = (metadata.permissionMode ?? metadata.collaborationMode ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !rawMode.isEmpty, rawMode != "default" else { return nil }
+        if rawMode == "plan" { return "plan" }
+        if rawMode == "approved" { return "approved" }
+        return rawMode
     }
 
     @ViewBuilder

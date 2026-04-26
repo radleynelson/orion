@@ -74,9 +74,8 @@ final class AppState {
     var activeWorkspace: Workspace? { workspaces.first { $0.path == activeWorkspacePath } }
 
     var visibleSessions: [SessionInfo] {
-        let nonServerSessions = sessions.filter { $0.type != "server" }
-        guard let activeWorkspacePath else { return nonServerSessions }
-        return nonServerSessions.filter { $0.workspacePath == activeWorkspacePath }
+        guard let activeWorkspacePath else { return sessions }
+        return sessions.filter { $0.workspacePath == activeWorkspacePath }
     }
 
     var visibleTabs: [TerminalTab] {
@@ -720,7 +719,7 @@ final class AppState {
     }
 
     private func preferredSession(in workspacePath: String) -> SessionInfo? {
-        let workspaceSessions = sessions.filter { $0.workspacePath == workspacePath && $0.type != "server" }
+        let workspaceSessions = sessions.filter { $0.workspacePath == workspacePath }
         guard !workspaceSessions.isEmpty else { return nil }
         if let selected = selectedSessionByWorkspace[workspacePath],
            let session = workspaceSessions.first(where: { $0.id == selected || $0.tmuxName == selected }) {
@@ -730,7 +729,7 @@ final class AppState {
            let session = workspaceSessions.first(where: { $0.id == activeSession.id || $0.tmuxName == activeSession.tmuxName }) {
             return session
         }
-        return workspaceSessions.first
+        return workspaceSessions.first { $0.type != "server" } ?? workspaceSessions.first
     }
 
     private func ensureWorkspaceSelectionAttached() async {
