@@ -1687,6 +1687,7 @@ function App() {
                 window.dispatchEvent(new Event('orion:close-workspace-inspector'));
                 setToolbarPopover((current) => current === next ? null : next);
               }}
+              onClosePopover={() => setToolbarPopover(null)}
               onStartServers={startServersForActiveWorkspace}
               onStopServers={stopServersForActiveWorkspace}
               onToggleDiff={() => {
@@ -1914,6 +1915,7 @@ function WorkspaceToolbar({
   busy,
   sessionStatus,
   onTogglePopover,
+  onClosePopover,
   onStartServers,
   onStopServers,
   onToggleDiff,
@@ -1925,6 +1927,7 @@ function WorkspaceToolbar({
   busy: boolean;
   sessionStatus: string;
   onTogglePopover: (popover: 'servers' | 'env') => void;
+  onClosePopover: () => void;
   onStartServers: () => void;
   onStopServers: () => void;
   onToggleDiff: () => void;
@@ -1955,41 +1958,44 @@ function WorkspaceToolbar({
       <span className="workspace-ready">{sessionStatus}</span>
 
       {popover && (
-        <div className="toolbar-popover">
-          {popover === 'servers' ? (
-            <>
-              <div className="toolbar-popover-header">
-                <span>Servers · {runningServers.length}/{serverStatuses.length}</span>
-                <button type="button" className={runningServers.length > 0 ? 'stop' : 'start'} onClick={serverAction} disabled={busy}>
-                  {busy ? '...' : runningServers.length > 0 ? 'stop' : 'start'}
-                </button>
-              </div>
-              <div className="toolbar-popover-list">
-                {[...serverStatuses].sort(serverStatusSort).map((status) => (
-                  <div key={status.name} className="toolbar-popover-row">
-                    <span className={`server-dot ${status.running ? 'running' : 'stopped'}`}>●</span>
-                    <span>{status.name}</span>
-                    {status.port > 0 && <code>:{status.port}</code>}
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="toolbar-popover-header">
-                <span>Env · {envEntries.length}</span>
-              </div>
-              <div className="toolbar-popover-list">
-                {envEntries.map(([key, value]) => (
-                  <button key={key} type="button" className="toolbar-popover-row env-row" onClick={() => navigator.clipboard.writeText(value)}>
-                    <span>{key}</span>
-                    <code>{maskToolbarValue(value)}</code>
+        <>
+          <div className="toolbar-popover-dismiss" onMouseDown={onClosePopover} />
+          <div className="toolbar-popover">
+            {popover === 'servers' ? (
+              <>
+                <div className="toolbar-popover-header">
+                  <span>Servers · {runningServers.length}/{serverStatuses.length}</span>
+                  <button type="button" className={runningServers.length > 0 ? 'stop' : 'start'} onClick={serverAction} disabled={busy}>
+                    {busy ? '...' : runningServers.length > 0 ? 'stop' : 'start'}
                   </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+                </div>
+                <div className="toolbar-popover-list">
+                  {[...serverStatuses].sort(serverStatusSort).map((status) => (
+                    <div key={status.name} className="toolbar-popover-row">
+                      <span className={`server-dot ${status.running ? 'running' : 'stopped'}`}>●</span>
+                      <span>{status.name}</span>
+                      {status.port > 0 && <code>:{status.port}</code>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="toolbar-popover-header">
+                  <span>Env · {envEntries.length}</span>
+                </div>
+                <div className="toolbar-popover-list">
+                  {envEntries.map(([key, value]) => (
+                    <button key={key} type="button" className="toolbar-popover-row env-row" onClick={() => navigator.clipboard.writeText(value)}>
+                      <span>{key}</span>
+                      <code>{maskToolbarValue(value)}</code>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

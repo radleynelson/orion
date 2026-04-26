@@ -3084,6 +3084,13 @@ button.workspace-min-row:hover em {
   box-shadow: 0 18px 54px rgba(0, 0, 0, 0.42);
 }
 
+.toolbar-popover-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 79;
+  background: transparent;
+}
+
 .toolbar-popover-header {
   display: flex;
   align-items: center;
