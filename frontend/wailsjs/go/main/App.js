@@ -18,6 +18,10 @@ export function ApproveClaudePlan(arg1) {
   return window['go']['main']['App']['ApproveClaudePlan'](arg1);
 }
 
+export function ApproveCodexPlan(arg1) {
+  return window['go']['main']['App']['ApproveCodexPlan'](arg1);
+}
+
 export function AttachClaudeChat(arg1, arg2) {
   return window['go']['main']['App']['AttachClaudeChat'](arg1, arg2);
 }

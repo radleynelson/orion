@@ -308,10 +308,11 @@ type Session struct {
 }
 
 type pendingInput struct {
-	requestID   string
-	toolUseID   string
-	questionIDs []string
-	submitted   bool
+	requestID      string
+	requestIDValue any
+	toolUseID      string
+	questionIDs    []string
+	submitted      bool
 }
 
 type rpcResponse struct {
@@ -365,9 +366,25 @@ func (s *Session) Subscribe() (<-chan Message, func()) {
 }
 
 func (s *Session) Send(text string, attachments []chatattachments.Attachment) error {
+	return s.send(text, attachments, s.collaborationMode)
+}
+
+func (s *Session) ApprovePlan() error {
+	if err := s.send("Approved. Continue with the approved plan and implement it now.", nil, defaultCollabMode); err != nil {
+		return err
+	}
+	s.emit(Message{Type: "plan_resolved", Text: "Plan approved"})
+	return nil
+}
+
+func (s *Session) send(text string, attachments []chatattachments.Attachment, collaborationMode string) error {
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachments) == 0 {
 		return nil
+	}
+	collaborationMode = strings.TrimSpace(collaborationMode)
+	if collaborationMode == "" {
+		collaborationMode = s.collaborationMode
 	}
 
 	s.sendMu.Lock()
@@ -411,7 +428,7 @@ func (s *Session) Send(text string, attachments []chatattachments.Attachment) er
 		"approvalPolicy": s.approvalPolicy,
 		"effort":         s.reasoningEffort,
 		"collaborationMode": map[string]any{
-			"mode": s.collaborationMode,
+			"mode": collaborationMode,
 			"settings": map[string]any{
 				"model":                  s.model,
 				"reasoning_effort":       s.reasoningEffort,
@@ -455,7 +472,11 @@ func (s *Session) Answer(toolUseID string, result string) error {
 	}
 
 	s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: result})
-	if err := s.respond(pending.requestID, map[string]any{"answers": answers}); err != nil {
+	requestID := pending.requestIDValue
+	if requestID == nil {
+		requestID = pending.requestID
+	}
+	if err := s.respond(requestID, map[string]any{"answers": answers}); err != nil {
 		return err
 	}
 	s.pendingInputsMu.Lock()
@@ -590,7 +611,7 @@ func (s *Session) notify(method string, params map[string]any) error {
 	return s.writeEnvelope(map[string]any{"method": method, "params": params})
 }
 
-func (s *Session) respond(id string, result map[string]any) error {
+func (s *Session) respond(id any, result map[string]any) error {
 	return s.writeEnvelope(map[string]any{"id": id, "result": result})
 }
 
@@ -659,9 +680,10 @@ func (s *Session) handleLine(line []byte) {
 
 	if hasID && hasMethod {
 		id := rawID(idRaw)
+		idValue := rawIDValue(idRaw)
 		method := rawString(methodRaw)
 		params := rawParams(envelope["params"])
-		s.handleServerRequest(id, method, params)
+		s.handleServerRequest(id, idValue, method, params)
 		return
 	}
 
@@ -696,7 +718,7 @@ func (s *Session) handleResponse(id string, resultRaw json.RawMessage, errorRaw 
 	ch <- rpcResponse{result: result}
 }
 
-func (s *Session) handleServerRequest(id string, method string, params map[string]any) {
+func (s *Session) handleServerRequest(id string, idValue any, method string, params map[string]any) {
 	switch method {
 	case "item/tool/requestUserInput":
 		toolUseID := stringFrom(params, "itemId", "approvalId")
@@ -706,9 +728,10 @@ func (s *Session) handleServerRequest(id string, method string, params map[strin
 		questionIDs, details := summarizeQuestions(params["questions"])
 		s.pendingInputsMu.Lock()
 		s.pendingInputs[toolUseID] = pendingInput{
-			requestID:   id,
-			toolUseID:   toolUseID,
-			questionIDs: questionIDs,
+			requestID:      id,
+			requestIDValue: idValue,
+			toolUseID:      toolUseID,
+			questionIDs:    questionIDs,
 		}
 		s.pendingInputsMu.Unlock()
 		s.emit(Message{
@@ -721,21 +744,21 @@ func (s *Session) handleServerRequest(id string, method string, params map[strin
 		s.setStatus("waiting_input")
 	case "item/permissions/requestApproval":
 		permissions, _ := params["permissions"].(map[string]any)
-		_ = s.respond(id, map[string]any{
+		_ = s.respond(idValue, map[string]any{
 			"scope":       "session",
 			"permissions": permissions,
 		})
 		s.emit(Message{Type: "tool_result", ToolUseID: id, ToolName: "Permissions", Text: "Approved automatically"})
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		_ = s.respond(id, map[string]any{"decision": "accept"})
+		_ = s.respond(idValue, map[string]any{"decision": "accept"})
 		s.emit(Message{Type: "tool_result", ToolUseID: id, ToolName: "Approval", Text: "Approved automatically"})
 	default:
 		if strings.Contains(method, "requestApproval") {
-			_ = s.respond(id, map[string]any{"decision": "accept"})
+			_ = s.respond(idValue, map[string]any{"decision": "accept"})
 			s.emit(Message{Type: "tool_result", ToolUseID: id, ToolName: "Approval", Text: "Approved automatically"})
 			return
 		}
-		_ = s.respond(id, map[string]any{})
+		_ = s.respond(idValue, map[string]any{})
 	}
 }
 
@@ -990,6 +1013,29 @@ func rawID(raw json.RawMessage) string {
 		return fmt.Sprintf("%d", n)
 	}
 	return strings.Trim(string(raw), `"`)
+}
+
+func rawIDValue(raw json.RawMessage) any {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var value any
+	if decoder.Decode(&value) == nil {
+		if n, ok := value.(json.Number); ok {
+			if i, err := n.Int64(); err == nil {
+				return i
+			}
+			if f, err := n.Float64(); err == nil {
+				return f
+			}
+		}
+	}
+
+	return rawID(raw)
 }
 
 func rawString(raw json.RawMessage) string {

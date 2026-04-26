@@ -329,7 +329,6 @@ final class CodexChatConnection {
     }
 
     func approvePlan() {
-        guard isClaude else { return }
         send(CodexChatWSMessage(type: "plan_action", action: "approve"))
     }
 

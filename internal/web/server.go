@@ -1610,6 +1610,26 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 					})
 				}
+			case "plan_action":
+				if msg.Action != "approve" {
+					writeJSONMessage(codexchat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: runtimeSessionID,
+						Type:      "error",
+						Text:      "unsupported plan action",
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+					continue
+				}
+				if err := session.ApprovePlan(); err != nil {
+					writeJSONMessage(codexchat.Message{
+						ID:        "msg-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+						SessionID: runtimeSessionID,
+						Type:      "error",
+						Text:      err.Error(),
+						CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+					})
+				}
 			case "ping":
 				writeJSONMessage(codexChatWSMessage{Type: "pong"})
 			}

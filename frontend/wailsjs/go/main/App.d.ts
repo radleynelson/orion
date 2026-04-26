@@ -21,6 +21,8 @@ export function AnswerCodexChatRequest(arg1:string,arg2:string,arg3:string):Prom
 
 export function ApproveClaudePlan(arg1:string):Promise<void>;
 
+export function ApproveCodexPlan(arg1:string):Promise<void>;
+
 export function AttachClaudeChat(arg1:string,arg2:string):Promise<claudesdk.SessionInfo>;
 
 export function CloseTerminal(arg1:string):Promise<void>;

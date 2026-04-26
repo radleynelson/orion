@@ -544,6 +544,14 @@ func (a *App) AnswerCodexChatRequest(sessionID string, toolUseID string, result 
 	return session.Answer(toolUseID, result)
 }
 
+func (a *App) ApproveCodexPlan(sessionID string) error {
+	session, ok := a.codexMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("codex chat session not found: %s", sessionID)
+	}
+	return session.ApprovePlan()
+}
+
 func (a *App) StopCodexChat(sessionID string) error {
 	return a.codexMgr.Stop(sessionID)
 }

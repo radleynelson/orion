@@ -5,6 +5,7 @@ import {
   AnswerClaudeChatRequest,
   AnswerCodexChatRequest,
   ApproveClaudePlan,
+  ApproveCodexPlan,
   GetClaudeChatMessages,
   GetCodexChatMessages,
   OpenChatAttachmentDialog,
@@ -105,6 +106,7 @@ const CHAT_CONFIG: Record<ChatKind, ChatConfig> = {
     getMessages: GetCodexChatMessages,
     sendMessage: SendCodexChatMessage,
     answerRequest: AnswerCodexChatRequest,
+    approvePlan: ApproveCodexPlan,
     emptyText: "Ask Codex to inspect, edit, or explain this workspace.",
   },
   claude: {
