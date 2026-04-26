@@ -94,10 +94,13 @@ collaboration_mode = "default"
 # Custom agents are terminal-only unless Orion learns their provider.
 [agents.reviewer]
 label = "Review"
+provider = "claude"
+icon = "reviewer"
 command = "claude --dangerously-skip-permissions --prompt 'Review code changes for bugs'"
 
 [agents.tests]
 label = "Tests"
+icon = "test"
 command = "./scripts/watch-tests.sh"
 ```
 
@@ -116,6 +119,8 @@ Desktop defaults to terminal when creating a configured agent. Mobile defaults C
 If you omit `provider`, Orion infers it only for agents named `claude` or `codex` for backward compatibility. Other command-only agents stay terminal-only.
 
 Model is optional. Leave `model` out to let Claude Code or Codex use their current default model; set it only when you intentionally want to pin a specific model for that project or agent.
+
+Agent icons are optional. If an agent has `provider = "claude"` or `provider = "codex"` and no `icon`, Orion shows the provider icon. Set `icon` to use a custom role icon instead. Current role icons: `reviewer`, `scribe`, `plan`, `test`, `debug`, `deploy`, `ops`, `data`, `design`, `security`, `browser`, `automate`, `branch`, `docs`, `clean`, `shell`, `server`, `editor`, `diagnostics`.
 
 ### Backward Compatibility
 

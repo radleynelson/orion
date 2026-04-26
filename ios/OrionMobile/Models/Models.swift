@@ -35,6 +35,7 @@ struct SessionInfo: Codable, Identifiable {
     let label: String
     let workspacePath: String
     let provider: String?
+    let icon: String?
     let viewMode: String?
     let runtimeSessionId: String?
     let threadId: String?
@@ -56,6 +57,7 @@ struct SessionInfo: Codable, Identifiable {
         label: String,
         workspacePath: String,
         provider: String? = nil,
+        icon: String? = nil,
         viewMode: String? = nil,
         runtimeSessionId: String? = nil,
         threadId: String? = nil,
@@ -71,6 +73,7 @@ struct SessionInfo: Codable, Identifiable {
         self.label = label
         self.workspacePath = workspacePath
         self.provider = provider
+        self.icon = icon
         self.viewMode = viewMode
         self.runtimeSessionId = runtimeSessionId
         self.threadId = threadId
@@ -107,6 +110,7 @@ struct TerminalTab: Identifiable {
     let id: String
     let label: String
     let type: String
+    let icon: String?
     let tmuxSession: String
     let workspacePath: String
 
@@ -114,6 +118,7 @@ struct TerminalTab: Identifiable {
         self.id = session.id
         self.label = session.label
         self.type = session.type
+        self.icon = session.icon
         self.tmuxSession = session.terminalTmuxSession
         self.workspacePath = session.workspacePath
     }
@@ -148,6 +153,7 @@ struct AgentType: Codable, Identifiable {
     let name: String
     let label: String
     let provider: String?
+    let icon: String?
     let model: String?
     let reasoningEffort: String?
     let approvalPolicy: String?
@@ -169,6 +175,7 @@ struct LaunchCodexChatResponse: Codable {
     let status: String
     let threadId: String?
     let provider: String?
+    let icon: String?
     let viewMode: String?
     let runtimeSessionId: String?
     let model: String?

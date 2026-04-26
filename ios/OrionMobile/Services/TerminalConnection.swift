@@ -246,6 +246,7 @@ final class TerminalConnection {
 final class CodexChatConnection {
     let sessionId: String
     let sessionType: String
+    let sessionIcon: String
     let workspacePath: String
     private(set) var isConnected = false
     private(set) var connectionState = ConnectionState.disconnected
@@ -271,9 +272,10 @@ final class CodexChatConnection {
     private var pendingSends: [CodexChatWSMessage] = []
     private let maxPendingSends = 12
 
-    init(sessionId: String, sessionType: String = "codex-chat", workspacePath: String = "") {
+    init(sessionId: String, sessionType: String = "codex-chat", sessionIcon: String? = nil, workspacePath: String = "") {
         self.sessionId = sessionId
         self.sessionType = sessionType
+        self.sessionIcon = sessionIcon?.isEmpty == false ? sessionIcon! : sessionType
         self.workspacePath = workspacePath
     }
 

@@ -111,6 +111,7 @@ export namespace claudesdk {
 	    status: string;
 	    threadId?: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    model?: string;
@@ -132,6 +133,7 @@ export namespace claudesdk {
 	        this.status = source["status"];
 	        this.threadId = source["threadId"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.model = source["model"];
@@ -230,6 +232,7 @@ export namespace codexchat {
 	    status: string;
 	    threadId?: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    model?: string;
@@ -251,6 +254,7 @@ export namespace codexchat {
 	        this.status = source["status"];
 	        this.threadId = source["threadId"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.model = source["model"];
@@ -268,6 +272,7 @@ export namespace config {
 	export class AgentConfig {
 	    Label: string;
 	    Provider: string;
+	    Icon: string;
 	    Command: string;
 	    Model: string;
 	    ReasoningEffort: string;
@@ -284,6 +289,7 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Label = source["Label"];
 	        this.Provider = source["Provider"];
+	        this.Icon = source["Icon"];
 	        this.Command = source["Command"];
 	        this.Model = source["Model"];
 	        this.ReasoningEffort = source["ReasoningEffort"];
@@ -634,6 +640,7 @@ export namespace main {
 	    command: string;
 	    label: string;
 	    provider?: string;
+	    icon?: string;
 	    model?: string;
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
@@ -652,6 +659,7 @@ export namespace main {
 	        this.command = source["command"];
 	        this.label = source["label"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.model = source["model"];
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
@@ -695,6 +703,7 @@ export namespace state {
 	    tmuxSession: string;
 	    workspacePath: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
@@ -716,6 +725,7 @@ export namespace state {
 	        this.tmuxSession = source["tmuxSession"];
 	        this.workspacePath = source["workspacePath"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
@@ -733,6 +743,7 @@ export namespace state {
 	    label: string;
 	    workspacePath: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
@@ -754,6 +765,7 @@ export namespace state {
 	        this.label = source["label"];
 	        this.workspacePath = source["workspacePath"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
@@ -774,6 +786,7 @@ export namespace web {
 	    name: string;
 	    label: string;
 	    provider?: string;
+	    icon?: string;
 	    model?: string;
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
@@ -791,6 +804,7 @@ export namespace web {
 	        this.name = source["name"];
 	        this.label = source["label"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.model = source["model"];
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];

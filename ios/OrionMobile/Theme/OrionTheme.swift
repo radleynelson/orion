@@ -33,6 +33,19 @@ enum AgentSigilKind {
     case codex
     case reviewer
     case scribe
+    case plan
+    case test
+    case debug
+    case deploy
+    case ops
+    case data
+    case design
+    case security
+    case browser
+    case automate
+    case branch
+    case docs
+    case clean
     case shell
     case server
     case editor
@@ -42,8 +55,21 @@ enum AgentSigilKind {
         let lowered = value.lowercased()
         if lowered.contains("claude") { self = .claude }
         else if lowered.contains("codex") { self = .codex }
-        else if lowered.contains("reviewer") { self = .reviewer }
-        else if lowered.contains("scribe") { self = .scribe }
+        else if lowered.contains("review") || lowered.contains("audit") { self = .reviewer }
+        else if lowered.contains("scribe") || lowered.contains("write") { self = .scribe }
+        else if lowered.contains("plan") { self = .plan }
+        else if lowered.contains("test") || lowered.contains("qa") { self = .test }
+        else if lowered.contains("debug") || lowered.contains("bug") { self = .debug }
+        else if lowered.contains("deploy") || lowered.contains("release") { self = .deploy }
+        else if lowered.contains("ops") { self = .ops }
+        else if lowered.contains("data") || lowered.contains("database") { self = .data }
+        else if lowered.contains("design") { self = .design }
+        else if lowered.contains("security") || lowered.contains("secure") { self = .security }
+        else if lowered.contains("browser") || lowered.contains("web") { self = .browser }
+        else if lowered.contains("automate") || lowered.contains("automation") { self = .automate }
+        else if lowered.contains("branch") || lowered.contains("git") { self = .branch }
+        else if lowered.contains("docs") || lowered.contains("doc") { self = .docs }
+        else if lowered.contains("clean") || lowered.contains("refactor") { self = .clean }
         else if lowered.contains("server") { self = .server }
         else if lowered.contains("editor") { self = .editor }
         else if lowered.contains("diagnostics") { self = .diagnostics }
@@ -56,10 +82,16 @@ enum AgentSigilKind {
         case .codex: return OrionTheme.accentGreen
         case .reviewer: return Color(hex: 0xF4B46A)
         case .scribe: return OrionTheme.accentRose
+        case .plan, .ops: return OrionTheme.accentBlue
+        case .test, .docs, .diagnostics: return Color(hex: 0x9BC5FF)
+        case .debug: return OrionTheme.accentRose
+        case .deploy, .branch: return OrionTheme.accentGreen
+        case .data, .browser: return Color(hex: 0x77D7C8)
+        case .design: return OrionTheme.accentPurple
+        case .security, .clean: return Color(hex: 0xF4B46A)
+        case .automate, .editor: return OrionTheme.accentYellow
         case .shell: return OrionTheme.accentSlate
         case .server: return OrionTheme.accentBlue
-        case .editor: return OrionTheme.accentYellow
-        case .diagnostics: return Color(hex: 0x9BC5FF)
         }
     }
 
@@ -69,9 +101,23 @@ enum AgentSigilKind {
         case .codex: return Color(hex: 0x4FA872)
         case .reviewer: return Color(hex: 0xC58330)
         case .scribe: return Color(hex: 0xB66585)
+        case .plan, .ops, .test, .docs, .diagnostics: return Color(hex: 0x5A8BE8)
+        case .debug: return Color(hex: 0xB66585)
+        case .deploy, .branch: return Color(hex: 0x4FA872)
+        case .data, .browser: return Color(hex: 0x3BA696)
+        case .design: return Color(hex: 0x7A5FD4)
+        case .security, .clean: return Color(hex: 0xC58330)
+        case .automate, .editor: return Color(hex: 0xB98433)
         case .shell: return Color(hex: 0x5E6376)
-        case .server, .diagnostics: return Color(hex: 0x5A8BE8)
-        case .editor: return Color(hex: 0xB98433)
+        case .server: return Color(hex: 0x5A8BE8)
+        }
+    }
+
+    var nativeImageName: String? {
+        switch self {
+        case .claude: return "ClaudeProvider"
+        case .codex: return "CodexProvider"
+        default: return nil
         }
     }
 }
@@ -88,19 +134,31 @@ struct AgentSigilView: View {
     }
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: max(5, size * 0.28), style: .continuous)
-                .fill(background)
+        if let imageName = kind.nativeImageName {
+            Image(imageName)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: max(5, size * 0.28), style: .continuous))
                 .overlay {
-                    if !strong {
-                        RoundedRectangle(cornerRadius: max(5, size * 0.28), style: .continuous)
-                            .stroke(kind.color.opacity(0.24), lineWidth: 0.7)
-                    }
+                    RoundedRectangle(cornerRadius: max(5, size * 0.28), style: .continuous)
+                        .stroke(Color.white.opacity(strong ? 0.18 : 0.12), lineWidth: 0.7)
                 }
-            SigilCanvas(kind: kind, color: strong ? .white : kind.color)
-                .padding(size * 0.18)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: max(5, size * 0.28), style: .continuous)
+                    .fill(background)
+                    .overlay {
+                        if !strong {
+                            RoundedRectangle(cornerRadius: max(5, size * 0.28), style: .continuous)
+                                .stroke(kind.color.opacity(0.24), lineWidth: 0.7)
+                        }
+                    }
+                SigilCanvas(kind: kind, color: strong ? .white : kind.color)
+                    .padding(size * 0.18)
+            }
+            .frame(width: size, height: size)
         }
-        .frame(width: size, height: size)
     }
 
     private var background: some ShapeStyle {
@@ -148,6 +206,70 @@ private struct SigilCanvas: View {
                 context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.9 * sx, lineCap: .round, lineJoin: .round))
                 context.fill(Path(ellipseIn: rect(15.7, 6.7, 2.6, 2.6)), with: .color(color))
                 return
+            case .plan:
+                path.move(to: p(6, 6)); path.addLine(to: p(18, 6))
+                path.move(to: p(6, 12)); path.addLine(to: p(18, 12))
+                path.move(to: p(6, 18)); path.addLine(to: p(14, 18))
+            case .test:
+                path.move(to: p(5, 12)); path.addLine(to: p(10, 17)); path.addLine(to: p(19, 7))
+                path.move(to: p(6, 19)); path.addLine(to: p(18, 19))
+            case .debug:
+                path.addEllipse(in: rect(6, 6, 12, 12))
+                path.move(to: p(12, 4)); path.addLine(to: p(12, 20))
+                path.move(to: p(5, 10)); path.addLine(to: p(3, 8))
+                path.move(to: p(19, 10)); path.addLine(to: p(21, 8))
+                path.move(to: p(5, 14)); path.addLine(to: p(3, 16))
+                path.move(to: p(19, 14)); path.addLine(to: p(21, 16))
+            case .deploy:
+                path.move(to: p(12, 4)); path.addLine(to: p(12, 15))
+                path.move(to: p(8, 8)); path.addLine(to: p(12, 4)); path.addLine(to: p(16, 8))
+                path.move(to: p(6, 19)); path.addLine(to: p(18, 19))
+            case .ops:
+                path.addEllipse(in: rect(5, 5, 14, 14))
+                path.move(to: p(12, 7)); path.addLine(to: p(12, 12)); path.addLine(to: p(15.5, 14.5))
+            case .data:
+                path.addEllipse(in: rect(5, 4, 14, 5))
+                path.move(to: p(5, 6.5)); path.addLine(to: p(5, 17.5))
+                path.move(to: p(19, 6.5)); path.addLine(to: p(19, 17.5))
+                path.addEllipse(in: rect(5, 15, 14, 5))
+                path.move(to: p(5, 11)); path.addCurve(to: p(19, 11), control1: p(8, 14), control2: p(16, 14))
+            case .design:
+                path.move(to: p(5, 16)); path.addCurve(to: p(12, 5), control1: p(6, 9), control2: p(10, 5))
+                path.addCurve(to: p(19, 16), control1: p(14, 5), control2: p(18, 9))
+                path.move(to: p(8, 16)); path.addLine(to: p(16, 16))
+            case .security:
+                path.move(to: p(12, 4)); path.addLine(to: p(18, 7)); path.addLine(to: p(17, 15))
+                path.addCurve(to: p(12, 20), control1: p(16, 18), control2: p(14, 19))
+                path.addCurve(to: p(7, 15), control1: p(10, 19), control2: p(8, 18))
+                path.addLine(to: p(6, 7)); path.closeSubpath()
+            case .browser:
+                path.addEllipse(in: rect(4, 4, 16, 16))
+                path.move(to: p(4, 12)); path.addLine(to: p(20, 12))
+                path.move(to: p(12, 4)); path.addCurve(to: p(12, 20), control1: p(9, 8), control2: p(9, 16))
+                path.move(to: p(12, 4)); path.addCurve(to: p(12, 20), control1: p(15, 8), control2: p(15, 16))
+            case .automate:
+                path.addEllipse(in: rect(5, 5, 14, 14))
+                path.move(to: p(12, 8)); path.addLine(to: p(12, 12)); path.addLine(to: p(15, 14))
+                path.move(to: p(17, 5)); path.addLine(to: p(19.5, 2.5))
+            case .branch:
+                path.move(to: p(7, 6)); path.addLine(to: p(7, 18))
+                path.move(to: p(7, 11)); path.addCurve(to: p(17, 7), control1: p(11, 11), control2: p(13, 7))
+                path.move(to: p(17, 7)); path.addLine(to: p(17, 18))
+                context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.9 * sx, lineCap: .round, lineJoin: .round))
+                context.fill(Path(ellipseIn: rect(5.5, 4.5, 3, 3)), with: .color(color))
+                context.fill(Path(ellipseIn: rect(15.5, 5.5, 3, 3)), with: .color(color))
+                context.fill(Path(ellipseIn: rect(15.5, 16.5, 3, 3)), with: .color(color))
+                return
+            case .docs:
+                path.move(to: p(7, 4)); path.addLine(to: p(15, 4)); path.addLine(to: p(19, 8)); path.addLine(to: p(19, 20)); path.addLine(to: p(7, 20)); path.closeSubpath()
+                path.move(to: p(15, 4)); path.addLine(to: p(15, 8)); path.addLine(to: p(19, 8))
+                path.move(to: p(10, 13)); path.addLine(to: p(16, 13))
+                path.move(to: p(10, 16)); path.addLine(to: p(15, 16))
+            case .clean:
+                path.move(to: p(6, 17)); path.addLine(to: p(15, 8))
+                path.move(to: p(13, 6)); path.addLine(to: p(18, 11))
+                path.move(to: p(14, 5)); path.addLine(to: p(19, 10))
+                path.move(to: p(5, 19)); path.addLine(to: p(10, 19))
             case .server:
                 path.move(to: p(7, 5)); path.addLine(to: p(17, 5)); path.addLine(to: p(19, 12)); path.addLine(to: p(17, 19)); path.addLine(to: p(7, 19)); path.addLine(to: p(5, 12)); path.closeSubpath()
                 path.move(to: p(8.5, 12)); path.addLine(to: p(15.5, 12))

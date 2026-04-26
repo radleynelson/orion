@@ -360,9 +360,10 @@ func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudech
 
 func (a *App) LaunchClaudeChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
 	_, agent := a.agentForProvider(repoRoot, "claude")
-	return a.claudeMgr.StartWithOptions(claudechat.StartOptions{
+	info, err := a.claudeMgr.StartWithOptions(claudechat.StartOptions{
 		WorkspacePath:    workspacePath,
 		Label:            chatLabel(agent, "Claude Chat"),
+		Icon:             agent.Icon,
 		Model:            firstNonEmpty(model, agent.Model),
 		ReasoningEffort:  firstNonEmpty(reasoningEffort, agent.ReasoningEffort),
 		ApprovalPolicy:   firstNonEmpty(approvalPolicy, agent.ApprovalPolicy),
@@ -370,6 +371,12 @@ func (a *App) LaunchClaudeChatWithOptions(repoRoot string, workspacePath string,
 		PermissionMode:   firstNonEmpty(permissionMode, agent.PermissionMode, "bypassPermissions"),
 		ClaudeExecutable: agentExecutable(agent.Command, "claude"),
 	})
+	if info != nil {
+		info.Provider = "claude"
+		info.Icon = firstNonEmpty(agent.Icon, "claude")
+		info.ViewMode = "chat"
+	}
+	return info, err
 }
 
 func (a *App) ResumeClaudeChat(repoRoot string, workspacePath string, threadID string) (*claudechat.SessionInfo, error) {
@@ -382,9 +389,10 @@ func (a *App) ResumeClaudeChatWithOptions(repoRoot string, workspacePath string,
 		return nil, fmt.Errorf("threadId required")
 	}
 	_, agent := a.agentForProvider(repoRoot, "claude")
-	return a.claudeMgr.StartWithOptions(claudechat.StartOptions{
+	info, err := a.claudeMgr.StartWithOptions(claudechat.StartOptions{
 		WorkspacePath:    workspacePath,
 		Label:            chatLabel(agent, "Claude Chat"),
+		Icon:             agent.Icon,
 		ThreadID:         threadID,
 		Model:            firstNonEmpty(model, agent.Model),
 		ReasoningEffort:  firstNonEmpty(reasoningEffort, agent.ReasoningEffort),
@@ -393,6 +401,12 @@ func (a *App) ResumeClaudeChatWithOptions(repoRoot string, workspacePath string,
 		PermissionMode:   firstNonEmpty(permissionMode, agent.PermissionMode, "bypassPermissions"),
 		ClaudeExecutable: agentExecutable(agent.Command, "claude"),
 	})
+	if info != nil {
+		info.Provider = "claude"
+		info.Icon = firstNonEmpty(agent.Icon, "claude")
+		info.ViewMode = "chat"
+	}
+	return info, err
 }
 
 func (a *App) AttachClaudeChat(tmuxSession string, workspacePath string) (*claudechat.SessionInfo, error) {
@@ -425,6 +439,7 @@ func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInf
 			Label:            info.Label,
 			WorkspacePath:    info.WorkspacePath,
 			Provider:         "claude",
+			Icon:             firstNonEmpty(info.Icon, "claude"),
 			ViewMode:         "chat",
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
@@ -486,15 +501,20 @@ func (a *App) LaunchCodexChat(repoRoot string, workspacePath string) (*codexchat
 
 func (a *App) LaunchCodexChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
 	_, agent := a.agentForProvider(repoRoot, "codex")
-	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
+	info, err := a.codexMgr.StartWithOptions(codexchat.StartOptions{
 		WorkspacePath:     workspacePath,
 		Label:             chatLabel(agent, "Codex Chat"),
+		Icon:              agent.Icon,
 		Model:             firstNonEmpty(model, agent.Model),
 		ReasoningEffort:   firstNonEmpty(reasoningEffort, agent.ReasoningEffort, "xhigh"),
 		ApprovalPolicy:    firstNonEmpty(approvalPolicy, agent.ApprovalPolicy, "never"),
 		SandboxMode:       firstNonEmpty(sandboxMode, agent.SandboxMode, "danger-full-access"),
 		CollaborationMode: firstNonEmpty(collaborationMode, agent.CollaborationMode, "default"),
 	})
+	if info != nil {
+		info.Icon = firstNonEmpty(agent.Icon, codexchat.Provider)
+	}
+	return info, err
 }
 
 func (a *App) ResumeCodexChat(repoRoot string, workspacePath string, threadID string) (*codexchat.SessionInfo, error) {
@@ -511,9 +531,10 @@ func (a *App) ResumeCodexChatWithOptions(repoRoot string, workspacePath string, 
 	reasoningEffort = firstNonEmpty(options.ReasoningEffort, reasoningEffort)
 	collaborationMode = firstNonEmpty(options.CollaborationMode, collaborationMode)
 	_, agent := a.agentForProvider(repoRoot, "codex")
-	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
+	info, err := a.codexMgr.StartWithOptions(codexchat.StartOptions{
 		WorkspacePath:     workspacePath,
 		Label:             chatLabel(agent, "Codex Chat"),
+		Icon:              agent.Icon,
 		ThreadID:          threadID,
 		Model:             firstNonEmpty(model, agent.Model),
 		ReasoningEffort:   firstNonEmpty(reasoningEffort, agent.ReasoningEffort, "xhigh"),
@@ -521,6 +542,10 @@ func (a *App) ResumeCodexChatWithOptions(repoRoot string, workspacePath string, 
 		SandboxMode:       firstNonEmpty(sandboxMode, agent.SandboxMode, "danger-full-access"),
 		CollaborationMode: firstNonEmpty(collaborationMode, agent.CollaborationMode, "default"),
 	})
+	if info != nil {
+		info.Icon = firstNonEmpty(agent.Icon, codexchat.Provider)
+	}
+	return info, err
 }
 
 func (a *App) ConvertTerminalToCodexChat(repoRoot string, workspacePath string, tmuxSession string) (*codexchat.SessionInfo, error) {
@@ -549,6 +574,7 @@ func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 			Label:             info.Label,
 			WorkspacePath:     info.WorkspacePath,
 			Provider:          codexchat.Provider,
+			Icon:              firstNonEmpty(info.Icon, codexchat.Provider),
 			ViewMode:          codexchat.ViewModeChat,
 			RuntimeSessionID:  info.ID,
 			ThreadID:          info.ThreadID,
@@ -863,6 +889,7 @@ func (a *App) GetAgentNames(repoRoot string) []web.AgentType {
 			Name:              name,
 			Label:             firstNonEmpty(agent.Label, capitalize(name)),
 			Provider:          agent.Provider,
+			Icon:              agent.Icon,
 			Model:             agent.Model,
 			ReasoningEffort:   agent.ReasoningEffort,
 			ApprovalPolicy:    agent.ApprovalPolicy,
@@ -886,6 +913,7 @@ func (a *App) GetAgentTypes(repoRoot string) []AgentTypeInfo {
 			Command:           agent.Command,
 			Label:             firstNonEmpty(agent.Label, capitalize(name)),
 			Provider:          agent.Provider,
+			Icon:              agent.Icon,
 			Model:             agent.Model,
 			ReasoningEffort:   agent.ReasoningEffort,
 			ApprovalPolicy:    agent.ApprovalPolicy,
@@ -904,6 +932,7 @@ type AgentTypeInfo struct {
 	Command           string `json:"command"`
 	Label             string `json:"label"`
 	Provider          string `json:"provider,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	Model             string `json:"model,omitempty"`
 	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
 	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`

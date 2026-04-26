@@ -38,6 +38,7 @@ type SessionInfo struct {
 	Status           string `json:"status"`
 	ThreadID         string `json:"threadId,omitempty"`
 	Provider         string `json:"provider,omitempty"`
+	Icon             string `json:"icon,omitempty"`
 	ViewMode         string `json:"viewMode,omitempty"`
 	RuntimeSessionID string `json:"runtimeSessionId,omitempty"`
 	Model            string `json:"model,omitempty"`
@@ -69,6 +70,7 @@ type Listener func(sessionID string, message Message)
 type StartOptions struct {
 	WorkspacePath    string
 	Label            string
+	Icon             string
 	ThreadID         string
 	Model            string
 	ReasoningEffort  string
@@ -163,6 +165,22 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return session, ok
 }
 
+func (m *Manager) SetIcon(id string, icon string) {
+	icon = strings.TrimSpace(icon)
+	if icon == "" {
+		return
+	}
+	m.mu.RLock()
+	session, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	session.mu.Lock()
+	session.icon = icon
+	session.mu.Unlock()
+}
+
 func (m *Manager) List(workspacePaths []string) []SessionInfo {
 	pathSet := make(map[string]bool)
 	for _, path := range workspacePaths {
@@ -239,6 +257,7 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 	if label == "" {
 		label = "Claude Chat"
 	}
+	icon := strings.TrimSpace(options.Icon)
 	model := strings.TrimSpace(options.Model)
 	reasoningEffort := strings.TrimSpace(options.ReasoningEffort)
 	approvalPolicy := strings.TrimSpace(options.ApprovalPolicy)
@@ -311,6 +330,7 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		cancel:          cancel,
 		id:              id,
 		label:           label,
+		icon:            icon,
 		workspacePath:   workspacePath,
 		status:          "starting",
 		model:           model,
@@ -360,6 +380,7 @@ type Session struct {
 
 	id              string
 	label           string
+	icon            string
 	workspacePath   string
 	threadID        string
 	status          string
@@ -396,6 +417,7 @@ func (s *Session) Info() SessionInfo {
 		Status:           s.status,
 		ThreadID:         s.threadID,
 		Provider:         Provider,
+		Icon:             s.icon,
 		ViewMode:         ViewModeChat,
 		RuntimeSessionID: s.id,
 		Model:            s.model,

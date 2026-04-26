@@ -539,7 +539,7 @@ private struct MobileHomeView: View {
         let session = featuredSession
         let label = session?.label ?? "Codex"
         return HStack(spacing: 12) {
-            AgentSigilView(session?.type ?? "codex-chat", size: 38)
+            AgentSigilView(sessionIconID(session), size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(label) is ready when you are")
                     .font(.system(size: 15, weight: .semibold))
@@ -889,7 +889,7 @@ private struct HomeSessionRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            AgentSigilView(session.type, size: 25)
+            AgentSigilView(sessionIconID(session), size: 25)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.label)
                     .font(.system(size: 13.5, weight: .medium))
@@ -1379,7 +1379,7 @@ private struct DetailSessionRow: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            AgentSigilView(session.type, size: 30)
+            AgentSigilView(sessionIconID(session), size: 30)
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.label)
                     .font(.system(size: 14.5, weight: .semibold))
@@ -1672,7 +1672,7 @@ struct WorkspaceSection: View {
                     state.showWorkspaces = false
                 } label: {
                     HStack(spacing: 10) {
-                        AgentSigilView(session.type, size: 26)
+                        AgentSigilView(sessionIconID(session), size: 26)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(session.label).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
                             Text(session.type.replacingOccurrences(of: "-chat", with: " chat"))
@@ -2385,7 +2385,7 @@ struct TabPill: View {
         HStack(spacing: 6) {
             Button { state.activateTab(tab.id) } label: {
                 HStack(spacing: 7) {
-                    AgentSigilView(tab.type, size: 20)
+                    AgentSigilView(tab.icon ?? tab.type, size: 20)
                     Text(tab.label)
                         .font(.system(size: 12, weight: isActive ? .medium : .regular))
                         .foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
@@ -2449,6 +2449,11 @@ func sessionLabel(_ type: String) -> String {
     case "shell": return "Shell"
     default: return type.replacingOccurrences(of: "-", with: " ")
     }
+}
+
+func sessionIconID(_ session: SessionInfo?) -> String {
+    guard let session else { return "codex" }
+    return session.icon ?? session.provider ?? session.type
 }
 
 func isConvertibleSession(_ type: String) -> Bool {
@@ -2764,7 +2769,7 @@ struct CodexChatView: View {
 
     private var compactHeader: some View {
         HStack(spacing: 8) {
-            AgentSigilView(connection.sessionType, size: 24, strong: true)
+            AgentSigilView(connection.sessionIcon, size: 24, strong: true)
             Text(assistantName)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(OrionTheme.textPrimary)
@@ -2968,7 +2973,7 @@ struct CodexChatView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             HStack(alignment: .bottom, spacing: 8) {
-                AgentSigilView(connection.sessionType, size: 24)
+                AgentSigilView(connection.sessionIcon, size: 24)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(row.type == "permission_request" ? "\(assistantName) needs an answer" : assistantName)
                         .font(.system(size: 11))
@@ -2988,7 +2993,7 @@ struct CodexChatView: View {
         let isWaiting = row.planState != "approved"
         let planTint = isWaiting ? OrionTheme.accentBlue : OrionTheme.accentGreen
         return HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(connection.sessionType, size: 24)
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text("\(assistantName) has a plan")
                     .font(.system(size: 11))
@@ -3079,7 +3084,7 @@ struct CodexChatView: View {
 
     private func loadingRow(_ row: CodexChatRow) -> some View {
         return HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(connection.sessionType, size: 24)
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text(assistantName)
                     .font(.system(size: 11))
@@ -3107,7 +3112,7 @@ struct CodexChatView: View {
         let complete = row.toolStatus == "complete"
         let output = row.resultText ?? row.resultDetails ?? ""
         return HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(connection.sessionType, size: 24)
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text(complete ? "Tool finished" : "Tool running")
                     .font(.system(size: 11))
@@ -3189,7 +3194,7 @@ struct CodexChatView: View {
 
     private func reasoningRow(_ row: CodexChatRow) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(connection.sessionType, size: 24)
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text("Reasoning")
                     .font(.system(size: 11))
@@ -3236,7 +3241,7 @@ struct CodexChatView: View {
             return state == "answered" ? "Answer delivered." : "Waiting for the session to continue."
         }()
         return HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(connection.sessionType, size: 24)
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text(resolved ? "\(assistantName) answered" : "\(assistantName) needs input")
                     .font(.system(size: 11))

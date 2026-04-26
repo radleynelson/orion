@@ -245,10 +245,12 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	var agentCmd string
 	var agentProvider string
 	var agentLabel string
+	var agentIcon string
 	if agentCfg, ok := cfg.Agents[agentType]; ok {
 		agentCmd = agentCfg.Command
 		agentProvider = agentCfg.Provider
 		agentLabel = agentCfg.Label
+		agentIcon = agentCfg.Icon
 	} else {
 		switch agentType {
 		case "claude":
@@ -286,16 +288,16 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	if label == "" {
 		label = labelForType(sessionType)
 	}
-	return m.launchCommand(repoRoot, workspacePath, agentCmd, sessionType, label)
+	return m.launchCommand(repoRoot, workspacePath, agentCmd, sessionType, label, agentIcon)
 }
 
 // LaunchCommand creates a tmux session and sends a specific command.
 func (m *Manager) LaunchCommand(repoRoot string, workspacePath string, command string) (string, error) {
 	sessionType := sessionTypeForCommand(command)
-	return m.launchCommand(repoRoot, workspacePath, command, sessionType, labelForType(sessionType))
+	return m.launchCommand(repoRoot, workspacePath, command, sessionType, labelForType(sessionType), "")
 }
 
-func (m *Manager) launchCommand(repoRoot string, workspacePath string, command string, sessionType string, label string) (string, error) {
+func (m *Manager) launchCommand(repoRoot string, workspacePath string, command string, sessionType string, label string, icon string) (string, error) {
 	repoName := filepath.Base(repoRoot)
 	wsName := filepath.Base(workspacePath)
 
@@ -307,7 +309,7 @@ func (m *Manager) launchCommand(repoRoot string, workspacePath string, command s
 			return "", err
 		}
 	}
-	markTmuxSession(tmuxName, sessionType, label, workspacePath, command)
+	markTmuxSession(tmuxName, sessionType, label, workspacePath, command, icon)
 
 	// Source .orion/env.sh first so the agent has port awareness
 	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
@@ -337,7 +339,7 @@ func (m *Manager) LaunchShell(repoRoot string, workspacePath string) (string, er
 			return "", err
 		}
 	}
-	markTmuxSession(tmuxName, "shell", "Shell", workspacePath, "")
+	markTmuxSession(tmuxName, "shell", "Shell", workspacePath, "", "")
 
 	return tmuxName, nil
 }
@@ -415,7 +417,7 @@ func createTmuxSession(name, workDir string) error {
 // createTmuxSessionForAgent creates a tmux session with mouse OFF so that
 // TUI apps like Claude Code and Codex handle their own mouse/scroll events.
 
-func markTmuxSession(name string, sessionType string, label string, workspacePath string, command string) {
+func markTmuxSession(name string, sessionType string, label string, workspacePath string, command string, icon string) {
 	sessionType = normalizeSessionType(sessionType)
 	if sessionType == "" {
 		sessionType = "shell"
@@ -425,6 +427,7 @@ func markTmuxSession(name string, sessionType string, label string, workspacePat
 	}
 	setTmuxOption(name, "@orion_type", sessionType)
 	setTmuxOption(name, "@orion_label", label)
+	setTmuxOption(name, "@orion_icon", strings.TrimSpace(icon))
 	setTmuxOption(name, "@orion_workspace", workspacePath)
 	if command != "" {
 		setTmuxOption(name, "@orion_command", command)

@@ -80,6 +80,10 @@ function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefin
   return provider === 'claude' || provider === 'codex' ? provider : undefined;
 }
 
+function agentIcon(agent?: main.AgentTypeInfo): string | undefined {
+  return agent?.icon || agentProvider(agent);
+}
+
 function codexOptionsForAgent(agent?: main.AgentTypeInfo) {
   return {
     model: agent?.model || DEFAULT_CODEX_CHAT_OPTIONS.model,
@@ -199,6 +203,7 @@ function App() {
               rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
               tabType: 'claude-chat',
               workspacePath: saved.workspacePath,
+              icon: saved.icon || 'claude',
               provider: 'claude',
               viewMode: 'chat',
               runtimeSessionId: session.id,
@@ -229,6 +234,7 @@ function App() {
               rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
               tabType: 'codex-chat',
               workspacePath: saved.workspacePath,
+              icon: saved.icon || 'codex',
               provider: 'codex',
               viewMode: 'chat',
               runtimeSessionId: session.id,
@@ -250,6 +256,7 @@ function App() {
             rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
             tabType: saved.tabType as 'shell' | 'claude' | 'codex' | 'server',
             workspacePath: saved.workspacePath,
+            icon: saved.icon,
             provider: saved.provider as 'codex' | 'claude' | undefined,
             viewMode: 'terminal',
             runtimeSessionId: saved.runtimeSessionId,
@@ -280,6 +287,7 @@ function App() {
               rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
               tabType: (sess.type === 'server' || sess.type === 'claude' || sess.type === 'codex' ? sess.type : 'shell') as 'shell' | 'claude' | 'codex' | 'server',
               workspacePath: sess.workspacePath,
+              icon: sess.icon,
               provider: sess.provider as 'codex' | 'claude' | undefined,
               viewMode: 'terminal',
               runtimeSessionId: sess.runtimeSessionId,
@@ -511,12 +519,14 @@ function App() {
       const termId = generateId('term');
       await CreateAttachedTerminal(termId, tmuxSession);
       const provider = agentProvider(agent);
+      const icon = agentIcon(agent);
       addTab({
         id: generateId('tab'),
         label: agent.label,
         rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
         tabType: provider || 'shell',
         workspacePath: activeWorkspacePath,
+        icon,
         provider,
         viewMode: 'terminal',
         runtimeSessionId: tmuxSession,
@@ -551,6 +561,7 @@ function App() {
         rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
         tabType: 'codex-chat',
         workspacePath: activeWorkspacePath,
+        icon: 'codex',
         provider: 'codex',
         viewMode: 'chat',
         runtimeSessionId: session.id,
@@ -576,6 +587,7 @@ function App() {
         rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
         tabType: 'claude-chat',
         workspacePath: activeWorkspacePath,
+        icon: 'claude',
         provider: 'claude',
         viewMode: 'chat',
         runtimeSessionId: session.id,
@@ -778,6 +790,7 @@ function App() {
       } as PaneLeaf,
       tabType: kind === 'claude' ? 'claude-chat' : 'codex-chat',
       workspacePath: tab.workspacePath,
+      icon: tab.icon || kind,
       provider: kind,
       viewMode: 'chat',
       runtimeSessionId: session.id,
@@ -970,6 +983,7 @@ function App() {
               tabType: tab.tabType,
               tmuxSession: '',
               workspacePath: tab.workspacePath,
+              icon: tab.icon || 'codex',
               provider: 'codex',
               viewMode: 'chat',
               runtimeSessionId: chat?.id || tab.runtimeSessionId || '',
@@ -992,6 +1006,7 @@ function App() {
               tabType: tab.tabType,
               tmuxSession: chat.id,
               workspacePath: tab.workspacePath,
+              icon: tab.icon || 'claude',
               provider: 'claude',
               viewMode: 'chat',
               runtimeSessionId: chat.id,
@@ -1016,6 +1031,7 @@ function App() {
               tabType: tab.tabType,
               tmuxSession,
               workspacePath: tab.workspacePath,
+              icon: tab.icon || '',
               provider: tab.provider || (tab.tabType === 'claude' || tab.tabType === 'codex' ? tab.tabType : ''),
               viewMode: 'terminal',
               runtimeSessionId: tab.runtimeSessionId || tmuxSession,
@@ -1398,7 +1414,7 @@ function App() {
         title: `Start ${agent.label}`,
         subtitle: activeWorkspaceName,
         group: 'Agents',
-        icon: agent.provider || agent.name,
+        icon: agent.icon || agent.provider || agent.name,
         keywords: ['terminal', 'agent', agent.name, agent.label],
         disabled: !hasActiveWorkspace,
         run: () => launchAgentTab(agent),
@@ -1569,7 +1585,7 @@ function App() {
         title: `Switch to ${tab.label}`,
         subtitle: workspaces.find((ws) => ws.path === tab.workspacePath)?.branch || tab.workspacePath,
         group: 'Tabs',
-        icon: tab.tabType,
+        icon: tab.icon || tab.provider || tab.tabType,
         keywords: ['tab', tab.tabType, tab.provider || '', tab.threadId || ''],
         run: () => {
           if (tab.workspacePath !== activeWorkspacePath) setActiveWorkspace(tab.workspacePath);
@@ -1710,7 +1726,7 @@ function App() {
                     }
                   }}
                 >
-                  <span className="tab-icon"><AgentSigil id={tab.tabType} size={18} /></span>
+                  <span className="tab-icon"><AgentSigil id={tab.icon || tab.provider || tab.tabType} size={18} /></span>
                   {renamingTabId === tab.id ? (
                     <input
                       autoFocus

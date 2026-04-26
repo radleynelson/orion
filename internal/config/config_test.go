@@ -72,6 +72,21 @@ func TestEnsureDefaultFileDoesNotOverwriteExistingConfig(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAgentIcon(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("[agents.review]\nprovider = \"claude\"\nicon = \"reviewer\"\ncommand = \"claude --dangerously-skip-permissions\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Load(dir)
+	if got := cfg.Agents["review"].Icon; got != "reviewer" {
+		t.Fatalf("agent icon = %q, want reviewer", got)
+	}
+	if got := cfg.Agents["review"].Provider; got != "claude" {
+		t.Fatalf("agent provider = %q, want claude", got)
+	}
+}
+
 func TestEnsureDefaultFileSeedsCredentialsFromRadconfig(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".radconfig"), []byte("backend/.env\nfrontend/.env.local\n"), 0644); err != nil {

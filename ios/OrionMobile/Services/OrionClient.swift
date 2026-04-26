@@ -41,10 +41,11 @@ actor OrionClient {
         try await post("/api/agent", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "agentType": agentType])
     }
 
-    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: CodexLaunchOptions? = CodexLaunchOptions()) async throws -> LaunchCodexChatResponse {
+    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: CodexLaunchOptions? = CodexLaunchOptions(), icon: String? = nil) async throws -> LaunchCodexChatResponse {
         var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        if let icon, !icon.isEmpty { body["icon"] = icon }
         if let options {
             if !options.model.isEmpty { body["model"] = options.model }
             body["reasoningEffort"] = options.reasoningEffort
@@ -59,10 +60,11 @@ actor OrionClient {
         try await get("/api/codex-chat/history", query: ["workspace": workspacePath, "limit": String(limit)])
     }
 
-    func launchClaudeChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: ClaudeLaunchOptions? = nil) async throws -> LaunchClaudeChatResponse {
+    func launchClaudeChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: ClaudeLaunchOptions? = nil, icon: String? = nil) async throws -> LaunchClaudeChatResponse {
         var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        if let icon, !icon.isEmpty { body["icon"] = icon }
         if let model = options?.model, !model.isEmpty { body["model"] = model }
         if let reasoningEffort = options?.reasoningEffort, !reasoningEffort.isEmpty { body["reasoningEffort"] = reasoningEffort }
         if let approvalPolicy = options?.approvalPolicy, !approvalPolicy.isEmpty { body["approvalPolicy"] = approvalPolicy }

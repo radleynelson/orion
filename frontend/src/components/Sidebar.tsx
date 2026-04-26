@@ -69,6 +69,10 @@ function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefin
   return provider === 'claude' || provider === 'codex' ? provider : undefined;
 }
 
+function agentIcon(agent?: main.AgentTypeInfo): string | undefined {
+  return agent?.icon || agentProvider(agent);
+}
+
 function codexOptionsForAgent(agent?: main.AgentTypeInfo): CodexLaunchOptions {
   return {
     model: agent?.model || DEFAULT_CODEX_OPTIONS.model,
@@ -322,12 +326,14 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       await CreateAttachedTerminal(termId, tmuxSession);
       const agent = agentTypes.find((a) => a.name === agentName);
       const provider = agentProvider(agent);
+      const icon = agentIcon(agent);
       addTab({
         id: generateId('tab'),
         label: agent?.label || agentName,
         rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
         tabType: provider || 'shell',
         workspacePath: wsPath,
+        icon,
         provider,
         viewMode: 'terminal',
         runtimeSessionId: tmuxSession,
@@ -362,6 +368,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
         tabType: 'codex-chat',
         workspacePath: wsPath,
+        icon: 'codex',
         provider: 'codex',
         viewMode: 'chat',
         runtimeSessionId: session.id,
@@ -389,6 +396,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
         tabType: 'claude-chat',
         workspacePath: wsPath,
+        icon: 'claude',
         provider: 'claude',
         viewMode: 'chat',
         runtimeSessionId: session.id,
@@ -784,8 +792,10 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   );
 }
 
-function WorkspaceActivityBadges({ tabs }: { tabs: { tabType: string }[] }) {
+function WorkspaceActivityBadges({ tabs }: { tabs: { tabType: string; provider?: string; icon?: string }[] }) {
   const ids = Array.from(new Set(tabs.map((tab) => {
+    if (tab.icon) return tab.icon;
+    if (tab.provider) return tab.provider;
     if (tab.tabType === 'claude-chat') return 'claude';
     if (tab.tabType === 'codex-chat') return 'codex';
     return tab.tabType;

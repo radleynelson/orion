@@ -39,6 +39,7 @@ type ServerConfig struct {
 type AgentConfig struct {
 	Label             string `toml:"label"`
 	Provider          string `toml:"provider"`
+	Icon              string `toml:"icon"`
 	Command           string `toml:"command"`
 	Model             string `toml:"model"`
 	ReasoningEffort   string `toml:"reasoning_effort"`
@@ -163,6 +164,9 @@ reasoning_effort = "xhigh"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 collaboration_mode = "default"
+
+# Optional custom role icon for non-default agents:
+# icon = "reviewer" # reviewer, scribe, plan, test, debug, deploy, ops, data, design, security, browser, automate, branch, docs, clean
 `) + "\n"
 }
 

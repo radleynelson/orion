@@ -38,6 +38,7 @@ type AgentType struct {
 	Name              string `json:"name"`
 	Label             string `json:"label"`
 	Provider          string `json:"provider,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	Model             string `json:"model,omitempty"`
 	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
 	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
@@ -397,6 +398,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 				Label:            t.Label,
 				WorkspacePath:    t.WorkspacePath,
 				Provider:         firstNonEmpty(t.Provider, codexchat.Provider),
+				Icon:             firstNonEmpty(t.Icon, codexchat.Provider),
 				ViewMode:         firstNonEmpty(t.ViewMode, codexchat.ViewModeChat),
 				RuntimeSessionID: "",
 				ThreadID:         t.ThreadID,
@@ -423,6 +425,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Label:            t.Label,
 			WorkspacePath:    t.WorkspacePath,
 			Provider:         t.Provider,
+			Icon:             t.Icon,
 			ViewMode:         t.ViewMode,
 			RuntimeSessionID: t.RuntimeSessionID,
 			ThreadID:         t.ThreadID,
@@ -594,6 +597,7 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			ApprovalPolicy  string `json:"approvalPolicy"`
 			SandboxMode     string `json:"sandboxMode"`
 			PermissionMode  string `json:"permissionMode"`
+			Icon            string `json:"icon"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -649,12 +653,15 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		info.Icon = firstNonEmpty(req.Icon, info.Icon, "claude")
+		s.claudeMgr.SetIcon(info.ID, info.Icon)
 		s.app.EmitSessionCreatedInfo(state.SessionInfo{
 			TmuxName:         info.ID,
 			Type:             info.Type,
 			Label:            info.Label,
 			WorkspacePath:    info.WorkspacePath,
 			Provider:         "claude",
+			Icon:             info.Icon,
 			ViewMode:         "chat",
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
@@ -761,6 +768,7 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			ApprovalPolicy    string `json:"approvalPolicy"`
 			SandboxMode       string `json:"sandboxMode"`
 			CollaborationMode string `json:"collaborationMode"`
+			Icon              string `json:"icon"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -812,12 +820,15 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		info.Icon = firstNonEmpty(req.Icon, info.Icon, codexchat.Provider)
+		s.codexMgr.SetIcon(info.ID, info.Icon)
 		s.app.EmitSessionCreatedInfo(state.SessionInfo{
 			TmuxName:          info.ID,
 			Type:              codexchat.SessionType,
 			Label:             info.Label,
 			WorkspacePath:     info.WorkspacePath,
 			Provider:          codexchat.Provider,
+			Icon:              info.Icon,
 			ViewMode:          codexchat.ViewModeChat,
 			RuntimeSessionID:  info.ID,
 			ThreadID:          info.ThreadID,
@@ -1772,6 +1783,7 @@ func reconcileSessionInfo(existing state.SessionInfo, incoming state.SessionInfo
 		out.Label = firstNonEmpty(incoming.Label, labelForTerminalType(incoming.Type), out.Label)
 		out.WorkspacePath = firstNonEmpty(out.WorkspacePath, incoming.WorkspacePath)
 		out.Provider = firstNonEmpty(incoming.Provider, incoming.Type, out.Provider)
+		out.Icon = firstNonEmpty(out.Icon, incoming.Icon)
 		out.ViewMode = firstNonEmpty(out.ViewMode, incoming.ViewMode, "terminal")
 		out.RuntimeSessionID = firstNonEmpty(out.RuntimeSessionID, incoming.RuntimeSessionID, incoming.TmuxName)
 		if typeChanged {

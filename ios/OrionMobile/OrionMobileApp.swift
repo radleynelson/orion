@@ -330,6 +330,7 @@ final class AppState {
             label: label,
             workspacePath: workspacePath,
             provider: provider,
+            icon: agentIcon(agent),
             viewMode: "terminal",
             runtimeSessionId: resp.tmuxSession,
             model: agent?.model,
@@ -352,9 +353,9 @@ final class AppState {
     func launchPreferredAgent(workspacePath: String, agent: AgentType) async throws -> SessionInfo? {
         switch agentProvider(agent) {
         case "codex":
-            return try await launchCodexChat(workspacePath: workspacePath, options: codexOptions(from: agent))
+            return try await launchCodexChat(workspacePath: workspacePath, options: codexOptions(from: agent), icon: agentIcon(agent))
         case "claude":
-            return try await launchClaudeChat(workspacePath: workspacePath, options: claudeOptions(from: agent))
+            return try await launchClaudeChat(workspacePath: workspacePath, options: claudeOptions(from: agent), icon: agentIcon(agent))
         default:
             try await launchAgent(workspacePath: workspacePath, agentType: agent.name)
             return sessions.first { $0.workspacePath == workspacePath && $0.label == agent.label }
@@ -362,15 +363,16 @@ final class AppState {
     }
 
     @discardableResult
-    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions? = CodexLaunchOptions(), threadId: String? = nil) async throws -> SessionInfo {
+    func launchCodexChat(workspacePath: String, options: CodexLaunchOptions? = CodexLaunchOptions(), threadId: String? = nil, icon: String? = nil) async throws -> SessionInfo {
         guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
-        let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, threadId: threadId, options: options)
+        let resp = try await client.launchCodexChat(repoRoot: root, workspacePath: workspacePath, threadId: threadId, options: options, icon: icon)
         let session = SessionInfo(
             tmuxName: resp.threadId ?? resp.id,
             type: resp.type,
             label: resp.label,
             workspacePath: resp.workspacePath,
             provider: resp.provider ?? "codex",
+            icon: resp.icon ?? icon ?? "codex",
             viewMode: resp.viewMode ?? "chat",
             runtimeSessionId: resp.runtimeSessionId ?? resp.id,
             threadId: resp.threadId,
@@ -399,15 +401,16 @@ final class AppState {
     }
 
     @discardableResult
-    func launchClaudeChat(workspacePath: String, options: ClaudeLaunchOptions? = nil) async throws -> SessionInfo {
+    func launchClaudeChat(workspacePath: String, options: ClaudeLaunchOptions? = nil, icon: String? = nil) async throws -> SessionInfo {
         guard let client, let root = selectedProject else { throw OrionError.invalidResponse }
-        let resp = try await client.launchClaudeChat(repoRoot: root, workspacePath: workspacePath, options: options)
+        let resp = try await client.launchClaudeChat(repoRoot: root, workspacePath: workspacePath, options: options, icon: icon)
         let session = SessionInfo(
             tmuxName: resp.threadId ?? resp.id,
             type: resp.type,
             label: resp.label,
             workspacePath: resp.workspacePath,
             provider: resp.provider ?? "claude",
+            icon: resp.icon ?? icon ?? "claude",
             viewMode: resp.viewMode ?? "chat",
             runtimeSessionId: resp.runtimeSessionId ?? resp.id,
             threadId: resp.threadId,
@@ -448,6 +451,7 @@ final class AppState {
                     label: label,
                     workspacePath: session.workspacePath,
                     provider: kind,
+                    icon: session.icon ?? kind,
                     viewMode: "terminal",
                     runtimeSessionId: resp.tmuxSession,
                     threadId: session.threadId,
@@ -473,14 +477,15 @@ final class AppState {
 
             guard session.type == "claude" || session.type == "codex" else { return }
             let resp = session.type == "claude"
-                ? try await client.launchClaudeChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession, options: claudeOptions(from: session))
-                : try await client.launchCodexChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession, options: codexOptions(from: session))
+                ? try await client.launchClaudeChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession, options: claudeOptions(from: session), icon: session.icon)
+                : try await client.launchCodexChat(repoRoot: root, workspacePath: session.workspacePath, tmuxSession: session.terminalTmuxSession, options: codexOptions(from: session), icon: session.icon)
             let converted = SessionInfo(
                 tmuxName: resp.threadId ?? resp.id,
                 type: resp.type,
                 label: resp.label,
                 workspacePath: resp.workspacePath,
                 provider: session.type,
+                icon: resp.icon ?? session.icon ?? session.type,
                 viewMode: "chat",
                 runtimeSessionId: resp.runtimeSessionId ?? resp.id,
                 threadId: resp.threadId,
@@ -683,7 +688,7 @@ final class AppState {
         activationGeneration += 1
         let oldTerminal = activeConnection
         let oldChat = activeChatConnection
-        let connection = CodexChatConnection(sessionId: session.chatConnectionId, sessionType: session.type, workspacePath: session.workspacePath)
+        let connection = CodexChatConnection(sessionId: session.chatConnectionId, sessionType: session.type, sessionIcon: session.icon, workspacePath: session.workspacePath)
         connection.onPermanentFailure = { [weak self] in
             self?.showTransientError("\(session.label) disconnected. Tap Reconnect to resume.")
         }
@@ -754,6 +759,10 @@ final class AppState {
     private func agentProvider(_ agent: AgentType?) -> String? {
         let provider = (agent?.provider ?? agent?.name ?? "").lowercased()
         return provider == "claude" || provider == "codex" ? provider : nil
+    }
+
+    private func agentIcon(_ agent: AgentType?) -> String? {
+        agent?.icon ?? agentProvider(agent)
     }
 
     private func reconcileActiveWorkspaceSelection() {

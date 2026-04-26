@@ -132,7 +132,7 @@ export default function WorkspaceDetailPanel({
 function SessionRow({ tab, active, onOpen }: { tab: Tab; active: boolean; onOpen: () => void }) {
   return (
     <button type="button" className={`workspace-min-row workspace-min-session ${active ? 'active' : ''}`} onClick={onOpen}>
-      <AgentSigil id={tab.tabType} size={17} />
+      <AgentSigil id={tab.icon || tab.provider || tab.tabType} size={17} />
       <span>{sessionTitle(tab)}</span>
       <em>{sessionKind(tab)}</em>
     </button>

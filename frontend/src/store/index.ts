@@ -32,6 +32,7 @@ export interface Tab {
   rootPane: Pane;
   tabType: 'shell' | 'claude' | 'codex' | 'codex-chat' | 'claude-chat' | 'server' | 'mixed' | 'editor' | 'diagnostics';
   workspacePath: string;
+  icon?: string;
   provider?: 'codex' | 'claude';
   viewMode?: 'terminal' | 'chat';
   runtimeSessionId?: string;

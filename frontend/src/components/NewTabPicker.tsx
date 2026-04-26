@@ -4,7 +4,7 @@ import { main } from '../../wailsjs/go/models';
 import { useStore } from '../store';
 import AgentSigil from './AgentSigil';
 
-export type NewTabChoice = { kind: 'shell' } | { kind: 'agent'; name: string; label: string };
+export type NewTabChoice = { kind: 'shell' } | { kind: 'agent'; name: string; label: string; icon?: string; provider?: string };
 
 interface Props {
   visible: boolean;
@@ -18,7 +18,7 @@ export default function NewTabPicker({ visible, onClose, onPick }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const options: NewTabChoice[] = [
-    ...agents.map((a) => ({ kind: 'agent' as const, name: a.name, label: a.label })),
+    ...agents.map((a) => ({ kind: 'agent' as const, name: a.name, label: a.label, icon: a.icon, provider: a.provider })),
     { kind: 'shell' as const },
   ];
 
@@ -85,5 +85,5 @@ function keyFor(o: NewTabChoice) {
   return o.kind === 'shell' ? 'shell' : `agent:${o.name}`;
 }
 function idFor(o: NewTabChoice) {
-  return o.kind === 'shell' ? 'shell' : o.name;
+  return o.kind === 'shell' ? 'shell' : o.icon || o.provider || o.name;
 }

@@ -17,6 +17,7 @@ type SessionInfo struct {
 	Label             string `json:"label"`
 	WorkspacePath     string `json:"workspacePath"`
 	Provider          string `json:"provider,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	ThreadID          string `json:"threadId,omitempty"`
@@ -35,6 +36,7 @@ type SavedTab struct {
 	TmuxSession       string `json:"tmuxSession"`
 	WorkspacePath     string `json:"workspacePath"`
 	Provider          string `json:"provider,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	ThreadID          string `json:"threadId,omitempty"`
@@ -389,12 +391,13 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 }
 
 func recoveredSessionInfo(tmuxSession string, fallbackLabel string, workspacePath string) SessionInfo {
-	sessionType, label := recoveredAgentInfo(tmuxSession, fallbackLabel)
+	sessionType, label, icon := recoveredAgentInfo(tmuxSession, fallbackLabel)
 	info := SessionInfo{
 		TmuxName:      tmuxSession,
 		Type:          sessionType,
 		Label:         label,
 		WorkspacePath: workspacePath,
+		Icon:          icon,
 	}
 	if isAgentType(sessionType) {
 		info.Provider = sessionType
@@ -404,25 +407,26 @@ func recoveredSessionInfo(tmuxSession string, fallbackLabel string, workspacePat
 	return info
 }
 
-func recoveredAgentInfo(tmuxSession string, fallbackLabel string) (string, string) {
+func recoveredAgentInfo(tmuxSession string, fallbackLabel string) (string, string, string) {
 	metadataType := normalizeSessionType(tmuxOption(tmuxSession, "@orion_type"))
 	metadataLabel := strings.TrimSpace(tmuxOption(tmuxSession, "@orion_label"))
+	metadataIcon := strings.TrimSpace(tmuxOption(tmuxSession, "@orion_icon"))
 	if isAgentType(metadataType) {
-		return metadataType, firstNonEmpty(metadataLabel, labelForType(metadataType))
+		return metadataType, firstNonEmpty(metadataLabel, labelForType(metadataType)), metadataIcon
 	}
 
 	out, err := exec.Command("tmux", "display-message", "-t", tmuxSession, "-p", "#{pane_pid}").Output()
 	if err != nil {
-		return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel)
+		return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel), metadataIcon
 	}
 	panePID := strings.TrimSpace(string(out))
 	if panePID == "" {
-		return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel)
+		return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel), metadataIcon
 	}
 	if processType := detectAgentProcess(panePID); processType != "" {
-		return processType, labelForType(processType)
+		return processType, labelForType(processType), metadataIcon
 	}
-	return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel)
+	return firstNonEmpty(metadataType, "shell"), firstNonEmpty(metadataLabel, fallbackLabel), metadataIcon
 }
 
 func detectAgentProcess(rootPID string) string {
