@@ -490,7 +490,11 @@ func (a *App) ApproveClaudePlan(sessionID string) error {
 }
 
 func (a *App) StopClaudeChat(sessionID string) error {
-	return a.claudeMgr.Stop(sessionID)
+	if err := a.claudeMgr.Stop(sessionID); err != nil {
+		return err
+	}
+	a.EmitSessionKilled(sessionID)
+	return nil
 }
 
 // --- Codex chat methods ---
@@ -625,7 +629,11 @@ func (a *App) ApproveCodexPlan(sessionID string) error {
 }
 
 func (a *App) StopCodexChat(sessionID string) error {
-	return a.codexMgr.Stop(sessionID)
+	if err := a.codexMgr.Stop(sessionID); err != nil {
+		return err
+	}
+	a.EmitSessionKilled(sessionID)
+	return nil
 }
 
 func (a *App) GetConfig(repoRoot string) *config.OrionConfig {
@@ -789,6 +797,7 @@ func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 		"label":             session.Label,
 		"workspacePath":     session.WorkspacePath,
 		"provider":          session.Provider,
+		"icon":              session.Icon,
 		"viewMode":          session.ViewMode,
 		"runtimeSessionId":  session.RuntimeSessionID,
 		"threadId":          session.ThreadID,
@@ -799,6 +808,36 @@ func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 		"permissionMode":    session.PermissionMode,
 		"collaborationMode": session.CollaborationMode,
 	})
+}
+
+func (a *App) EmitSessionKilled(sessionID string) {
+	a.forgetSavedSession(sessionID)
+	wailsRuntime.EventsEmit(a.ctx, "mobile:session-killed", map[string]string{
+		"sessionId": sessionID,
+	})
+}
+
+func (a *App) forgetSavedSession(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || a.appState == nil {
+		return
+	}
+	saved := a.appState.GetSavedTabs()
+	if len(saved) == 0 {
+		return
+	}
+	filtered := make([]state.SavedTab, 0, len(saved))
+	for _, tab := range saved {
+		if tab.TmuxSession == sessionID ||
+			tab.RuntimeSessionID == sessionID ||
+			tab.ThreadID == sessionID {
+			continue
+		}
+		filtered = append(filtered, tab)
+	}
+	if len(filtered) != len(saved) {
+		a.appState.SaveTabs(filtered)
+	}
 }
 
 func shellQuote(value string) string {

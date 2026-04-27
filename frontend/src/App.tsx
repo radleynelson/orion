@@ -16,7 +16,7 @@ import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspace
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { parseUnifiedDiff } from './lib/diffParser';
 import { EventsOn } from '../wailsjs/runtime/runtime';
-import { claudesdk, codexchat, main, server } from '../wailsjs/go/models';
+import { claudesdk, codexchat, main, server, state } from '../wailsjs/go/models';
 import {
   AllocatePorts,
   ConvertChatToTerminalWithOptions,
@@ -30,6 +30,8 @@ import {
   ConvertTerminalToCodexChatWithOptions,
   ListClaudeChatHistory,
   ListCodexChatHistory,
+  ListClaudeChatSessions,
+  ListCodexChatSessions,
   SaveTabs,
   GetLastProject,
   GetProjectInfo,
@@ -748,6 +750,59 @@ function App() {
     return pane.children.flatMap((child) => getChatSessions(child, fallbackKind));
   }, []);
 
+  const sessionKeys = useCallback((session: Partial<state.SessionInfo> | any) => {
+    return [
+      session?.tmuxName,
+      session?.tmuxSession,
+      session?.runtimeSessionId,
+      session?.sessionId,
+      session?.threadId,
+    ].filter((value): value is string => typeof value === 'string' && value.trim() !== '');
+  }, []);
+
+  const tabKeys = useCallback((tab: Tab) => {
+    const fallbackKind = tab.tabType === 'claude-chat' ? 'claude' : 'codex';
+    return [
+      tab.runtimeSessionId,
+      tab.threadId,
+      ...getChatSessions(tab.rootPane, fallbackKind).flatMap((chat) => [chat.id, chat.threadId]),
+    ].filter((value): value is string => typeof value === 'string' && value.trim() !== '');
+  }, [getChatSessions]);
+
+  const tabMatchesSession = useCallback((tab: Tab, session: Partial<state.SessionInfo> | any) => {
+    if (session?.workspacePath && tab.workspacePath !== session.workspacePath) return false;
+    const wanted = new Set(sessionKeys(session));
+    return tabKeys(tab).some((key) => wanted.has(key));
+  }, [sessionKeys, tabKeys]);
+
+  const addChatSessionTab = useCallback((session: state.SessionInfo) => {
+    const chatKind: AgentKind = session.type === 'claude-chat' ? 'claude' : 'codex';
+    addTab({
+      id: generateId('tab'),
+      label: session.label || (chatKind === 'claude' ? 'Claude Chat' : 'Codex Chat'),
+      rootPane: {
+        type: 'chat',
+        id: generateId('pane'),
+        chatSessionId: session.runtimeSessionId || session.tmuxName,
+        chatThreadId: session.threadId,
+        chatKind,
+      } as PaneLeaf,
+      tabType: session.type as 'codex-chat' | 'claude-chat',
+      workspacePath: session.workspacePath,
+      icon: session.icon || chatKind,
+      provider: chatKind,
+      viewMode: 'chat',
+      runtimeSessionId: session.runtimeSessionId || session.tmuxName,
+      threadId: session.threadId,
+      model: session.model,
+      reasoningEffort: session.reasoningEffort,
+      approvalPolicy: session.approvalPolicy,
+      sandboxMode: session.sandboxMode,
+      permissionMode: session.permissionMode,
+      collaborationMode: session.collaborationMode,
+    });
+  }, [addTab]);
+
   const handleCloseTab = useCallback(async (tabId: string) => {
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
@@ -1052,6 +1107,44 @@ function App() {
     })();
   }, [tabs, getAllTerminalIds, getChatSessions]);
 
+  const syncLiveChatTabs = useCallback(async () => {
+    if (!project || workspaces.length === 0) return;
+    const workspacePaths = workspaces.map((w: any) => w.path).filter(Boolean);
+    if (workspacePaths.length === 0) return;
+    try {
+      const [codexSessions, claudeSessions] = await Promise.all([
+        ListCodexChatSessions(workspacePaths),
+        ListClaudeChatSessions(workspacePaths),
+      ]);
+      const live = [...(codexSessions || []), ...(claudeSessions || [])];
+      const currentTabs = useStore.getState().tabs;
+
+      for (const session of live) {
+        if (!currentTabs.some((tab) => tabMatchesSession(tab, session))) {
+          addChatSessionTab(session);
+        }
+      }
+
+      const liveKeys = new Set(live.flatMap((session) => sessionKeys(session)));
+      for (const tab of currentTabs) {
+        if (tab.tabType !== 'codex-chat' && tab.tabType !== 'claude-chat') continue;
+        if (!workspacePaths.includes(tab.workspacePath)) continue;
+        if (!tabKeys(tab).some((key) => liveKeys.has(key))) {
+          removeTab(tab.id);
+        }
+      }
+    } catch (err) {
+      console.debug('Failed to sync live chat tabs:', err);
+    }
+  }, [project, workspaces, addChatSessionTab, removeTab, sessionKeys, tabKeys, tabMatchesSession]);
+
+  useEffect(() => {
+    if (!project || workspaces.length === 0) return;
+    syncLiveChatTabs();
+    const interval = setInterval(syncLiveChatTabs, 3000);
+    return () => clearInterval(interval);
+  }, [project, workspaces, syncLiveChatTabs]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1245,25 +1338,10 @@ function App() {
         // Only add if this workspace belongs to the current project
         const ws = useStore.getState().workspaces;
         if (!ws.some((w: any) => w.path === data.workspacePath)) return;
+        const incoming = { ...data, tmuxName: data.tmuxName || data.tmuxSession } as state.SessionInfo;
+        if (useStore.getState().tabs.some((tab) => tabMatchesSession(tab, incoming))) return;
         if (data.type === 'codex-chat' || data.type === 'claude-chat') {
-          const chatKind = data.type === 'claude-chat' ? 'claude' : 'codex';
-          addTab({
-            id: generateId('tab'),
-            label: data.label || (chatKind === 'claude' ? 'Claude Chat' : 'Codex Chat'),
-            rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: data.runtimeSessionId || data.tmuxSession, chatThreadId: data.threadId, chatKind } as PaneLeaf,
-            tabType: data.type as 'codex-chat' | 'claude-chat',
-            workspacePath: data.workspacePath,
-            provider: chatKind,
-            viewMode: 'chat',
-            runtimeSessionId: data.runtimeSessionId || data.tmuxSession,
-            threadId: data.threadId,
-            model: data.model,
-            reasoningEffort: data.reasoningEffort,
-            approvalPolicy: data.approvalPolicy,
-            sandboxMode: data.sandboxMode,
-            permissionMode: data.permissionMode,
-            collaborationMode: data.collaborationMode,
-          });
+          addChatSessionTab(incoming);
           return;
         }
         const termId = generateId('term');
@@ -1275,12 +1353,37 @@ function App() {
             rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
             tabType: (data.type === 'claude' || data.type === 'codex') ? data.type : 'shell',
             workspacePath: data.workspacePath,
+            icon: data.icon,
             provider: data.provider || (data.type === 'claude' || data.type === 'codex' ? data.type : undefined),
             viewMode: 'terminal',
             runtimeSessionId: data.runtimeSessionId || data.tmuxSession,
             threadId: data.threadId,
           });
         } catch {}
+      }),
+      EventsOn('mobile:session-killed', async (data: any) => {
+        const target = data?.sessionId || data?.tmuxSession;
+        if (!target) return;
+        const killed = { sessionId: target, tmuxSession: target, threadId: data?.threadId } as any;
+        for (const tab of useStore.getState().tabs) {
+          const termIds = useStore.getState().getAllTerminalIds(tab);
+          let matched = tabMatchesSession(tab, killed);
+          if (!matched) {
+            for (const termId of termIds) {
+              try {
+                if (await GetTmuxSession(termId) === target) {
+                  matched = true;
+                  break;
+                }
+              } catch {}
+            }
+          }
+          if (!matched) continue;
+          for (const termId of termIds) {
+            try { await CloseTerminal(termId); } catch {}
+          }
+          removeTab(tab.id);
+        }
       }),
       EventsOn('agent:focus', async (data: any) => {
         const cwd: string | undefined = data?.cwd;
@@ -1309,7 +1412,7 @@ function App() {
       }),
     ];
     return () => cancels.forEach((c) => c());
-  }, [sidebarMode, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab, openProjectDialog, toggleCodeReview]);
+  }, [sidebarMode, handleClosePane, handleSplit, navigatePane, setSidebarMode, addTab, addChatSessionTab, removeTab, openProjectDialog, tabMatchesSession, toggleCodeReview]);
 
   useEffect(() => {
     const syncChatMetadata = (kind: 'claude' | 'codex', msg: any) => {

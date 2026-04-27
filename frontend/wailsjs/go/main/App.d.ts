@@ -61,6 +61,8 @@ export function EmitSessionCreated(arg1:string,arg2:string,arg3:string,arg4:stri
 
 export function EmitSessionCreatedInfo(arg1:state.SessionInfo):Promise<void>;
 
+export function EmitSessionKilled(arg1:string):Promise<void>;
+
 export function GetAgentNames(arg1:string):Promise<Array<web.AgentType>>;
 
 export function GetAgentTypes(arg1:string):Promise<Array<main.AgentTypeInfo>>;

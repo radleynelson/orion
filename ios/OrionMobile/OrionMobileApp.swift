@@ -585,10 +585,8 @@ final class AppState {
         sessions.removeAll { $0.id == session.id || $0.tmuxName == session.tmuxName }
         phoneLaunchedSessions.removeValue(forKey: session.id)
         phoneLaunchedSessions.removeValue(forKey: session.tmuxName)
-        // Then kill on server and refresh in background
-        if !session.isChat || session.isClaude {
-            try? await client.killSession(tmuxSession: session.terminalTmuxSession)
-        }
+        let remoteID = session.isChat ? session.chatConnectionId : session.terminalTmuxSession
+        try? await client.killSession(tmuxSession: remoteID)
         // Small delay to let the List animation finish before refreshing
         try? await Task.sleep(for: .milliseconds(500))
         await refreshSessions()

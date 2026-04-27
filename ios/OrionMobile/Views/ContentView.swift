@@ -120,6 +120,12 @@ struct MainView: View {
                 Text("\(session.label) will be stopped and removed from this workspace.")
             }
         }
+        .task {
+            while state.isConnected {
+                await state.refreshSessions()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
     }
 
 }

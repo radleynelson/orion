@@ -98,6 +98,10 @@ export function EmitSessionCreatedInfo(arg1) {
   return window['go']['main']['App']['EmitSessionCreatedInfo'](arg1);
 }
 
+export function EmitSessionKilled(arg1) {
+  return window['go']['main']['App']['EmitSessionKilled'](arg1);
+}
+
 export function GetAgentNames(arg1) {
   return window['go']['main']['App']['GetAgentNames'](arg1);
 }

@@ -78,6 +78,7 @@ type AppAPI interface {
 	GetUnifiedDiff(workspacePath string, base string, filePath string) (string, error)
 	EmitSessionCreated(tmuxSession string, sessionType string, label string, workspacePath string)
 	EmitSessionCreatedInfo(session state.SessionInfo)
+	EmitSessionKilled(sessionID string)
 }
 
 // Server is the embedded HTTP/WebSocket server for the mobile companion PWA.
@@ -387,28 +388,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		if len(pathSet) > 0 && !pathSet[t.WorkspacePath] {
 			continue // not in the requested workspace set
 		}
-		if t.TabType == codexchat.SessionType && strings.TrimSpace(t.ThreadID) != "" {
-			sessionID := firstNonEmpty(t.ThreadID, t.RuntimeSessionID, t.TmuxSession)
-			if seen[sessionID] {
-				continue
-			}
-			sessions = append(sessions, state.SessionInfo{
-				TmuxName:         sessionID,
-				Type:             t.TabType,
-				Label:            t.Label,
-				WorkspacePath:    t.WorkspacePath,
-				Provider:         firstNonEmpty(t.Provider, codexchat.Provider),
-				Icon:             firstNonEmpty(t.Icon, codexchat.Provider),
-				ViewMode:         firstNonEmpty(t.ViewMode, codexchat.ViewModeChat),
-				RuntimeSessionID: "",
-				ThreadID:         t.ThreadID,
-				Model:            t.Model,
-				ReasoningEffort:  t.ReasoningEffort,
-				ApprovalPolicy:   t.ApprovalPolicy,
-				SandboxMode:      t.SandboxMode,
-			})
-			seen[sessionID] = true
-			continue
+		if t.TabType == codexchat.SessionType || t.TabType == claudechat.SessionType {
+			continue // chat saved tabs are restore metadata; mobile should only show live chat managers
 		}
 		if !liveSessions[t.TmuxSession] {
 			continue // tmux session is gone
@@ -1062,30 +1043,64 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		TmuxSession string `json:"tmuxSession"`
+		SessionID   string `json:"sessionId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.TmuxSession == "" {
-		http.Error(w, "tmuxSession required", http.StatusBadRequest)
+	target := firstNonEmpty(req.SessionID, req.TmuxSession)
+	if target == "" {
+		http.Error(w, "sessionId required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := s.claudeMgr.Get(req.TmuxSession); ok {
-		_ = s.claudeMgr.Stop(req.TmuxSession)
+	if stopped := s.stopClaudeChatTarget(target); stopped != "" {
+		s.app.EmitSessionKilled(stopped)
 		writeJSON(w, map[string]string{"status": "killed"})
 		return
 	}
-	if strings.HasPrefix(req.TmuxSession, codexchat.SessionType+"-") {
-		if err := s.codexMgr.Stop(req.TmuxSession); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
+	if stopped := s.stopCodexChatTarget(target); stopped != "" {
+		s.app.EmitSessionKilled(stopped)
 		writeJSON(w, map[string]string{"status": "killed"})
 		return
 	}
-	exec.Command("tmux", "kill-session", "-t", req.TmuxSession).Run()
+	exec.Command("tmux", "kill-session", "-t", target).Run()
+	s.app.EmitSessionKilled(target)
 	writeJSON(w, map[string]string{"status": "killed"})
+}
+
+func (s *Server) stopClaudeChatTarget(target string) string {
+	if target == "" {
+		return ""
+	}
+	if _, ok := s.claudeMgr.Get(target); ok {
+		_ = s.claudeMgr.Stop(target)
+		return target
+	}
+	for _, info := range s.claudeMgr.List(nil) {
+		if info.ID == target || info.RuntimeSessionID == target || (info.ThreadID != "" && info.ThreadID == target) {
+			_ = s.claudeMgr.Stop(info.ID)
+			return target
+		}
+	}
+	return ""
+}
+
+func (s *Server) stopCodexChatTarget(target string) string {
+	if target == "" {
+		return ""
+	}
+	if _, ok := s.codexMgr.Get(target); ok {
+		_ = s.codexMgr.Stop(target)
+		return target
+	}
+	for _, info := range s.codexMgr.List(nil) {
+		if info.ID == target || info.RuntimeSessionID == target || (info.ThreadID != "" && info.ThreadID == target) {
+			_ = s.codexMgr.Stop(info.ID)
+			return target
+		}
+	}
+	return ""
 }
 
 // --- Config ---
