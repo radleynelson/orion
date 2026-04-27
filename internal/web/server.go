@@ -320,6 +320,9 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if workspaces == nil {
+			workspaces = []workspace.Workspace{}
+		}
 		writeJSON(w, workspaces)
 	case http.MethodPost:
 		var req struct {
@@ -383,7 +386,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Primary: saved tabs that are still alive in tmux and match requested workspaces
-	var sessions []state.SessionInfo
+	sessions := make([]state.SessionInfo, 0)
 	seen := make(map[string]bool)
 	for _, t := range savedTabs {
 		if len(pathSet) > 0 && !pathSet[t.WorkspacePath] {
@@ -635,7 +638,11 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 		if wsParam != "" {
 			paths = strings.Split(wsParam, ",")
 		}
-		writeJSON(w, s.claudeMgr.List(paths))
+		sessions := s.claudeMgr.List(paths)
+		if sessions == nil {
+			sessions = []claudechat.SessionInfo{}
+		}
+		writeJSON(w, sessions)
 	case http.MethodPost:
 		var req struct {
 			RepoRoot        string `json:"repoRoot"`
@@ -795,7 +802,11 @@ func (s *Server) handleCodexChatHistory(w http.ResponseWriter, r *http.Request) 
 			limit = parsed
 		}
 	}
-	writeJSON(w, codexchat.ListHistory(r.URL.Query().Get("workspace"), limit))
+	history := codexchat.ListHistory(r.URL.Query().Get("workspace"), limit)
+	if history == nil {
+		history = []codexchat.HistoryThread{}
+	}
+	writeJSON(w, history)
 }
 
 func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
@@ -806,7 +817,11 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 		if wsParam != "" {
 			paths = strings.Split(wsParam, ",")
 		}
-		writeJSON(w, s.codexMgr.List(paths))
+		sessions := s.codexMgr.List(paths)
+		if sessions == nil {
+			sessions = []codexchat.SessionInfo{}
+		}
+		writeJSON(w, sessions)
 	case http.MethodPost:
 		var req struct {
 			RepoRoot          string `json:"repoRoot"`
