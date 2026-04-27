@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { useStore } from '../store';
 import {
   GetChangedFilesAgainst,
@@ -20,6 +20,90 @@ interface FileEntry {
   viewed: boolean;
 }
 
+type TreeNode =
+  | { kind: 'dir'; name: string; path: string; children: TreeNode[]; added: number; removed: number; fileCount: number }
+  | { kind: 'file'; name: string; entry: FileEntry; index: number };
+
+function buildTree(entries: FileEntry[]): TreeNode[] {
+  type DirMap = { dirs: Map<string, DirMap>; files: { entry: FileEntry; index: number }[] };
+  const root: DirMap = { dirs: new Map(), files: [] };
+  entries.forEach((entry, index) => {
+    const parts = entry.file.path.split('/');
+    parts.pop();
+    let cur = root;
+    for (const part of parts) {
+      let next = cur.dirs.get(part);
+      if (!next) {
+        next = { dirs: new Map(), files: [] };
+        cur.dirs.set(part, next);
+      }
+      cur = next;
+    }
+    cur.files.push({ entry, index });
+  });
+
+  function toNodes(map: DirMap, parentPath: string): TreeNode[] {
+    const result: TreeNode[] = [];
+    const dirNames = Array.from(map.dirs.keys()).sort();
+    for (const name of dirNames) {
+      let dirMap = map.dirs.get(name)!;
+      let compactName = name;
+      let compactPath = parentPath ? parentPath + '/' + name : name;
+      while (dirMap.dirs.size === 1 && dirMap.files.length === 0) {
+        const [childName, childMap] = Array.from(dirMap.dirs.entries())[0];
+        compactName += '/' + childName;
+        compactPath += '/' + childName;
+        dirMap = childMap;
+      }
+      const children = toNodes(dirMap, compactPath);
+      let added = 0;
+      let removed = 0;
+      let fileCount = 0;
+      for (const ch of children) {
+        if (ch.kind === 'file') {
+          fileCount++;
+          added += ch.entry.diff?.added ?? 0;
+          removed += ch.entry.diff?.removed ?? 0;
+        } else {
+          fileCount += ch.fileCount;
+          added += ch.added;
+          removed += ch.removed;
+        }
+      }
+      result.push({ kind: 'dir', name: compactName, path: compactPath, children, added, removed, fileCount });
+    }
+    const files = [...map.files].sort((a, b) => a.entry.file.path.localeCompare(b.entry.file.path));
+    for (const { entry, index } of files) {
+      const fileName = entry.file.path.split('/').pop() || entry.file.path;
+      result.push({ kind: 'file', name: fileName, entry, index });
+    }
+    return result;
+  }
+
+  return toNodes(root, '');
+}
+
+function renderHighlighted(text: string, query: string): ReactNode {
+  const display = text.length === 0 ? ' ' : text;
+  if (!query) return display;
+  const lower = display.toLowerCase();
+  const q = query.toLowerCase();
+  if (!lower.includes(q)) return display;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  while (true) {
+    const i = lower.indexOf(q, cursor);
+    if (i < 0) {
+      if (cursor < display.length) parts.push(display.slice(cursor));
+      break;
+    }
+    if (i > cursor) parts.push(display.slice(cursor, i));
+    parts.push(<mark key={parts.length} className="cr-match">{display.slice(i, i + q.length)}</mark>);
+    cursor = i + q.length;
+  }
+  return parts;
+}
+
 export default function CodeReviewPane() {
   const {
     activeWorkspacePath,
@@ -35,12 +119,38 @@ export default function CodeReviewPane() {
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmFile, setConfirmFile] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [fileSearch, setFileSearch] = useState('');
+  const [contentSearch, setContentSearch] = useState('');
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
+  const [filesPanelWidth, setFilesPanelWidth] = useState<number>(() => {
+    const v = parseFloat(localStorage.getItem('orion.codeReviewFilesWidth') || '');
+    return Number.isFinite(v) && v >= 160 && v <= 500 ? v : 240;
+  });
+  const [filesPanelVisible, setFilesPanelVisible] = useState<boolean>(() => {
+    const v = localStorage.getItem('orion.codeReviewFilesVisible');
+    return v === null ? true : v === '1';
+  });
+  const toggleFilesPanel = useCallback(() => {
+    setFilesPanelVisible((v) => {
+      const next = !v;
+      localStorage.setItem('orion.codeReviewFilesVisible', next ? '1' : '0');
+      return next;
+    });
+  }, []);
+  const [matchCursor, setMatchCursor] = useState(0);
   const reqId = useRef(0);
   const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const lineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   // Track raw diffs for viewed files so we can detect when they change
   const viewedDiffs = useRef<Map<string, string>>(new Map());
 
   const baseArg = codeReviewBase === 'main' ? (project?.mainBranch || 'main') : '';
+
+  const persistFilesPanelWidth = useCallback((w: number) => {
+    const clamped = Math.max(160, Math.min(500, w));
+    localStorage.setItem('orion.codeReviewFilesWidth', String(clamped));
+    setFilesPanelWidth(clamped);
+  }, []);
 
   const refresh = useCallback(async (clear?: boolean) => {
     if (!activeWorkspacePath) {
@@ -113,6 +223,73 @@ export default function CodeReviewPane() {
     return cancel;
   }, [activeWorkspacePath, refresh]);
 
+  const fileQuery = fileSearch.trim().toLowerCase();
+  const contentQuery = contentSearch.trim().toLowerCase();
+
+  const filteredEntries = useMemo(() => {
+    if (!fileQuery && !contentQuery) return entries;
+    return entries.filter((e) => {
+      if (fileQuery && !e.file.path.toLowerCase().includes(fileQuery)) return false;
+      if (contentQuery) {
+        if (!e.diff) return false;
+        const hit = e.diff.hunks.some((h) =>
+          h.lines.some((l) => l.text.toLowerCase().includes(contentQuery))
+        );
+        if (!hit) return false;
+      }
+      return true;
+    });
+  }, [entries, fileQuery, contentQuery]);
+
+  const tree = useMemo(() => buildTree(filteredEntries), [filteredEntries]);
+
+  const matches = useMemo(() => {
+    if (!contentQuery) return [] as { fileIdx: number; hunkIdx: number; lineIdx: number }[];
+    const out: { fileIdx: number; hunkIdx: number; lineIdx: number }[] = [];
+    filteredEntries.forEach((e, fi) => {
+      if (!e.diff) return;
+      e.diff.hunks.forEach((h, hi) => {
+        h.lines.forEach((l, li) => {
+          if (l.text.toLowerCase().includes(contentQuery)) {
+            out.push({ fileIdx: fi, hunkIdx: hi, lineIdx: li });
+          }
+        });
+      });
+    });
+    return out;
+  }, [filteredEntries, contentQuery]);
+
+  // Reset match cursor whenever the query or matches change identity
+  useEffect(() => { setMatchCursor(0); }, [contentQuery]);
+  useEffect(() => {
+    if (matches.length === 0) {
+      setMatchCursor(0);
+    } else {
+      setMatchCursor((c) => (c >= matches.length ? 0 : c));
+    }
+  }, [matches.length]);
+
+  const goToMatch = useCallback((delta: number) => {
+    if (matches.length === 0) return;
+    const next = ((matchCursor + delta) % matches.length + matches.length) % matches.length;
+    setMatchCursor(next);
+    const m = matches[next];
+    setSelectedIndex(m.fileIdx);
+    requestAnimationFrame(() => {
+      const key = `${m.fileIdx}:${m.hunkIdx}:${m.lineIdx}`;
+      const el = lineRefs.current.get(key);
+      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }, [matches, matchCursor]);
+
+  const toggleDir = (path: string) => {
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  };
+
   const discardFile = async (path: string) => {
     if (!activeWorkspacePath) return;
     if (confirmFile !== path) {
@@ -170,10 +347,10 @@ export default function CodeReviewPane() {
     );
   };
 
-  // Clamp selected index when entries change
+  // Clamp selected index to filtered list
   useEffect(() => {
-    setSelectedIndex((i) => (entries.length === 0 ? 0 : Math.min(i, entries.length - 1)));
-  }, [entries.length]);
+    setSelectedIndex((i) => (filteredEntries.length === 0 ? 0 : Math.min(i, filteredEntries.length - 1)));
+  }, [filteredEntries.length]);
 
   // Scroll selected file into view
   useEffect(() => {
@@ -192,38 +369,39 @@ export default function CodeReviewPane() {
 
       if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        setEntries((prev) => {
-          if (prev.length === 0) return prev;
-          const idx = Math.min(selectedIndex, prev.length - 1);
-          const entry = prev[idx];
-          if (entry.viewed) {
-            // Unmark viewed
-            viewedDiffs.current.delete(entry.file.path);
-            return prev.map((ent, i) =>
-              i === idx ? { ...ent, viewed: false, collapsed: false } : ent
-            );
-          }
-          // Mark viewed
-          viewedDiffs.current.set(entry.file.path, entry.rawDiff);
-          const updated = prev.map((ent, i) =>
-            i === idx ? { ...ent, viewed: true, collapsed: true } : ent
-          );
-          // Move to next unviewed file
+        if (filteredEntries.length === 0) return;
+        const idx = Math.min(selectedIndex, filteredEntries.length - 1);
+        const target = filteredEntries[idx];
+        const newViewed = !target.viewed;
+        if (newViewed) {
+          viewedDiffs.current.set(target.file.path, target.rawDiff);
+        } else {
+          viewedDiffs.current.delete(target.file.path);
+        }
+        setEntries((prev) =>
+          prev.map((ent) =>
+            ent.file.path === target.file.path
+              ? { ...ent, viewed: newViewed, collapsed: newViewed }
+              : ent
+          )
+        );
+        if (newViewed) {
           let next = idx + 1;
-          while (next < updated.length && updated[next].viewed) next++;
-          if (next >= updated.length) {
-            // Wrap: find first unviewed
-            next = updated.findIndex((ent) => !ent.viewed);
-            if (next === -1) next = idx; // all viewed, stay put
+          while (next < filteredEntries.length && filteredEntries[next].viewed) next++;
+          if (next >= filteredEntries.length) {
+            next = filteredEntries.findIndex(
+              (ent) => !ent.viewed && ent.file.path !== target.file.path
+            );
+            if (next === -1) next = idx;
           }
           setSelectedIndex(next);
-          return updated;
-        });
+        }
+        return;
       }
       if (e.key === 'j' || e.key === 'ArrowDown') {
         if (!e.metaKey && !e.ctrlKey && !e.altKey) {
           e.preventDefault();
-          setSelectedIndex((i) => Math.min(i + 1, entries.length - 1));
+          setSelectedIndex((i) => Math.min(i + 1, filteredEntries.length - 1));
         }
       }
       if (e.key === 'k' || e.key === 'ArrowUp') {
@@ -235,7 +413,7 @@ export default function CodeReviewPane() {
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [selectedIndex, entries.length]);
+  }, [selectedIndex, filteredEntries]);
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -248,9 +426,62 @@ export default function CodeReviewPane() {
     }
   };
 
+  const renderTreeNode = (node: TreeNode, depth: number): ReactNode => {
+    const indent = 6 + depth * 12;
+    if (node.kind === 'file') {
+      const e = node.entry;
+      const isSelected = node.index === selectedIndex;
+      return (
+        <div
+          key={`f:${e.file.path}`}
+          className={`cr-tree-row cr-tree-file ${isSelected ? 'selected' : ''} ${e.viewed ? 'viewed' : ''}`}
+          style={{ paddingLeft: indent }}
+          onClick={() => setSelectedIndex(node.index)}
+          title={e.file.path}
+        >
+          <span className="cr-tree-status" style={{ color: statusColor(e.file.status) }}>
+            {e.file.status}
+          </span>
+          <span className="cr-tree-name">{node.name}</span>
+          {e.diff && (e.diff.added > 0 || e.diff.removed > 0) && (
+            <span className="cr-tree-counts">
+              <span className="cr-add">+{e.diff.added}</span>
+              <span className="cr-del">−{e.diff.removed}</span>
+            </span>
+          )}
+        </div>
+      );
+    }
+    const isCollapsed = collapsedDirs.has(node.path);
+    return (
+      <div key={`d:${node.path}`}>
+        <div
+          className="cr-tree-row cr-tree-dir"
+          style={{ paddingLeft: indent }}
+          onClick={() => toggleDir(node.path)}
+          title={node.path}
+        >
+          <span className="cr-tree-chevron">{isCollapsed ? '▸' : '▾'}</span>
+          <span className="cr-tree-name">{node.name}</span>
+          <span className="cr-tree-counts">
+            <span className="cr-tree-filecount">{node.fileCount}</span>
+          </span>
+        </div>
+        {!isCollapsed && node.children.map((c) => renderTreeNode(c, depth + 1))}
+      </div>
+    );
+  };
+
   return (
     <div className="code-review-pane">
       <div className="cr-header">
+        <button
+          className={`cr-icon-btn cr-files-toggle ${filesPanelVisible ? 'active' : ''}`}
+          onClick={toggleFilesPanel}
+          title={filesPanelVisible ? 'Hide files panel' : 'Show files panel'}
+        >
+          ◧
+        </button>
         <span className="cr-title">Code Review</span>
         <select
           className="cr-base-select"
@@ -260,7 +491,38 @@ export default function CodeReviewPane() {
           <option value="uncommitted">Uncommitted changes</option>
           <option value="main">vs {project?.mainBranch || 'main'}</option>
         </select>
-        <span className="cr-spacer" />
+        <div className="cr-content-search-wrap">
+          <input
+            type="text"
+            className="cr-search-input"
+            placeholder="Search changes…"
+            value={contentSearch}
+            onChange={(e) => setContentSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (matches.length === 0) return;
+                goToMatch(e.shiftKey ? -1 : 1);
+              }
+            }}
+            style={contentSearch ? { paddingRight: 64 } : undefined}
+          />
+          {contentSearch && (
+            <span className="cr-search-count" title="Enter / Shift+Enter to navigate">
+              {matches.length === 0 ? '0/0' : `${matchCursor + 1}/${matches.length}`}
+            </span>
+          )}
+          {contentSearch && (
+            <button
+              type="button"
+              className="cr-search-clear"
+              onClick={() => setContentSearch('')}
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
         {codeReviewBase === 'uncommitted' && entries.length > 0 && (
           <button
             className="cr-icon-btn cr-discard-all"
@@ -282,101 +544,177 @@ export default function CodeReviewPane() {
         </button>
       </div>
 
-      <div className="cr-body">
-        {entries.length === 0 && !loading && (
-          <div className="cr-empty">No changes</div>
-        )}
-        {entries.map(({ file, diff, collapsed, viewed }, idx) => (
-          <div
-            className={`cr-file-card ${viewed ? 'cr-file-viewed' : ''} ${idx === selectedIndex ? 'cr-file-selected' : ''}`}
-            key={file.path}
-            ref={(el) => { if (el) fileRefs.current.set(idx, el); else fileRefs.current.delete(idx); }}
-            onClick={() => setSelectedIndex(idx)}
-          >
-            <div className="cr-file-header" onClick={() => toggleCollapse(file.path)}>
-              <span className="cr-chevron">{collapsed ? '▸' : '▾'}</span>
-              <span className="cr-status" style={{ color: statusColor(file.status) }}>
-                {file.status}
-              </span>
-              <span
-                className="cr-file-path cr-file-link"
-                onClick={(e) => {
-                  if (e.metaKey || e.ctrlKey) {
-                    e.stopPropagation();
-                    if (activeWorkspacePath) {
-                      const fullPath = activeWorkspacePath + '/' + file.path;
-                      openFile(fullPath, getLanguageFromPath(file.path));
-                    }
-                  }
-                }}
-                title="⌘+click to open file"
-              >{file.path}</span>
-              <span
-                className="cr-copy-icon"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigator.clipboard.writeText(file.path);
-                  const el = e.currentTarget;
-                  el.textContent = '✓';
-                  setTimeout(() => { el.textContent = '⎘'; }, 800);
-                }}
-                title="Copy path"
-              >⎘</span>
-              <span style={{ flex: 1 }} />
-              <span
-                className={`cr-viewed-check ${viewed ? 'checked' : ''}`}
-                onClick={(e) => { e.stopPropagation(); toggleViewed(file.path); }}
-                title={viewed ? 'Mark as unviewed' : 'Mark as viewed'}
-              >
-                {viewed ? '✓ Viewed' : 'Viewed'}
-              </span>
-              {codeReviewBase === 'uncommitted' && (
+      <div className="cr-main">
+        {filesPanelVisible && (
+        <div className="cr-files-panel" style={{ width: filesPanelWidth }}>
+          <div className="cr-files-search">
+            <div className="cr-content-search-wrap">
+              <input
+                type="text"
+                className="cr-search-input"
+                placeholder="Search files…"
+                value={fileSearch}
+                onChange={(e) => setFileSearch(e.target.value)}
+              />
+              {fileSearch && (
                 <button
-                  className="cr-discard-file"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    discardFile(file.path);
-                  }}
-                  title="Discard changes to this file"
+                  type="button"
+                  className="cr-search-clear"
+                  onClick={() => setFileSearch('')}
+                  title="Clear search"
                 >
-                  {confirmFile === file.path ? 'Click again' : '↶ Discard'}
+                  ✕
                 </button>
               )}
-              {diff && (
-                <span className="cr-counts">
-                  <span className="cr-add">+{diff.added}</span>{' '}
-                  <span className="cr-del">−{diff.removed}</span>
-                </span>
-              )}
             </div>
-            {!collapsed && diff && diff.hunks.length > 0 && (
-              <div className="cr-hunks">
-                {diff.hunks.map((hunk, hi) => (
-                  <div className="cr-hunk" key={hi}>
-                    <div className="cr-hunk-header">{hunk.header}</div>
-                    {hunk.lines.map((line, li) => (
-                      <div className={`cr-line cr-${line.kind}`} key={li}>
-                        <span className="cr-gutter cr-gutter-old">
-                          {line.kind === 'add' ? '' : line.oldNum ?? ''}
-                        </span>
-                        <span className="cr-gutter cr-gutter-new">
-                          {line.kind === 'del' ? '' : line.newNum ?? ''}
-                        </span>
-                        <span className="cr-sign">
-                          {line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}
-                        </span>
-                        <span className="cr-text">{line.text || ' '}</span>
+          </div>
+          <div className="cr-files-tree">
+            {tree.length === 0 ? (
+              <div className="cr-empty cr-empty-tree">
+                {entries.length === 0 ? 'No changes' : 'No matches'}
+              </div>
+            ) : (
+              tree.map((n) => renderTreeNode(n, 0))
+            )}
+          </div>
+        </div>
+        )}
+        {filesPanelVisible && (
+        <div
+          className="cr-files-resizer"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const startX = e.clientX;
+            const startW = filesPanelWidth;
+            const onMove = (me: MouseEvent) => {
+              persistFilesPanelWidth(startW + (me.clientX - startX));
+            };
+            const onUp = () => {
+              document.removeEventListener('mousemove', onMove);
+              document.removeEventListener('mouseup', onUp);
+              document.body.style.cursor = '';
+              document.body.style.userSelect = '';
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+          }}
+        />
+        )}
+        <div className="cr-body">
+          {filteredEntries.length === 0 && !loading && (
+            <div className="cr-empty">
+              {entries.length === 0 ? 'No changes' : 'No matches'}
+            </div>
+          )}
+          {filteredEntries.map(({ file, diff, collapsed, viewed }, idx) => {
+            const effectiveCollapsed = collapsed && !contentQuery;
+            return (
+              <div
+                className={`cr-file-card ${viewed ? 'cr-file-viewed' : ''} ${idx === selectedIndex ? 'cr-file-selected' : ''}`}
+                key={file.path}
+                ref={(el) => { if (el) fileRefs.current.set(idx, el); else fileRefs.current.delete(idx); }}
+                onClick={() => setSelectedIndex(idx)}
+              >
+                <div className="cr-file-header" onClick={() => toggleCollapse(file.path)}>
+                  <span className="cr-chevron">{effectiveCollapsed ? '▸' : '▾'}</span>
+                  <span className="cr-status" style={{ color: statusColor(file.status) }}>
+                    {file.status}
+                  </span>
+                  <span
+                    className="cr-file-path cr-file-link"
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey) {
+                        e.stopPropagation();
+                        if (activeWorkspacePath) {
+                          const fullPath = activeWorkspacePath + '/' + file.path;
+                          openFile(fullPath, getLanguageFromPath(file.path));
+                        }
+                      }
+                    }}
+                    title="⌘+click to open file"
+                  >{file.path}</span>
+                  <span
+                    className="cr-copy-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(file.path);
+                      const el = e.currentTarget;
+                      el.textContent = '✓';
+                      setTimeout(() => { el.textContent = '⎘'; }, 800);
+                    }}
+                    title="Copy path"
+                  >⎘</span>
+                  <span style={{ flex: 1 }} />
+                  <span
+                    className={`cr-viewed-check ${viewed ? 'checked' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); toggleViewed(file.path); }}
+                    title={viewed ? 'Mark as unviewed' : 'Mark as viewed'}
+                  >
+                    {viewed ? '✓ Viewed' : 'Viewed'}
+                  </span>
+                  {codeReviewBase === 'uncommitted' && (
+                    <button
+                      className="cr-discard-file"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        discardFile(file.path);
+                      }}
+                      title="Discard changes to this file"
+                    >
+                      {confirmFile === file.path ? 'Click again' : '↶ Discard'}
+                    </button>
+                  )}
+                  {diff && (
+                    <span className="cr-counts">
+                      <span className="cr-add">+{diff.added}</span>{' '}
+                      <span className="cr-del">−{diff.removed}</span>
+                    </span>
+                  )}
+                </div>
+                {!effectiveCollapsed && diff && diff.hunks.length > 0 && (
+                  <div className="cr-hunks">
+                    {diff.hunks.map((hunk, hi) => (
+                      <div className="cr-hunk" key={hi}>
+                        <div className="cr-hunk-header">{hunk.header}</div>
+                        {hunk.lines.map((line, li) => {
+                          const cm = matches[matchCursor];
+                          const isCurrent = cm && cm.fileIdx === idx && cm.hunkIdx === hi && cm.lineIdx === li;
+                          const lineKey = `${idx}:${hi}:${li}`;
+                          return (
+                            <div
+                              className={`cr-line cr-${line.kind} ${isCurrent ? 'cr-line-current-match' : ''}`}
+                              key={li}
+                              ref={(el) => {
+                                if (el) lineRefs.current.set(lineKey, el);
+                                else lineRefs.current.delete(lineKey);
+                              }}
+                            >
+                              <span className="cr-gutter cr-gutter-old">
+                                {line.kind === 'add' ? '' : line.oldNum ?? ''}
+                              </span>
+                              <span className="cr-gutter cr-gutter-new">
+                                {line.kind === 'del' ? '' : line.newNum ?? ''}
+                              </span>
+                              <span className="cr-sign">
+                                {line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}
+                              </span>
+                              <span className="cr-text">{renderHighlighted(line.text, contentQuery)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     ))}
                   </div>
-                ))}
+                )}
+                {!effectiveCollapsed && diff && diff.hunks.length === 0 && (
+                  <div className="cr-empty cr-empty-file">(no textual diff)</div>
+                )}
               </div>
-            )}
-            {!collapsed && diff && diff.hunks.length === 0 && (
-              <div className="cr-empty cr-empty-file">(no textual diff)</div>
-            )}
-          </div>
-        ))}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
