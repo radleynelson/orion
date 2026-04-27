@@ -507,12 +507,43 @@ function normalizeUserEvent(event) {
 }
 
 function extractQuestion(input) {
+  const summary = summarizeQuestions(input);
+  if (summary) {
+    return summary;
+  }
   return (
     String(input.question || '').trim() ||
     String(input.prompt || '').trim() ||
     String(input.message || '').trim() ||
     'Claude needs input'
   );
+}
+
+function summarizeQuestions(input) {
+  const questions = Array.isArray(input?.questions) ? input.questions : [];
+  const lines = [];
+  for (const item of questions) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const header = String(item.header || '').trim();
+    const question = String(item.question || '').trim();
+    if (header && question) {
+      lines.push(`${header}: ${question}`);
+    } else if (question) {
+      lines.push(question);
+    } else if (header) {
+      lines.push(header);
+    }
+    const options = Array.isArray(item.options) ? item.options : [];
+    const labels = options
+      .map((option) => String(option?.label || '').trim())
+      .filter(Boolean);
+    if (labels.length) {
+      lines.push(`Options: ${labels.join(', ')}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 function summarizeToolResult(content) {

@@ -50,6 +50,18 @@ type ChatRow = ChatMessage & {
   planState?: "waiting" | "approved";
 };
 
+type StructuredQuestionOption = {
+  label?: string;
+  description?: string;
+};
+
+type StructuredQuestion = {
+  question?: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: StructuredQuestionOption[];
+};
+
 type LiveActivityItem = {
   id: string;
   kind: "status" | "tool" | "reasoning" | "plan" | "stream" | "question";
@@ -1148,7 +1160,8 @@ function PermissionCard({
   assistantName: string;
   agentId: string;
 }) {
-  const prompt = permissionPrompt(msg);
+  const questions = structuredQuestions(msg);
+  const prompt = questions.length ? "" : permissionPrompt(msg);
   const toolUseId = msg.toolUseId || "";
   const localState = toolUseId ? answerStates[toolUseId] : undefined;
   const state =
@@ -1163,7 +1176,18 @@ function PermissionCard({
     ? msg.answerText || submittedAnswers[toolUseId] || msg.resultText || ""
     : msg.answerText || msg.resultText || "";
   const statusLabel = permissionStatusLabel(state);
-  const questionText = msg.text || prompt;
+  const questionText = questions.length
+    ? questionSummary(questions)
+    : msg.text || prompt;
+  const title =
+    questions.length === 1 && questions[0].header
+      ? questions[0].header
+      : msg.toolName || "Question";
+  const subtitle = questions.length
+    ? questions.length === 1
+      ? questions[0].question || "The session is waiting for your answer."
+      : `${questions.length} questions need your answer.`
+    : questionText || "The session is waiting for your answer.";
   return (
     <div
       className={`codex-chat-message codex-chat-message-assistant codex-chat-message-permission codex-chat-message-permission-${state}`}
@@ -1182,11 +1206,11 @@ function PermissionCard({
             </span>
             <div>
               <div className="codex-permission-title">
-                {msg.toolName || "Question"}
+                {title}
               </div>
               {!resolved && (
                 <div className="codex-permission-subtitle">
-                  {questionText || "The session is waiting for your answer."}
+                  {subtitle}
                 </div>
               )}
             </div>
@@ -1196,14 +1220,23 @@ function PermissionCard({
               {statusLabel}
             </span>
           </div>
-          {waiting && <div className="codex-permission-prompt">{prompt}</div>}
+          {waiting &&
+            (questions.length ? (
+              <StructuredQuestionList questions={questions} />
+            ) : (
+              <div className="codex-permission-prompt">{prompt}</div>
+            ))}
           {resolved && (
             <div className="codex-permission-resolved">
-              {questionText && (
+              {questions.length ? (
+                <StructuredQuestionList questions={questions} compact />
+              ) : (
+                questionText && (
                 <div className="codex-permission-qa">
                   <div className="codex-permission-qa-label">Question</div>
                   <div className="codex-permission-qa-text">{questionText}</div>
                 </div>
+                )
               )}
               <div className="codex-permission-qa">
                 <div className="codex-permission-qa-label">Your answer</div>
@@ -1226,7 +1259,11 @@ function PermissionCard({
                     [toolUseId]: e.target.value,
                   }))
                 }
-                placeholder={`Answer ${assistantName}...`}
+                placeholder={
+                  questions.length > 1
+                    ? "Answer all questions..."
+                    : `Answer ${assistantName}...`
+                }
                 disabled={disabled}
                 rows={2}
               />
@@ -1618,6 +1655,95 @@ function toolIcon(toolName?: string): string {
   if (value.includes("web")) return "⌕";
   if (value.includes("mcp")) return "◆";
   return "∴";
+}
+
+function StructuredQuestionList({
+  questions,
+  compact = false,
+}: {
+  questions: StructuredQuestion[];
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`codex-structured-questions${
+        compact ? " codex-structured-questions-compact" : ""
+      }`}
+    >
+      {questions.map((question, index) => (
+        <div
+          className="codex-structured-question"
+          key={`${question.header || ""}-${question.question || ""}-${index}`}
+        >
+          <div className="codex-structured-question-head">
+            <span>{question.header || `Question ${index + 1}`}</span>
+            {question.multiSelect && <em>multiple</em>}
+          </div>
+          <div className="codex-structured-question-text">
+            {question.question}
+          </div>
+          {!!question.options?.length && (
+            <div className="codex-structured-options">
+              {question.options.map((option, optionIndex) => (
+                <div
+                  className="codex-structured-option"
+                  key={`${option.label || ""}-${optionIndex}`}
+                >
+                  <span>{question.multiSelect ? "□" : "○"}</span>
+                  <div>
+                    <strong>{option.label}</strong>
+                    {option.description && <p>{option.description}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function structuredQuestions(msg: ChatMessage): StructuredQuestion[] {
+  for (const value of [msg.details, msg.text]) {
+    const questions = parseStructuredQuestions(value);
+    if (questions.length) return questions;
+  }
+  return [];
+}
+
+function parseStructuredQuestions(value?: string): StructuredQuestion[] {
+  const trimmed = (value || "").trim();
+  if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    const questions = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.questions)
+        ? parsed.questions
+        : parsed?.question
+          ? [parsed]
+          : [];
+    return questions.filter(
+      (question: StructuredQuestion) =>
+        typeof question?.question === "string" && question.question.trim(),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function questionSummary(questions: StructuredQuestion[]): string {
+  return questions
+    .map((question) => {
+      const header = (question.header || "").trim();
+      const text = (question.question || "").trim();
+      return header && text ? `${header}: ${text}` : text || header;
+    })
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function permissionPrompt(msg: ChatMessage): string {

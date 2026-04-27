@@ -2638,6 +2638,30 @@ private struct CodexChatRow: Identifiable {
     var answerText: String? = nil
 }
 
+private struct StructuredQuestionPayload: Decodable {
+    let questions: [StructuredQuestion]
+}
+
+private struct StructuredQuestion: Decodable, Identifiable {
+    let question: String
+    let header: String?
+    let multiSelect: Bool?
+    let options: [StructuredQuestionOption]?
+
+    var id: String {
+        "\(header ?? "")|\(question)"
+    }
+}
+
+private struct StructuredQuestionOption: Decodable, Identifiable {
+    let label: String
+    let description: String?
+
+    var id: String {
+        "\(label)|\(description ?? "")"
+    }
+}
+
 private struct ChatSessionMetadata: Decodable {
     let provider: String?
     let viewMode: String?
@@ -2666,6 +2690,14 @@ private struct PendingChatImage: Identifiable {
 
     var payload: ChatAttachmentPayload {
         ChatAttachmentPayload(id: id.uuidString, name: name, mimeType: mimeType, data: data)
+    }
+}
+
+private struct ChatBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -2702,9 +2734,12 @@ struct CodexChatView: View {
     @State private var isLoadingPhotos = false
     @State private var expandedPlan: CodexChatRow?
     @State private var dismissedKeyboardDuringDrag = false
+    @State private var chatIsNearBottom = true
+    @State private var didInitialChatScroll = false
     @FocusState private var composerFocused: Bool
 
     private let chatBottomID = "chat-bottom"
+    private let chatScrollCoordinateSpace = "codex-chat-scroll"
     private var assistantName: String { connection.displayName }
     private var assistantColor: Color { sessionColor(connection.sessionType) }
     private var sessionMetadata: ChatSessionMetadata? { chatSessionMetadata(connection.messages) }
@@ -2718,33 +2753,78 @@ struct CodexChatView: View {
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        if chatRows.isEmpty {
-                            Text("Ask \(assistantName) to inspect, edit, or explain this workspace.")
-                                .font(.system(size: 14))
-                                .foregroundStyle(OrionTheme.textDim)
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 120)
+                GeometryReader { scrollGeometry in
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 14) {
+                                if chatRows.isEmpty {
+                                    Text("Ask \(assistantName) to inspect, edit, or explain this workspace.")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(OrionTheme.textDim)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.top, 120)
+                                }
+                                ForEach(chatRows) { row in
+                                    chatRow(row)
+                                        .id(row.id)
+                                }
+                                GeometryReader { bottomProxy in
+                                    Color.clear
+                                        .preference(
+                                            key: ChatBottomPreferenceKey.self,
+                                            value: bottomProxy.frame(in: .named(chatScrollCoordinateSpace)).maxY
+                                        )
+                                }
+                                .frame(height: 1)
+                                .id(chatBottomID)
+                            }
+                            .padding(14)
                         }
-                        ForEach(chatRows) { row in
-                            chatRow(row)
-                                .id(row.id)
+                        .coordinateSpace(name: chatScrollCoordinateSpace)
+                        .scrollDismissesKeyboard(.interactively)
+                        .simultaneousGesture(keyboardDismissGesture)
+                        .background(OrionTheme.bgTerminal)
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            composer
                         }
-                        Color.clear
-                            .frame(height: 1)
-                            .id(chatBottomID)
+                        .onPreferenceChange(ChatBottomPreferenceKey.self) { bottomY in
+                            let viewportBottom = scrollGeometry.size.height
+                            chatIsNearBottom = bottomY <= viewportBottom + 96
+                        }
+                        .onAppear {
+                            didInitialChatScroll = true
+                            scrollToChatBottom(proxy, delay: 0.08, animated: false)
+                        }
+                        .onChange(of: connection.messages.count) { _, _ in
+                            guard chatIsNearBottom || !didInitialChatScroll else { return }
+                            didInitialChatScroll = true
+                            scrollToChatBottom(proxy)
+                        }
+
+                        if !chatIsNearBottom {
+                            Button {
+                                chatIsNearBottom = true
+                                scrollToChatBottom(proxy)
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "arrow.down")
+                                        .font(.system(size: 11, weight: .bold))
+                                    Text("Latest")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .foregroundStyle(OrionTheme.textPrimary)
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 7)
+                                .background(OrionTheme.bgSurface.opacity(0.94))
+                                .overlay(Capsule().stroke(OrionTheme.border, lineWidth: 0.6))
+                                .clipShape(Capsule())
+                                .shadow(color: .black.opacity(0.22), radius: 10, y: 4)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 16)
+                            .padding(.bottom, 98)
+                        }
                     }
-                    .padding(14)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(keyboardDismissGesture)
-                .background(OrionTheme.bgTerminal)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    composer
-                }
-                .onChange(of: connection.messages.count) { _, _ in
-                    scrollToChatBottom(proxy)
                 }
             }
         }
@@ -2759,6 +2839,7 @@ struct CodexChatView: View {
                     state.showDiffReview = true
                 },
                 onApprove: {
+                    chatIsNearBottom = true
                     connection.approvePlan()
                     expandedPlan = nil
                 }
@@ -3071,7 +3152,10 @@ struct CodexChatView: View {
                             .buttonStyle(.bordered)
                     }
                     if isWaiting {
-                        Button("Approve & run") { connection.approvePlan() }
+                        Button("Approve & run") {
+                            chatIsNearBottom = true
+                            connection.approvePlan()
+                        }
                             .buttonStyle(.borderedProminent)
                             .tint(OrionTheme.accentBlue)
                             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -3238,7 +3322,15 @@ struct CodexChatView: View {
         let state = row.permissionState ?? "waiting"
         let resolved = state == "submitted" || state == "answered"
         let accent = resolved ? OrionTheme.accentGreen : OrionTheme.accentYellow
+        let questions = structuredQuestions(from: row)
         let questionText = row.text.isEmpty ? (row.details ?? "") : row.text
+        let titleText = questions.count == 1 ? (questions[0].header ?? row.label) : row.label
+        let subtitleText: String = {
+            if !questions.isEmpty {
+                return questions.count == 1 ? questions[0].question : "\(questions.count) questions need your answer."
+            }
+            return questionText.isEmpty ? "The session is waiting for your answer." : questionText
+        }()
         let answerDisplay: String = {
             if let id = row.toolUseId, let optimistic = submittedAnswers[id], !optimistic.isEmpty {
                 return optimistic
@@ -3262,11 +3354,11 @@ struct CodexChatView: View {
                             .overlay(RoundedRectangle(cornerRadius: 9).stroke(accent.opacity(0.34), lineWidth: 0.5))
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(row.label.isEmpty ? "Question" : row.label)
+                            Text(titleText.isEmpty ? "Question" : titleText)
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(OrionTheme.textPrimary)
                             if !resolved {
-                                Text(questionText.isEmpty ? "The session is waiting for your answer." : questionText)
+                                Text(subtitleText)
                                     .font(.system(size: 11))
                                     .foregroundStyle(OrionTheme.textDim)
                                     .lineLimit(2)
@@ -3276,19 +3368,25 @@ struct CodexChatView: View {
                     }
                     if resolved {
                         VStack(alignment: .leading, spacing: 8) {
-                            if !questionText.isEmpty {
+                            if !questions.isEmpty {
+                                structuredQuestionList(questions)
+                            } else if !questionText.isEmpty {
                                 qaBlock(label: "Question", text: questionText, color: OrionTheme.textSecondary, accent: nil)
                             }
                             qaBlock(label: "Your answer", text: answerDisplay, color: OrionTheme.textPrimary, accent: accent)
                         }
                     } else {
-                        Text(row.details ?? row.text)
-                            .font(.system(size: 13))
-                            .foregroundStyle(OrionTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if !questions.isEmpty {
+                            structuredQuestionList(questions)
+                        } else {
+                            Text(row.details ?? row.text)
+                                .font(.system(size: 13))
+                                .foregroundStyle(OrionTheme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let toolUseId = row.toolUseId {
                             HStack(alignment: .bottom, spacing: 8) {
-                                TextField("Answer \(assistantName)...", text: Binding(
+                                TextField(questions.count > 1 ? "Answer all questions..." : "Answer \(assistantName)...", text: Binding(
                                     get: { answers[toolUseId] ?? "" },
                                     set: { answers[toolUseId] = $0 }
                                 ), axis: .vertical)
@@ -3304,6 +3402,7 @@ struct CodexChatView: View {
                                     guard !text.isEmpty else { return }
                                     submittedAnswers[toolUseId] = text
                                     answers[toolUseId] = ""
+                                    chatIsNearBottom = true
                                     connection.answer(toolUseId: toolUseId, text: text)
                                 }
                                 .buttonStyle(.borderedProminent)
@@ -3321,6 +3420,65 @@ struct CodexChatView: View {
             Spacer(minLength: 22)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func structuredQuestionList(_ questions: [StructuredQuestion]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(question.header?.isEmpty == false ? question.header ?? "" : "Question \(index + 1)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .textCase(.uppercase)
+                        if question.multiSelect == true {
+                            Text("multiple")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(OrionTheme.accentYellow)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(OrionTheme.accentYellow.opacity(0.1))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text(question.question)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let options = question.options, !options.isEmpty {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(options) { option in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: question.multiSelect == true ? "square" : "circle")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(OrionTheme.accentYellow)
+                                        .frame(width: 16, height: 18)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(option.label)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(OrionTheme.textSecondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        if let description = option.description, !description.isEmpty {
+                                            Text(description)
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(OrionTheme.textDim)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(9)
+                        .background(OrionTheme.bgPrimary.opacity(0.55))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+                .padding(.bottom, index == questions.count - 1 ? 0 : 2)
+            }
+        }
     }
 
     @ViewBuilder
@@ -3565,6 +3723,7 @@ struct CodexChatView: View {
         let attachments = pendingImages.map(\.payload)
         input = ""
         pendingImages = []
+        chatIsNearBottom = true
         connection.sendInput(text, attachments: attachments)
     }
 
@@ -4149,6 +4308,38 @@ private func chatLabel(_ message: CodexChatMessage, assistantName: String) -> St
     case "system": return "System"
     default: return message.type
     }
+}
+
+private func structuredQuestions(from row: CodexChatRow) -> [StructuredQuestion] {
+    let sources = [row.details, row.text]
+    for source in sources {
+        let questions = parseStructuredQuestions(source)
+        if !questions.isEmpty {
+            return questions
+        }
+    }
+    return []
+}
+
+private func parseStructuredQuestions(_ raw: String?) -> [StructuredQuestion] {
+    guard let raw else { return [] }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")),
+          let data = trimmed.data(using: .utf8) else {
+        return []
+    }
+    let decoder = JSONDecoder()
+    if let payload = try? decoder.decode(StructuredQuestionPayload.self, from: data) {
+        return payload.questions.filter { !$0.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    if let questions = try? decoder.decode([StructuredQuestion].self, from: data) {
+        return questions.filter { !$0.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    if let question = try? decoder.decode(StructuredQuestion.self, from: data),
+       !question.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return [question]
+    }
+    return []
 }
 
 private func attachmentDisplayName(_ attachment: ChatAttachmentPayload) -> String {
