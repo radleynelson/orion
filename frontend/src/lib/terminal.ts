@@ -92,6 +92,40 @@ async function readClipboardText(): Promise<string> {
   return navigator.clipboard.readText();
 }
 
+let lastTerminalCopyText = '';
+let lastTerminalCopyAt = 0;
+let pendingTerminalClipboardWrite: Promise<void> | null = null;
+
+function copyTerminalText(text: string): void {
+  lastTerminalCopyText = text;
+  lastTerminalCopyAt = Date.now();
+  const write = writeClipboardText(text);
+  pendingTerminalClipboardWrite = write;
+  void write.finally(() => {
+    if (pendingTerminalClipboardWrite === write) {
+      pendingTerminalClipboardWrite = null;
+    }
+  });
+}
+
+async function readPasteClipboardText(): Promise<string> {
+  const terminalCopyAge = Date.now() - lastTerminalCopyAt;
+  const hasRecentTerminalCopy = lastTerminalCopyText.length > 0 && terminalCopyAge < 2500;
+  if (hasRecentTerminalCopy && pendingTerminalClipboardWrite) {
+    try {
+      await pendingTerminalClipboardWrite;
+    } catch {}
+  }
+
+  try {
+    const text = await readClipboardText();
+    return hasRecentTerminalCopy ? lastTerminalCopyText : text;
+  } catch (error) {
+    if (hasRecentTerminalCopy) return lastTerminalCopyText;
+    throw error;
+  }
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -248,6 +282,7 @@ export function createTerminal(
   const pasteText = (text: string) => {
     if (!text) return;
     terminal.focus();
+    terminal.clearSelection();
     const normalized = text.replace(/\r?\n/g, '\r');
     const payload = terminal.modes.bracketedPasteMode
       ? `\x1b[200~${normalized}\x1b[201~`
@@ -262,7 +297,7 @@ export function createTerminal(
     const token = ++pasteRequestToken;
     pasteSuppressedUntil = Date.now() + 250;
     try {
-      const text = await readClipboardText();
+      const text = await readPasteClipboardText();
       if (token !== pasteRequestToken) return;
       lastPasteHandledAt = Date.now();
       pasteText(text);
@@ -281,7 +316,7 @@ export function createTerminal(
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        void writeClipboardText(clipboardTextFromSelection(selection, terminal.cols));
+        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
         return;
       }
     }
@@ -325,7 +360,7 @@ export function createTerminal(
       if (selection) {
         e.preventDefault();
         e.stopPropagation();
-        void writeClipboardText(clipboardTextFromSelection(selection, terminal.cols));
+        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
         return false;
       }
     }
@@ -365,7 +400,7 @@ export function createTerminal(
       e.stopImmediatePropagation();
       const text = clipboardTextFromSelection(selection, terminal.cols);
       e.clipboardData?.setData('text/plain', text);
-      void writeClipboardText(text);
+      copyTerminalText(text);
     }
   };
   container.addEventListener('copy', copyHandler, { capture: true });
