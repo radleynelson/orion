@@ -224,10 +224,28 @@ func (m *Manager) DeleteWorkspace(repoRoot, path string) error {
 
 	cmd := exec.Command("git", "worktree", "remove", path, "--force")
 	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
 	}
-	return nil
+
+	// If the worktree directory is already gone (manually deleted, moved, or its
+	// .git file is missing), `git worktree remove` refuses with a validation
+	// error. In that case, prune the stale admin entry and clean up the dir if
+	// any leftover exists.
+	msg := strings.TrimSpace(string(out))
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) || strings.Contains(msg, "validation failed") {
+		pruneCmd := exec.Command("git", "worktree", "prune")
+		pruneCmd.Dir = repoRoot
+		if pruneOut, pruneErr := pruneCmd.CombinedOutput(); pruneErr != nil {
+			return fmt.Errorf("worktree remove failed: %s; prune also failed: %s", msg, strings.TrimSpace(string(pruneOut)))
+		}
+		// Best-effort cleanup of any leftover directory contents.
+		_ = os.RemoveAll(path)
+		return nil
+	}
+
+	return fmt.Errorf("%s", msg)
 }
 
 // GetConfig returns the .orion.toml config for a repo.

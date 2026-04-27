@@ -121,6 +121,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<{ path: string; message: string } | null>(null);
   const [serverStatuses, setServerStatuses] = useState<Record<string, server.ServerStatus[]>>({});
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -300,6 +301,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const handleDelete = useCallback(async (path: string) => {
     if (!project) return;
     setDeletingPath(path);
+    setDeleteError(null);
     try {
       const wsTabs = tabs.filter((t) => t.workspacePath === path);
       for (const tab of wsTabs) {
@@ -313,6 +315,8 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       await refreshWorkspaces();
     } catch (err) {
       console.error('Failed to delete workspace:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      setDeleteError({ path, message });
     } finally {
       setDeletingPath(null);
     }
@@ -667,6 +671,25 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
                   </span>
                 )}
               </div>
+              {deleteError?.path === ws.path && (
+                <div
+                  style={{
+                    margin: '4px 8px 8px 28px',
+                    padding: '6px 8px',
+                    fontSize: 'var(--font-size-xs)',
+                    color: '#ff8a80',
+                    background: 'rgba(255, 138, 128, 0.08)',
+                    border: '1px solid rgba(255, 138, 128, 0.25)',
+                    borderRadius: '4px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                  onClick={() => setDeleteError(null)}
+                  title="Click to dismiss"
+                >
+                  {deleteError.message}
+                </div>
+              )}
             </div>
           );
         })}
