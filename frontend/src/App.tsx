@@ -15,7 +15,7 @@ import OrionMark from './components/OrionMark';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
 import { configureMonacoTheme } from './lib/monacoTheme';
 import { parseUnifiedDiff } from './lib/diffParser';
-import { EventsOn } from '../wailsjs/runtime/runtime';
+import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime';
 import { claudesdk, codexchat, main, server, state } from '../wailsjs/go/models';
 import {
   AllocatePorts,
@@ -2170,6 +2170,7 @@ function WorkspaceToolbar({
   const runningServers = serverStatuses.filter((status) => status.running);
   const envEntries = Object.entries(envVars);
   const serverAction = runningServers.length > 0 ? onStopServers : onStartServers;
+  const browserURL = workspaceBrowserURL(serverStatuses);
 
   return (
     <div className="workspace-toolbar">
@@ -2178,6 +2179,11 @@ function WorkspaceToolbar({
           <span className={`chip-dot ${runningServers.length > 0 ? 'running' : ''}`} />
           <span>servers</span>
           <b>{runningServers.length}/{serverStatuses.length}</b>
+        </button>
+      )}
+      {browserURL && (
+        <button type="button" className="workspace-icon-button" onClick={() => BrowserOpenURL(browserURL)} title="Open browser">
+          <AgentSigil id="browser" size={15} />
         </button>
       )}
       {envEntries.length > 0 && (
@@ -2206,11 +2212,7 @@ function WorkspaceToolbar({
                 </div>
                 <div className="toolbar-popover-list">
                   {[...serverStatuses].sort(serverStatusSort).map((status) => (
-                    <div key={status.name} className="toolbar-popover-row">
-                      <span className={`server-dot ${status.running ? 'running' : 'stopped'}`}>●</span>
-                      <span>{status.name}</span>
-                      {status.port > 0 && <code>:{status.port}</code>}
-                    </div>
+                    <ServerPopoverRow key={status.name} status={status} allStatuses={serverStatuses} onClosePopover={onClosePopover} />
                   ))}
                 </div>
               </>
@@ -2236,9 +2238,83 @@ function WorkspaceToolbar({
   );
 }
 
+function ServerPopoverRow({
+  status,
+  allStatuses,
+  onClosePopover,
+}: {
+  status: server.ServerStatus;
+  allStatuses: server.ServerStatus[];
+  onClosePopover: () => void;
+}) {
+  const action = serverBrowserAction(status, allStatuses);
+
+  return (
+    <div className="toolbar-popover-row server-row">
+      <span className={`server-dot ${status.running ? 'running' : 'stopped'}`}>●</span>
+      <span>{status.name}</span>
+      {status.port > 0 ? <code>:{status.port}</code> : <code />}
+      {action ? (
+        <button
+          type="button"
+          className="server-row-action"
+          onClick={() => {
+            onClosePopover();
+            BrowserOpenURL(action.url);
+          }}
+          title={action.label}
+          aria-label={action.label}
+        >
+          <AgentSigil id="browser" size={14} />
+        </button>
+      ) : (
+        <span />
+      )}
+    </div>
+  );
+}
+
 function serverStatusSort(a: server.ServerStatus, b: server.ServerStatus) {
   const order: Record<string, number> = { frontend: 0, backend: 1, sidekiq: 2 };
   return (order[a.name] ?? 99) - (order[b.name] ?? 99);
+}
+
+function workspaceBrowserURL(statuses: server.ServerStatus[]): string | null {
+  const status = pickFrontendStatus(statuses) || statuses.find((candidate) => candidate.running && candidate.port > 0);
+  return status?.port ? localhostURL(status.port) : null;
+}
+
+function serverBrowserAction(status: server.ServerStatus, statuses: server.ServerStatus[]): { label: string; url: string } | null {
+  if (!status.running) return null;
+  const name = status.name.toLowerCase();
+  if (name === 'sidekiq' || name === 'sidekick') {
+    const backend = pickBackendStatus(statuses);
+    if (!backend?.port) return null;
+    return { label: 'Open Sidekiq dashboard', url: `${localhostURL(backend.port)}/sidekiq` };
+  }
+  if (status.port > 0) {
+    const label = name === 'frontend' || name === 'web' ? 'Open browser' : `Open ${status.name}`;
+    return { label, url: localhostURL(status.port) };
+  }
+  return null;
+}
+
+function pickFrontendStatus(statuses: server.ServerStatus[]): server.ServerStatus | undefined {
+  const preferred = ['frontend', 'web', 'client', 'app'];
+  return preferred
+    .map((name) => statuses.find((status) => status.running && status.port > 0 && status.name.toLowerCase() === name))
+    .find(Boolean);
+}
+
+function pickBackendStatus(statuses: server.ServerStatus[]): server.ServerStatus | undefined {
+  const preferred = ['backend', 'server', 'api', 'web'];
+  return preferred
+    .map((name) => statuses.find((status) => status.running && status.port > 0 && status.name.toLowerCase() === name))
+    .find(Boolean) || statuses.find((status) => status.running && status.port > 0 && status.name.toLowerCase() !== 'frontend');
+}
+
+function localhostURL(port: number): string {
+  return `http://localhost:${port}`;
 }
 
 function maskToolbarValue(value: string): string {
