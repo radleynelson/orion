@@ -92,6 +92,14 @@ async function readClipboardText(): Promise<string> {
   return navigator.clipboard.readText();
 }
 
+function isShiftKeyEvent(e: KeyboardEvent): boolean {
+  return e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.keyCode === 16;
+}
+
+function isEnterKeyEvent(e: KeyboardEvent): boolean {
+  return e.key === 'Enter' || e.key === 'Return' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.keyCode === 13;
+}
+
 let lastTerminalCopyText = '';
 let lastTerminalCopyAt = 0;
 let pendingTerminalClipboardWrite: Promise<void> | null = null;
@@ -309,12 +317,15 @@ export function createTerminal(
   };
 
   const sendShiftEnter = () => {
+    if (Date.now() - lastShiftEnterSentAt < 80) {
+      return;
+    }
     lastShiftEnterSentAt = Date.now();
     sendSeq('\x1b[13;2u');
   };
 
   const keyCaptureHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Shift') {
+    if (isShiftKeyEvent(e)) {
       shiftKeyDown = true;
       return;
     }
@@ -346,7 +357,7 @@ export function createTerminal(
     }
 
     if (
-      e.key === 'Enter' &&
+      isEnterKeyEvent(e) &&
       (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown) &&
       !e.metaKey &&
       !e.ctrlKey &&
@@ -364,9 +375,10 @@ export function createTerminal(
     }
   };
   container.addEventListener('keydown', keyCaptureHandler, { capture: true });
+  container.addEventListener('keypress', keyCaptureHandler, { capture: true });
 
   const keyReleaseHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Shift') {
+    if (isShiftKeyEvent(e)) {
       shiftKeyDown = false;
     }
   };
@@ -381,7 +393,7 @@ export function createTerminal(
   terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
 
-    if (e.key === 'Shift') {
+    if (isShiftKeyEvent(e)) {
       shiftKeyDown = true;
       return true;
     }
@@ -403,7 +415,7 @@ export function createTerminal(
     }
 
     // Fallback for Shift+Enter if the DOM capture listener misses it.
-    if (e.key === 'Enter' && (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown)) {
+    if (isEnterKeyEvent(e) && (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown)) {
       e.preventDefault();
       e.stopPropagation();
       sendShiftEnter();
@@ -468,6 +480,7 @@ export function createTerminal(
     pasteHandler(e);
   };
   container.ownerDocument.addEventListener('keydown', documentKeyCaptureHandler, { capture: true });
+  container.ownerDocument.addEventListener('keypress', documentKeyCaptureHandler, { capture: true });
   container.ownerDocument.addEventListener('keyup', documentKeyReleaseHandler, { capture: true });
   container.ownerDocument.addEventListener('paste', documentPasteHandler, { capture: true });
 
@@ -599,10 +612,12 @@ export function createTerminal(
     if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
+    container.removeEventListener('keypress', keyCaptureHandler, { capture: true } as any);
     container.removeEventListener('keyup', keyReleaseHandler, { capture: true } as any);
     container.removeEventListener('copy', copyHandler, { capture: true } as any);
     container.removeEventListener('paste', pasteHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keydown', documentKeyCaptureHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('keypress', documentKeyCaptureHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keyup', documentKeyReleaseHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('paste', documentPasteHandler, { capture: true } as any);
     window.removeEventListener('blur', blurHandler);
