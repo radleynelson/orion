@@ -18,7 +18,7 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
     return (
       <div
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
-        onClick={() => setFocusedPane(pane.id)}
+        onMouseDownCapture={() => setFocusedPane(pane.id)}
       >
         <Terminal terminalId={pane.terminalId!} visible={visible} focused={isFocused} />
       </div>
@@ -30,7 +30,7 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
     return (
       <div
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
-        onClick={() => setFocusedPane(pane.id)}
+        onMouseDownCapture={() => setFocusedPane(pane.id)}
       >
         <MonacoEditor filePath={pane.filePath!} language={pane.language || 'plaintext'} visible={visible} line={pane.line} />
       </div>
@@ -42,7 +42,7 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
     return (
       <div
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
-        onClick={() => setFocusedPane(pane.id)}
+        onMouseDownCapture={() => setFocusedPane(pane.id)}
       >
         <CodexChat sessionId={pane.chatSessionId!} visible={visible} kind={pane.chatKind || 'codex'} />
       </div>
@@ -54,7 +54,7 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
     return (
       <div
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
-        onClick={() => setFocusedPane(pane.id)}
+        onMouseDownCapture={() => setFocusedPane(pane.id)}
       >
         <DiagnosticsPage visible={visible} />
       </div>

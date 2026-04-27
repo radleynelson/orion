@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { EventsOn, EventsEmit, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
+import { EventsOn, EventsEmit, BrowserOpenURL, ClipboardGetText, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 
 // Nocturne dark theme for xterm.js
 const THEME = {
@@ -36,6 +36,67 @@ export interface OrionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
   dispose: () => void;
+}
+
+function clipboardTextFromSelection(selection: string, cols: number): string {
+  const lines = selection.split('\n').map((line: string) => line.trimEnd());
+  const joined: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = joined.length > 0 ? joined[joined.length - 1] : '';
+    if (joined.length > 0 && line.length > 0 && !line.startsWith(' ') && !line.startsWith('\t')) {
+      const prevLen = prevLine.length;
+      const nearFullWidth = prevLen >= cols - 2;
+      const endsWithContinuation = /[^.\s:;,)}\]>]$/.test(prevLine);
+      if (nearFullWidth || (endsWithContinuation && prevLen > 20)) {
+        joined[joined.length - 1] = prevLine + line;
+        continue;
+      }
+    }
+    joined.push(line);
+  }
+  return joined.join('\n');
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  try {
+    const ok = await ClipboardSetText(text);
+    if (ok) return;
+  } catch {}
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {}
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function readClipboardText(): Promise<string> {
+  try {
+    return await ClipboardGetText();
+  } catch {}
+
+  return navigator.clipboard.readText();
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select';
 }
 
 export function createTerminal(
@@ -162,15 +223,91 @@ export function createTerminal(
 
   fitAddon.fit();
 
-  // Helper to send a raw escape sequence to the PTY
-  const sendSeq = (seq: string) => {
-    const bytes = new TextEncoder().encode(seq);
+  // Helper to send raw text/control sequences to the PTY.
+  const sendData = (data: string) => {
+    const bytes = new TextEncoder().encode(data);
     const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
     EventsEmit('terminal:input', terminalId, btoa(binary));
   };
+  const sendSeq = (seq: string) => sendData(seq);
+
+  const isVisible = () => {
+    const rect = container.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && getComputedStyle(container).display !== 'none';
+  };
+
+  const isTerminalActive = (target?: EventTarget | null) => {
+    if (!isVisible()) return false;
+    if (target instanceof Node && container.contains(target)) return true;
+    if (terminal.hasSelection()) return true;
+    const activeElement = container.ownerDocument.activeElement;
+    if (activeElement && container.contains(activeElement)) return true;
+    return container.closest('.pane-focused') !== null;
+  };
+
+  const pasteText = (text: string) => {
+    if (!text) return;
+    terminal.focus();
+    const normalized = text.replace(/\r?\n/g, '\r');
+    const payload = terminal.modes.bracketedPasteMode
+      ? `\x1b[200~${normalized}\x1b[201~`
+      : normalized;
+    sendData(payload);
+  };
+
+  let lastPasteHandledAt = 0;
+  let pasteSuppressedUntil = 0;
+  let pasteRequestToken = 0;
+  const pasteFromSystemClipboard = async () => {
+    const token = ++pasteRequestToken;
+    pasteSuppressedUntil = Date.now() + 250;
+    try {
+      const text = await readClipboardText();
+      if (token !== pasteRequestToken) return;
+      lastPasteHandledAt = Date.now();
+      pasteText(text);
+    } catch (error) {
+      console.warn('Clipboard paste failed:', error);
+    }
+  };
 
   const keyCaptureHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c' && isTerminalActive(e.target)) {
+      if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+        return;
+      }
+      const selection = terminal.getSelection();
+      if (selection) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        void writeClipboardText(clipboardTextFromSelection(selection, terminal.cols));
+        return;
+      }
+    }
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'v' && isTerminalActive(e.target)) {
+      if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+        return;
+      }
+      terminal.focus();
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      void pasteFromSystemClipboard();
+      return;
+    }
+
+    if (
+      e.key === 'Enter' &&
+      e.shiftKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.isComposing &&
+      e.target instanceof Node &&
+      container.contains(e.target)
+    ) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -182,6 +319,22 @@ export function createTerminal(
   // Handle keyboard shortcuts that the Wails webview doesn't route natively
   terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c') {
+      const selection = terminal.getSelection();
+      if (selection) {
+        e.preventDefault();
+        e.stopPropagation();
+        void writeClipboardText(clipboardTextFromSelection(selection, terminal.cols));
+        return false;
+      }
+    }
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'v') {
+      terminal.focus();
+      void pasteFromSystemClipboard();
+      return false;
+    }
 
     // Fallback for Shift+Enter if the DOM capture listener misses it.
     if (e.key === 'Enter' && e.shiftKey) {
@@ -208,32 +361,45 @@ export function createTerminal(
     const selection = terminal.getSelection();
     if (selection) {
       e.preventDefault();
-      const lines = selection.split('\n').map((line: string) => line.trimEnd());
-      // Join lines that are likely wrapped (previous line is full-width
-      // or doesn't end with a natural break, next line doesn't start with space)
-      const joined: string[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const prevLine = joined.length > 0 ? joined[joined.length - 1] : '';
-        // Join with previous line if:
-        // - previous line exists and is close to terminal width (wrapped)
-        // - OR previous line doesn't end with a natural sentence/command break
-        // - AND current line doesn't start with whitespace (indented = new line)
-        if (joined.length > 0 && line.length > 0 && !line.startsWith(' ') && !line.startsWith('\t')) {
-          const prevLen = prevLine.length;
-          const nearFullWidth = prevLen >= terminal.cols - 2;
-          const endsWithContinuation = /[^.\s:;,)}\]>]$/.test(prevLine);
-          if (nearFullWidth || (endsWithContinuation && prevLen > 20)) {
-            joined[joined.length - 1] = prevLine + line;
-            continue;
-          }
-        }
-        joined.push(line);
-      }
-      e.clipboardData?.setData('text/plain', joined.join('\n'));
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const text = clipboardTextFromSelection(selection, terminal.cols);
+      e.clipboardData?.setData('text/plain', text);
+      void writeClipboardText(text);
     }
   };
-  container.addEventListener('copy', copyHandler);
+  container.addEventListener('copy', copyHandler, { capture: true });
+
+  const pasteHandler = (e: ClipboardEvent) => {
+    if (!isTerminalActive(e.target)) return;
+    if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+      return;
+    }
+    if (Date.now() < pasteSuppressedUntil || Date.now() - lastPasteHandledAt < 100) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return;
+    }
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!text) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    lastPasteHandledAt = Date.now();
+    pasteText(text);
+  };
+  container.addEventListener('paste', pasteHandler, { capture: true });
+
+  const documentKeyCaptureHandler = (e: KeyboardEvent) => {
+    keyCaptureHandler(e);
+  };
+  const documentPasteHandler = (e: ClipboardEvent) => {
+    if (e.target instanceof Node && container.contains(e.target)) return;
+    pasteHandler(e);
+  };
+  container.ownerDocument.addEventListener('keydown', documentKeyCaptureHandler, { capture: true });
+  container.ownerDocument.addEventListener('paste', documentPasteHandler, { capture: true });
 
   // Mouse scroll handling — sends SGR mouse sequences so tmux can scroll
   // in both alternate screen (TUI apps) and normal buffer (server logs).
@@ -355,7 +521,10 @@ export function createTerminal(
     if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
-    container.removeEventListener('copy', copyHandler);
+    container.removeEventListener('copy', copyHandler, { capture: true } as any);
+    container.removeEventListener('paste', pasteHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('keydown', documentKeyCaptureHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('paste', documentPasteHandler, { capture: true } as any);
     onDataDispose.dispose();
     onResizeDispose.dispose();
     cancelOutput();
