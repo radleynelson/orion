@@ -2384,9 +2384,27 @@ button.workspace-min-row:hover em {
 
 .codex-structured-option {
   align-items: flex-start;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--text-secondary);
+  cursor: pointer;
   display: flex;
   gap: 8px;
+  padding: 6px;
+  text-align: left;
+}
+
+.codex-structured-option:hover:not(:disabled),
+.codex-structured-option.selected {
+  background: color-mix(in srgb, var(--accent-yellow) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent-yellow) 24%, transparent);
+}
+
+.codex-structured-option:disabled {
+  cursor: default;
+  opacity: 0.82;
 }
 
 .codex-structured-option > span {
@@ -2395,6 +2413,10 @@ button.workspace-min-row:hover em {
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.codex-structured-option.selected > span {
+  color: var(--accent-blue);
 }
 
 .codex-structured-option strong {
@@ -2409,6 +2431,25 @@ button.workspace-min-row:hover em {
   font-size: 11px;
   line-height: 1.4;
   margin: 2px 0 0;
+}
+
+.codex-structured-note {
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid var(--border-dim);
+  border-radius: 9px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  min-height: 54px;
+  outline: none;
+  padding: 8px 9px;
+  resize: vertical;
+  width: 100%;
+}
+
+.codex-structured-note:focus {
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, var(--border));
 }
 
 .codex-permission-summary {

@@ -62,6 +62,11 @@ type StructuredQuestion = {
   options?: StructuredQuestionOption[];
 };
 
+type StructuredAnswerDraft = {
+  selections: Record<string, string[]>;
+  notes: Record<string, string>;
+};
+
 type LiveActivityItem = {
   id: string;
   kind: "status" | "tool" | "reasoning" | "plan" | "stream" | "question";
@@ -151,6 +156,9 @@ export default function CodexChat({
   >({});
   const [answerStates, setAnswerStates] = useState<
     Record<string, "submitting" | "submitted" | "error">
+  >({});
+  const [structuredAnswerDrafts, setStructuredAnswerDrafts] = useState<
+    Record<string, StructuredAnswerDraft>
   >({});
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<ChatMessage | null>(null);
@@ -269,14 +277,19 @@ export default function CodexChat({
     }
   };
 
-  const answer = async (toolUseId: string) => {
-    const text = (answers[toolUseId] || "").trim();
+  const answer = async (toolUseId: string, overrideText?: string) => {
+    const text = (overrideText ?? answers[toolUseId] ?? "").trim();
     if (!text) return;
     setAnswerStates((prev) => ({ ...prev, [toolUseId]: "submitting" }));
     try {
       await config.answerRequest(sessionId, toolUseId, text);
       setSubmittedAnswers((prev) => ({ ...prev, [toolUseId]: text }));
       setAnswers((prev) => {
+        const next = { ...prev };
+        delete next[toolUseId];
+        return next;
+      });
+      setStructuredAnswerDrafts((prev) => {
         const next = { ...prev };
         delete next[toolUseId];
         return next;
@@ -365,7 +378,9 @@ export default function CodexChat({
               answers,
               answerStates,
               submittedAnswers,
+              structuredAnswerDrafts,
               setAnswers,
+              setStructuredAnswerDrafts,
               answer,
               config.displayName,
               config.sigil,
@@ -799,8 +814,12 @@ function renderRow(
   answers: Record<string, string>,
   answerStates: Record<string, "submitting" | "submitted" | "error">,
   submittedAnswers: Record<string, string>,
+  structuredAnswerDrafts: Record<string, StructuredAnswerDraft>,
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>,
-  answer: (toolUseId: string) => Promise<void>,
+  setStructuredAnswerDrafts: Dispatch<
+    SetStateAction<Record<string, StructuredAnswerDraft>>
+  >,
+  answer: (toolUseId: string, overrideText?: string) => Promise<void>,
   assistantName: string,
   agentId: string,
   expandPlan: (msg: ChatMessage) => void,
@@ -846,7 +865,9 @@ function renderRow(
         answers={answers}
         answerStates={answerStates}
         submittedAnswers={submittedAnswers}
+        structuredAnswerDrafts={structuredAnswerDrafts}
         setAnswers={setAnswers}
+        setStructuredAnswerDrafts={setStructuredAnswerDrafts}
         answer={answer}
         assistantName={assistantName}
         agentId={agentId}
@@ -1146,7 +1167,9 @@ function PermissionCard({
   answers,
   answerStates,
   submittedAnswers,
+  structuredAnswerDrafts,
   setAnswers,
+  setStructuredAnswerDrafts,
   answer,
   assistantName,
   agentId,
@@ -1155,8 +1178,12 @@ function PermissionCard({
   answers: Record<string, string>;
   answerStates: Record<string, "submitting" | "submitted" | "error">;
   submittedAnswers: Record<string, string>;
+  structuredAnswerDrafts: Record<string, StructuredAnswerDraft>;
   setAnswers: Dispatch<SetStateAction<Record<string, string>>>;
-  answer: (toolUseId: string) => Promise<void>;
+  setStructuredAnswerDrafts: Dispatch<
+    SetStateAction<Record<string, StructuredAnswerDraft>>
+  >;
+  answer: (toolUseId: string, overrideText?: string) => Promise<void>;
   assistantName: string;
   agentId: string;
 }) {
@@ -1188,6 +1215,17 @@ function PermissionCard({
       ? questions[0].question || "The session is waiting for your answer."
       : `${questions.length} questions need your answer.`
     : questionText || "The session is waiting for your answer.";
+  const structuredDraft = toolUseId
+    ? structuredAnswerDrafts[toolUseId] || emptyStructuredAnswerDraft()
+    : emptyStructuredAnswerDraft();
+  const structuredAnswerText = questions.length
+    ? composeStructuredAnswer(questions, structuredDraft)
+    : "";
+  const canSubmitStructured =
+    questions.length > 0 && structuredAnswerComplete(questions, structuredDraft);
+  const submitDisabled = questions.length
+    ? disabled || !canSubmitStructured
+    : disabled || !(answers[toolUseId] || "").trim();
   return (
     <div
       className={`codex-chat-message codex-chat-message-assistant codex-chat-message-permission codex-chat-message-permission-${state}`}
@@ -1222,7 +1260,37 @@ function PermissionCard({
           </div>
           {waiting &&
             (questions.length ? (
-              <StructuredQuestionList questions={questions} />
+              <StructuredQuestionList
+                questions={questions}
+                draft={structuredDraft}
+                disabled={disabled}
+                onToggle={(question, questionIndex, option, optionIndex) => {
+                  if (!toolUseId) return;
+                  setStructuredAnswerDrafts((prev) => ({
+                    ...prev,
+                    [toolUseId]: toggleStructuredOption(
+                      questions,
+                      prev[toolUseId] || emptyStructuredAnswerDraft(),
+                      question,
+                      questionIndex,
+                      option,
+                      optionIndex,
+                    ),
+                  }));
+                }}
+                onNoteChange={(question, questionIndex, value) => {
+                  if (!toolUseId) return;
+                  setStructuredAnswerDrafts((prev) => ({
+                    ...prev,
+                    [toolUseId]: updateStructuredNote(
+                      prev[toolUseId] || emptyStructuredAnswerDraft(),
+                      question,
+                      questionIndex,
+                      value,
+                    ),
+                  }));
+                }}
+              />
             ) : (
               <div className="codex-permission-prompt">{prompt}</div>
             ))}
@@ -1251,25 +1319,28 @@ function PermissionCard({
           )}
           {toolUseId && waiting && (
             <div className="codex-chat-answer">
-              <textarea
-                value={answers[toolUseId] || ""}
-                onChange={(e) =>
-                  setAnswers((prev) => ({
-                    ...prev,
-                    [toolUseId]: e.target.value,
-                  }))
-                }
-                placeholder={
-                  questions.length > 1
-                    ? "Answer all questions..."
-                    : `Answer ${assistantName}...`
-                }
-                disabled={disabled}
-                rows={2}
-              />
+              {!questions.length && (
+                <textarea
+                  value={answers[toolUseId] || ""}
+                  onChange={(e) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      [toolUseId]: e.target.value,
+                    }))
+                  }
+                  placeholder={`Answer ${assistantName}...`}
+                  disabled={disabled}
+                  rows={2}
+                />
+              )}
               <button
-                onClick={() => answer(toolUseId)}
-                disabled={disabled || !(answers[toolUseId] || "").trim()}
+                onClick={() =>
+                  answer(
+                    toolUseId,
+                    questions.length ? structuredAnswerText : undefined,
+                  )
+                }
+                disabled={submitDisabled}
               >
                 {state === "error" ? "Retry Answer" : "Send Answer"}
               </button>
@@ -1660,17 +1731,39 @@ function toolIcon(toolName?: string): string {
 function StructuredQuestionList({
   questions,
   compact = false,
+  draft = emptyStructuredAnswerDraft(),
+  disabled = false,
+  onToggle,
+  onNoteChange,
 }: {
   questions: StructuredQuestion[];
   compact?: boolean;
+  draft?: StructuredAnswerDraft;
+  disabled?: boolean;
+  onToggle?: (
+    question: StructuredQuestion,
+    questionIndex: number,
+    option: StructuredQuestionOption,
+    optionIndex: number,
+  ) => void;
+  onNoteChange?: (
+    question: StructuredQuestion,
+    questionIndex: number,
+    value: string,
+  ) => void;
 }) {
+  const interactive = Boolean(onToggle || onNoteChange);
   return (
     <div
       className={`codex-structured-questions${
         compact ? " codex-structured-questions-compact" : ""
       }`}
     >
-      {questions.map((question, index) => (
+      {questions.map((question, index) => {
+        const qKey = structuredQuestionKey(question, index);
+        const selected = new Set(draft.selections[qKey] || []);
+        const note = draft.notes[qKey] || "";
+        return (
         <div
           className="codex-structured-question"
           key={`${question.header || ""}-${question.question || ""}-${index}`}
@@ -1685,21 +1778,53 @@ function StructuredQuestionList({
           {!!question.options?.length && (
             <div className="codex-structured-options">
               {question.options.map((option, optionIndex) => (
-                <div
-                  className="codex-structured-option"
+                <button
+                  type="button"
+                  className={`codex-structured-option${
+                    selected.has(structuredOptionKey(option, optionIndex))
+                      ? " selected"
+                      : ""
+                  }`}
+                  disabled={!interactive || disabled}
                   key={`${option.label || ""}-${optionIndex}`}
+                  onClick={() => onToggle?.(question, index, option, optionIndex)}
                 >
-                  <span>{question.multiSelect ? "□" : "○"}</span>
+                  <span>
+                    {selected.has(structuredOptionKey(option, optionIndex))
+                      ? question.multiSelect
+                        ? "☑"
+                        : "●"
+                      : question.multiSelect
+                        ? "□"
+                        : "○"}
+                  </span>
                   <div>
                     <strong>{option.label}</strong>
                     {option.description && <p>{option.description}</p>}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
+          {interactive && (
+            <textarea
+              className="codex-structured-note"
+              value={note}
+              onChange={(event) =>
+                onNoteChange?.(question, index, event.target.value)
+              }
+              placeholder={
+                question.options?.length
+                  ? "Add context for this answer..."
+                  : "Answer this question..."
+              }
+              disabled={disabled}
+              rows={2}
+            />
+          )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1744,6 +1869,127 @@ function questionSummary(questions: StructuredQuestion[]): string {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+function emptyStructuredAnswerDraft(): StructuredAnswerDraft {
+  return { selections: {}, notes: {} };
+}
+
+function structuredQuestionKey(
+  question: StructuredQuestion,
+  questionIndex: number,
+): string {
+  return `${questionIndex}:${question.header || ""}:${question.question || ""}`;
+}
+
+function structuredOptionKey(
+  option: StructuredQuestionOption,
+  optionIndex: number,
+): string {
+  return `${optionIndex}:${option.label || ""}:${option.description || ""}`;
+}
+
+function toggleStructuredOption(
+  questions: StructuredQuestion[],
+  draft: StructuredAnswerDraft,
+  question: StructuredQuestion,
+  questionIndex: number,
+  option: StructuredQuestionOption,
+  optionIndex: number,
+): StructuredAnswerDraft {
+  const qKey = structuredQuestionKey(question, questionIndex);
+  const optKey = structuredOptionKey(option, optionIndex);
+  const current = draft.selections[qKey] || [];
+  const nextSelections = { ...draft.selections };
+  if (question.multiSelect) {
+    nextSelections[qKey] = current.includes(optKey)
+      ? current.filter((item) => item !== optKey)
+      : [...current, optKey];
+  } else {
+    nextSelections[qKey] = current.includes(optKey) ? [] : [optKey];
+  }
+  return normalizeStructuredDraft(questions, {
+    ...draft,
+    selections: nextSelections,
+  });
+}
+
+function updateStructuredNote(
+  draft: StructuredAnswerDraft,
+  question: StructuredQuestion,
+  questionIndex: number,
+  value: string,
+): StructuredAnswerDraft {
+  return {
+    ...draft,
+    notes: {
+      ...draft.notes,
+      [structuredQuestionKey(question, questionIndex)]: value,
+    },
+  };
+}
+
+function normalizeStructuredDraft(
+  questions: StructuredQuestion[],
+  draft: StructuredAnswerDraft,
+): StructuredAnswerDraft {
+  const selections: Record<string, string[]> = {};
+  const notes: Record<string, string> = {};
+  questions.forEach((question, questionIndex) => {
+    const qKey = structuredQuestionKey(question, questionIndex);
+    if (draft.selections[qKey]?.length) {
+      selections[qKey] = draft.selections[qKey];
+    }
+    if (draft.notes[qKey]) {
+      notes[qKey] = draft.notes[qKey];
+    }
+  });
+  return { selections, notes };
+}
+
+function structuredAnswerComplete(
+  questions: StructuredQuestion[],
+  draft: StructuredAnswerDraft,
+): boolean {
+  return questions.every((question, questionIndex) => {
+    const qKey = structuredQuestionKey(question, questionIndex);
+    const selected = draft.selections[qKey] || [];
+    const note = (draft.notes[qKey] || "").trim();
+    return selected.length > 0 || note.length > 0;
+  });
+}
+
+function composeStructuredAnswer(
+  questions: StructuredQuestion[],
+  draft: StructuredAnswerDraft,
+): string {
+  const lines: string[] = [];
+  questions.forEach((question, questionIndex) => {
+    const qKey = structuredQuestionKey(question, questionIndex);
+    const selected = new Set(draft.selections[qKey] || []);
+    const selectedLabels = (question.options || [])
+      .filter((option, optionIndex) =>
+        selected.has(structuredOptionKey(option, optionIndex)),
+      )
+      .map((option) => option.label?.trim())
+      .filter(Boolean);
+    const note = (draft.notes[qKey] || "").trim();
+    const label =
+      question.header?.trim() ||
+      question.question?.trim() ||
+      `Question ${questionIndex + 1}`;
+    const parts = [];
+    if (selectedLabels.length) {
+      parts.push(selectedLabels.join(", "));
+    }
+    if (note) {
+      parts.push(note);
+    }
+    if (parts.length) {
+      lines.push(`${label}: ${parts.join(" - ")}`);
+    }
+  });
+  return lines.join("\n");
 }
 
 function permissionPrompt(msg: ChatMessage): string {

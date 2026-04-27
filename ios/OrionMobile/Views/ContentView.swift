@@ -2662,6 +2662,11 @@ private struct StructuredQuestionOption: Decodable, Identifiable {
     }
 }
 
+private struct StructuredAnswerDraft {
+    var selections: [String: [String]] = [:]
+    var notes: [String: String] = [:]
+}
+
 private struct ChatSessionMetadata: Decodable {
     let provider: String?
     let viewMode: String?
@@ -2729,6 +2734,7 @@ struct CodexChatView: View {
     @State private var input = ""
     @State private var answers: [String: String] = [:]
     @State private var submittedAnswers: [String: String] = [:]
+    @State private var structuredAnswerDrafts: [String: StructuredAnswerDraft] = [:]
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pendingImages: [PendingChatImage] = []
     @State private var isLoadingPhotos = false
@@ -3323,6 +3329,10 @@ struct CodexChatView: View {
         let resolved = state == "submitted" || state == "answered"
         let accent = resolved ? OrionTheme.accentGreen : OrionTheme.accentYellow
         let questions = structuredQuestions(from: row)
+        let toolUseId = row.toolUseId
+        let draft = toolUseId.flatMap { structuredAnswerDrafts[$0] } ?? StructuredAnswerDraft()
+        let structuredReady = !questions.isEmpty && structuredAnswerComplete(questions, draft: draft)
+        let structuredAnswer = !questions.isEmpty ? composeStructuredAnswer(questions, draft: draft) : ""
         let questionText = row.text.isEmpty ? (row.details ?? "") : row.text
         let titleText = questions.count == 1 ? (questions[0].header ?? row.label) : row.label
         let subtitleText: String = {
@@ -3369,7 +3379,7 @@ struct CodexChatView: View {
                     if resolved {
                         VStack(alignment: .leading, spacing: 8) {
                             if !questions.isEmpty {
-                                structuredQuestionList(questions)
+                                structuredQuestionList(questions, toolUseId: nil, draft: StructuredAnswerDraft(), disabled: true)
                             } else if !questionText.isEmpty {
                                 qaBlock(label: "Question", text: questionText, color: OrionTheme.textSecondary, accent: nil)
                             }
@@ -3377,7 +3387,7 @@ struct CodexChatView: View {
                         }
                     } else {
                         if !questions.isEmpty {
-                            structuredQuestionList(questions)
+                            structuredQuestionList(questions, toolUseId: toolUseId, draft: draft, disabled: false)
                         } else {
                             Text(row.details ?? row.text)
                                 .font(.system(size: 13))
@@ -3385,28 +3395,37 @@ struct CodexChatView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if let toolUseId = row.toolUseId {
-                            HStack(alignment: .bottom, spacing: 8) {
-                                TextField(questions.count > 1 ? "Answer all questions..." : "Answer \(assistantName)...", text: Binding(
-                                    get: { answers[toolUseId] ?? "" },
-                                    set: { answers[toolUseId] = $0 }
-                                ), axis: .vertical)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 14))
-                                .foregroundStyle(OrionTheme.textPrimary)
-                                .padding(8)
-                                .background(OrionTheme.bgPrimary)
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
+                            if questions.isEmpty {
+                                HStack(alignment: .bottom, spacing: 8) {
+                                    TextField("Answer \(assistantName)...", text: Binding(
+                                        get: { answers[toolUseId] ?? "" },
+                                        set: { answers[toolUseId] = $0 }
+                                    ), axis: .vertical)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(OrionTheme.textPrimary)
+                                    .padding(8)
+                                    .background(OrionTheme.bgPrimary)
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
 
-                                Button("Send") {
-                                    let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                                    guard !text.isEmpty else { return }
-                                    submittedAnswers[toolUseId] = text
-                                    answers[toolUseId] = ""
-                                    chatIsNearBottom = true
-                                    connection.answer(toolUseId: toolUseId, text: text)
+                                    Button("Send") {
+                                        let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                        guard !text.isEmpty else { return }
+                                        submitAnswer(toolUseId: toolUseId, text: text)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(OrionTheme.accentBlue)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(OrionTheme.accentBlue)
+                            } else {
+                                HStack {
+                                    Spacer(minLength: 0)
+                                    Button("Send Answer") {
+                                        submitAnswer(toolUseId: toolUseId, text: structuredAnswer)
+                                    }
+                                    .disabled(!structuredReady)
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(OrionTheme.accentBlue)
+                                }
                             }
                         }
                     }
@@ -3423,9 +3442,12 @@ struct CodexChatView: View {
     }
 
     @ViewBuilder
-    private func structuredQuestionList(_ questions: [StructuredQuestion]) -> some View {
+    private func structuredQuestionList(_ questions: [StructuredQuestion], toolUseId: String?, draft: StructuredAnswerDraft, disabled: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
+                let questionKey = structuredQuestionKey(question, index: index)
+                let selected = Set(draft.selections[questionKey] ?? [])
+                let note = draft.notes[questionKey] ?? ""
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(question.header?.isEmpty == false ? question.header ?? "" : "Question \(index + 1)")
@@ -3449,25 +3471,38 @@ struct CodexChatView: View {
 
                     if let options = question.options, !options.isEmpty {
                         VStack(alignment: .leading, spacing: 7) {
-                            ForEach(options) { option in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Image(systemName: question.multiSelect == true ? "square" : "circle")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(OrionTheme.accentYellow)
-                                        .frame(width: 16, height: 18)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(option.label)
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(OrionTheme.textSecondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        if let description = option.description, !description.isEmpty {
-                                            Text(description)
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(OrionTheme.textDim)
+                            ForEach(Array(options.enumerated()), id: \.offset) { optionIndex, option in
+                                let optionKey = structuredOptionKey(option, index: optionIndex)
+                                let isSelected = selected.contains(optionKey)
+                                Button {
+                                    guard let toolUseId, !disabled else { return }
+                                    toggleStructuredOption(toolUseId: toolUseId, question: question, questionIndex: index, option: option, optionIndex: optionIndex, questions: questions)
+                                } label: {
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Image(systemName: selectedOptionIcon(isSelected: isSelected, multiSelect: question.multiSelect == true))
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(isSelected ? OrionTheme.accentBlue : OrionTheme.accentYellow)
+                                            .frame(width: 16, height: 18)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(option.label)
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(OrionTheme.textSecondary)
                                                 .fixedSize(horizontal: false, vertical: true)
+                                            if let description = option.description, !description.isEmpty {
+                                                Text(description)
+                                                    .font(.system(size: 11))
+                                                    .foregroundStyle(OrionTheme.textDim)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
                                         }
                                     }
+                                    .padding(6)
+                                    .background(isSelected ? OrionTheme.accentYellow.opacity(0.08) : Color.clear)
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isSelected ? OrionTheme.accentYellow.opacity(0.24) : Color.clear, lineWidth: 0.5))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
+                                .disabled(disabled || toolUseId == nil)
+                                .buttonStyle(.plain)
                             }
                         }
                         .padding(9)
@@ -3475,10 +3510,71 @@ struct CodexChatView: View {
                         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
+
+                    if let toolUseId, !disabled {
+                        TextField(question.options?.isEmpty == false ? "Add context for this answer..." : "Answer this question...", text: Binding(
+                            get: { note },
+                            set: { setStructuredNote(toolUseId: toolUseId, question: question, questionIndex: index, text: $0) }
+                        ), axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(1...4)
+                        .padding(8)
+                        .background(OrionTheme.bgPrimary.opacity(0.68))
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                    }
                 }
                 .padding(.bottom, index == questions.count - 1 ? 0 : 2)
             }
         }
+    }
+
+    private func selectedOptionIcon(isSelected: Bool, multiSelect: Bool) -> String {
+        if multiSelect {
+            return isSelected ? "checkmark.square.fill" : "square"
+        }
+        return isSelected ? "largecircle.fill.circle" : "circle"
+    }
+
+    private func toggleStructuredOption(
+        toolUseId: String,
+        question: StructuredQuestion,
+        questionIndex: Int,
+        option: StructuredQuestionOption,
+        optionIndex: Int,
+        questions: [StructuredQuestion]
+    ) {
+        var draft = structuredAnswerDrafts[toolUseId] ?? StructuredAnswerDraft()
+        let qKey = structuredQuestionKey(question, index: questionIndex)
+        let optKey = structuredOptionKey(option, index: optionIndex)
+        let current = draft.selections[qKey] ?? []
+        if question.multiSelect == true {
+            if current.contains(optKey) {
+                draft.selections[qKey] = current.filter { $0 != optKey }
+            } else {
+                draft.selections[qKey] = current + [optKey]
+            }
+        } else {
+            draft.selections[qKey] = current.contains(optKey) ? [] : [optKey]
+        }
+        structuredAnswerDrafts[toolUseId] = normalizeStructuredDraft(questions, draft: draft)
+    }
+
+    private func setStructuredNote(toolUseId: String, question: StructuredQuestion, questionIndex: Int, text: String) {
+        var draft = structuredAnswerDrafts[toolUseId] ?? StructuredAnswerDraft()
+        draft.notes[structuredQuestionKey(question, index: questionIndex)] = text
+        structuredAnswerDrafts[toolUseId] = draft
+    }
+
+    private func submitAnswer(toolUseId: String, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        submittedAnswers[toolUseId] = trimmed
+        answers[toolUseId] = ""
+        structuredAnswerDrafts[toolUseId] = nil
+        chatIsNearBottom = true
+        connection.answer(toolUseId: toolUseId, text: trimmed)
     }
 
     @ViewBuilder
@@ -4340,6 +4436,61 @@ private func parseStructuredQuestions(_ raw: String?) -> [StructuredQuestion] {
         return [question]
     }
     return []
+}
+
+private func structuredQuestionKey(_ question: StructuredQuestion, index: Int) -> String {
+    "\(index):\(question.header ?? ""):\(question.question)"
+}
+
+private func structuredOptionKey(_ option: StructuredQuestionOption, index: Int) -> String {
+    "\(index):\(option.label):\(option.description ?? "")"
+}
+
+private func normalizeStructuredDraft(_ questions: [StructuredQuestion], draft: StructuredAnswerDraft) -> StructuredAnswerDraft {
+    var normalized = StructuredAnswerDraft()
+    for (index, question) in questions.enumerated() {
+        let qKey = structuredQuestionKey(question, index: index)
+        if let selections = draft.selections[qKey], !selections.isEmpty {
+            normalized.selections[qKey] = selections
+        }
+        if let note = draft.notes[qKey], !note.isEmpty {
+            normalized.notes[qKey] = note
+        }
+    }
+    return normalized
+}
+
+private func structuredAnswerComplete(_ questions: [StructuredQuestion], draft: StructuredAnswerDraft) -> Bool {
+    for (index, question) in questions.enumerated() {
+        let qKey = structuredQuestionKey(question, index: index)
+        let selections = draft.selections[qKey] ?? []
+        let note = (draft.notes[qKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if selections.isEmpty && note.isEmpty {
+            return false
+        }
+    }
+    return true
+}
+
+private func composeStructuredAnswer(_ questions: [StructuredQuestion], draft: StructuredAnswerDraft) -> String {
+    var lines: [String] = []
+    for (questionIndex, question) in questions.enumerated() {
+        let qKey = structuredQuestionKey(question, index: questionIndex)
+        let selected = Set(draft.selections[qKey] ?? [])
+        let selectedLabels = (question.options ?? []).enumerated().compactMap { optionIndex, option -> String? in
+            selected.contains(structuredOptionKey(option, index: optionIndex)) ? option.label : nil
+        }
+        let note = (draft.notes[qKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = (question.header?.isEmpty == false ? question.header : question.question) ?? "Question \(questionIndex + 1)"
+        var parts = selectedLabels
+        if !note.isEmpty {
+            parts.append(note)
+        }
+        if !parts.isEmpty {
+            lines.append("\(label): \(parts.joined(separator: " - "))")
+        }
+    }
+    return lines.joined(separator: "\n")
 }
 
 private func attachmentDisplayName(_ attachment: ChatAttachmentPayload) -> String {
