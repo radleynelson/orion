@@ -91,7 +91,7 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 collaboration_mode = "default"
 
-# Custom agents are terminal-only unless Orion learns their provider.
+# Command-only agents are terminal-only unless they set provider = "claude" or "codex".
 [agents.reviewer]
 label = "Review"
 provider = "claude"

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, KeyboardEvent, SetStateAction } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import {
   AnswerClaudeChatRequest,
@@ -165,6 +165,7 @@ export default function CodexChat({
   const [approvingPlanId, setApprovingPlanId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composerShiftDownRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,6 +254,27 @@ export default function CodexChat({
     } finally {
       setSending(false);
       inputRef.current?.focus();
+    }
+  };
+
+  const handleComposerKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Shift") {
+      composerShiftDownRef.current = true;
+      return;
+    }
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (e.shiftKey || e.getModifierState("Shift") || composerShiftDownRef.current) {
+      e.stopPropagation();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    send();
+  };
+
+  const handleComposerKeyUp = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Shift") {
+      composerShiftDownRef.current = false;
     }
   };
 
@@ -444,11 +466,10 @@ export default function CodexChat({
             value={input}
             placeholder={`Message ${config.displayName}...`}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
+            onKeyDown={handleComposerKeyDown}
+            onKeyUp={handleComposerKeyUp}
+            onBlur={() => {
+              composerShiftDownRef.current = false;
             }}
             rows={3}
           />

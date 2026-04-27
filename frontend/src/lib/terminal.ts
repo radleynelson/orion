@@ -293,6 +293,7 @@ export function createTerminal(
   let lastPasteHandledAt = 0;
   let pasteSuppressedUntil = 0;
   let pasteRequestToken = 0;
+  let shiftKeyDown = false;
   const pasteFromSystemClipboard = async () => {
     const token = ++pasteRequestToken;
     pasteSuppressedUntil = Date.now() + 250;
@@ -307,6 +308,11 @@ export function createTerminal(
   };
 
   const keyCaptureHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Shift') {
+      shiftKeyDown = true;
+      return;
+    }
+
     if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c' && isTerminalActive(e.target)) {
       if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
         return;
@@ -335,14 +341,16 @@ export function createTerminal(
 
     if (
       e.key === 'Enter' &&
-      e.shiftKey &&
+      (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown) &&
       !e.metaKey &&
       !e.ctrlKey &&
       !e.altKey &&
       !e.isComposing &&
-      e.target instanceof Node &&
-      container.contains(e.target)
+      isTerminalActive(e.target)
     ) {
+      if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -351,9 +359,26 @@ export function createTerminal(
   };
   container.addEventListener('keydown', keyCaptureHandler, { capture: true });
 
+  const keyReleaseHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Shift') {
+      shiftKeyDown = false;
+    }
+  };
+  container.addEventListener('keyup', keyReleaseHandler, { capture: true });
+
+  const blurHandler = () => {
+    shiftKeyDown = false;
+  };
+  window.addEventListener('blur', blurHandler);
+
   // Handle keyboard shortcuts that the Wails webview doesn't route natively
   terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
+
+    if (e.key === 'Shift') {
+      shiftKeyDown = true;
+      return true;
+    }
 
     if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c') {
       const selection = terminal.getSelection();
@@ -372,7 +397,7 @@ export function createTerminal(
     }
 
     // Fallback for Shift+Enter if the DOM capture listener misses it.
-    if (e.key === 'Enter' && e.shiftKey) {
+    if (e.key === 'Enter' && (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown)) {
       e.preventDefault();
       e.stopPropagation();
       sendSeq('\x1b[13;2u');
@@ -429,11 +454,15 @@ export function createTerminal(
   const documentKeyCaptureHandler = (e: KeyboardEvent) => {
     keyCaptureHandler(e);
   };
+  const documentKeyReleaseHandler = (e: KeyboardEvent) => {
+    keyReleaseHandler(e);
+  };
   const documentPasteHandler = (e: ClipboardEvent) => {
     if (e.target instanceof Node && container.contains(e.target)) return;
     pasteHandler(e);
   };
   container.ownerDocument.addEventListener('keydown', documentKeyCaptureHandler, { capture: true });
+  container.ownerDocument.addEventListener('keyup', documentKeyReleaseHandler, { capture: true });
   container.ownerDocument.addEventListener('paste', documentPasteHandler, { capture: true });
 
   // Mouse scroll handling — sends SGR mouse sequences so tmux can scroll
@@ -556,10 +585,13 @@ export function createTerminal(
     if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
+    container.removeEventListener('keyup', keyReleaseHandler, { capture: true } as any);
     container.removeEventListener('copy', copyHandler, { capture: true } as any);
     container.removeEventListener('paste', pasteHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keydown', documentKeyCaptureHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('keyup', documentKeyReleaseHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('paste', documentPasteHandler, { capture: true } as any);
+    window.removeEventListener('blur', blurHandler);
     onDataDispose.dispose();
     onResizeDispose.dispose();
     cancelOutput();
