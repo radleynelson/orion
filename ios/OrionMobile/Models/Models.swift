@@ -17,6 +17,17 @@ struct Workspace: Codable, Identifiable {
     let hasAgent: Bool
 }
 
+struct GitChangedFile: Codable, Identifiable {
+    var id: String { path }
+    let path: String
+    let status: String
+    let statusText: String
+}
+
+struct GitDiffResponse: Codable {
+    let diff: String
+}
+
 struct SessionInfo: Codable, Identifiable {
     var id: String { runtimeSessionId ?? threadId ?? tmuxName }
     let tmuxName: String
@@ -24,6 +35,7 @@ struct SessionInfo: Codable, Identifiable {
     let label: String
     let workspacePath: String
     let provider: String?
+    let icon: String?
     let viewMode: String?
     let runtimeSessionId: String?
     let threadId: String?
@@ -31,6 +43,8 @@ struct SessionInfo: Codable, Identifiable {
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let permissionMode: String?
+    let collaborationMode: String?
 
     var isChat: Bool { type == "codex-chat" || type == "claude-chat" }
     var isClaude: Bool { type == "claude" || type == "claude-chat" }
@@ -43,19 +57,23 @@ struct SessionInfo: Codable, Identifiable {
         label: String,
         workspacePath: String,
         provider: String? = nil,
+        icon: String? = nil,
         viewMode: String? = nil,
         runtimeSessionId: String? = nil,
         threadId: String? = nil,
         model: String? = nil,
         reasoningEffort: String? = nil,
         approvalPolicy: String? = nil,
-        sandboxMode: String? = nil
+        sandboxMode: String? = nil,
+        permissionMode: String? = nil,
+        collaborationMode: String? = nil
     ) {
         self.tmuxName = tmuxName
         self.type = type
         self.label = label
         self.workspacePath = workspacePath
         self.provider = provider
+        self.icon = icon
         self.viewMode = viewMode
         self.runtimeSessionId = runtimeSessionId
         self.threadId = threadId
@@ -63,6 +81,8 @@ struct SessionInfo: Codable, Identifiable {
         self.reasoningEffort = reasoningEffort
         self.approvalPolicy = approvalPolicy
         self.sandboxMode = sandboxMode
+        self.permissionMode = permissionMode
+        self.collaborationMode = collaborationMode
     }
 }
 
@@ -90,6 +110,7 @@ struct TerminalTab: Identifiable {
     let id: String
     let label: String
     let type: String
+    let icon: String?
     let tmuxSession: String
     let workspacePath: String
 
@@ -97,6 +118,7 @@ struct TerminalTab: Identifiable {
         self.id = session.id
         self.label = session.label
         self.type = session.type
+        self.icon = session.icon
         self.tmuxSession = session.terminalTmuxSession
         self.workspacePath = session.workspacePath
     }
@@ -130,6 +152,15 @@ struct AgentType: Codable, Identifiable {
     var id: String { name }
     let name: String
     let label: String
+    let provider: String?
+    let icon: String?
+    let model: String?
+    let reasoningEffort: String?
+    let approvalPolicy: String?
+    let sandboxMode: String?
+    let permissionMode: String?
+    let collaborationMode: String?
+    let chatCapable: Bool?
 }
 
 struct LaunchAgentResponse: Codable {
@@ -144,15 +175,44 @@ struct LaunchCodexChatResponse: Codable {
     let status: String
     let threadId: String?
     let provider: String?
+    let icon: String?
     let viewMode: String?
     let runtimeSessionId: String?
     let model: String?
     let reasoningEffort: String?
     let approvalPolicy: String?
     let sandboxMode: String?
+    let permissionMode: String?
+    let collaborationMode: String?
 }
 
 typealias LaunchClaudeChatResponse = LaunchCodexChatResponse
+
+struct CodexHistoryThread: Codable, Identifiable {
+    var id: String { threadId }
+    let threadId: String
+    let workspacePath: String?
+    let model: String?
+    let updatedAt: String
+    let messageCount: Int
+    let preview: String?
+}
+
+struct CodexLaunchOptions: Codable, Equatable {
+    var model = ""
+    var reasoningEffort = "xhigh"
+    var approvalPolicy = "never"
+    var sandboxMode = "danger-full-access"
+    var collaborationMode = "default"
+}
+
+struct ClaudeLaunchOptions: Codable, Equatable {
+    var model: String?
+    var reasoningEffort: String?
+    var approvalPolicy: String?
+    var sandboxMode: String?
+    var permissionMode: String?
+}
 
 struct StartServersRequest: Codable {
     let repoRoot: String

@@ -32,6 +32,7 @@ export interface Tab {
   rootPane: Pane;
   tabType: 'shell' | 'claude' | 'codex' | 'codex-chat' | 'claude-chat' | 'server' | 'mixed' | 'editor' | 'diagnostics';
   workspacePath: string;
+  icon?: string;
   provider?: 'codex' | 'claude';
   viewMode?: 'terminal' | 'chat';
   runtimeSessionId?: string;
@@ -40,6 +41,8 @@ export interface Tab {
   reasoningEffort?: string;
   approvalPolicy?: string;
   sandboxMode?: string;
+  permissionMode?: string;
+  collaborationMode?: string;
 }
 
 interface ProjectState {
@@ -724,6 +727,7 @@ export const useStore = create<OrionState>((set, get) => ({
     set((state) => ({
       serverTabs: [...state.serverTabs, tab],
       activeServerTabId: tab.id,
+      serverPaneVisible: true,
     }));
   },
 

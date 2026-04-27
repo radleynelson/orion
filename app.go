@@ -8,10 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"orion/internal/chatattachments"
-	"orion/internal/claudechat"
+	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
 	"orion/internal/config"
 	"orion/internal/diag"
@@ -290,6 +289,10 @@ func (a *App) CreateWorkspace(repoRoot string, name string) (*workspace.Workspac
 	return a.wsMgr.CreateWorkspace(repoRoot, name)
 }
 
+func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) (*workspace.Workspace, error) {
+	return a.wsMgr.CreateWorkspaceFrom(repoRoot, name, baseRef)
+}
+
 func (a *App) DeleteWorkspace(repoRoot string, path string) error {
 	wsID := filepath.Base(path)
 	a.portReg.ReleaseWorkspace(wsID)
@@ -306,25 +309,44 @@ func (a *App) LaunchShell(repoRoot string, workspacePath string) (string, error)
 }
 
 func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessionID string, chatKind string) (string, error) {
+	return a.ConvertChatToTerminalWithOptions(repoRoot, workspacePath, sessionID, chatKind, "", "", "", "")
+}
+
+func (a *App) ConvertChatToTerminalWithOptions(repoRoot string, workspacePath string, sessionID string, chatKind string, model string, reasoningEffort string, permissionMode string, collaborationMode string) (string, error) {
 	switch chatKind {
 	case "claude":
+		agentName, agent := a.agentForProvider(repoRoot, "claude")
+		var threadID string
 		if session, ok := a.claudeMgr.Get(sessionID); ok {
-			return session.Info().ID, nil
+			info := session.Info()
+			threadID = strings.TrimSpace(info.ThreadID)
+			model = firstNonEmpty(model, info.Model)
+			reasoningEffort = firstNonEmpty(reasoningEffort, info.ReasoningEffort)
+			permissionMode = firstNonEmpty(permissionMode, info.PermissionMode)
+			_ = session.Stop()
 		}
-		if strings.TrimSpace(sessionID) != "" {
-			return sessionID, nil
+		if threadID == "" && !strings.HasPrefix(strings.TrimSpace(sessionID), claudechat.SessionType+"-") {
+			threadID = strings.TrimSpace(sessionID)
 		}
-		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
+		if threadID != "" {
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, claudeResumeCommand(agent.Command, threadID, model, reasoningEffort, permissionMode))
+		}
+		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, agentName)
 	case "codex":
+		agentName, _ := a.agentForProvider(repoRoot, "codex")
 		var threadID string
 		if session, ok := a.codexMgr.Get(sessionID); ok {
-			threadID = strings.TrimSpace(session.Info().ThreadID)
+			info := session.Info()
+			threadID = strings.TrimSpace(info.ThreadID)
+			model = firstNonEmpty(model, info.Model)
+			reasoningEffort = firstNonEmpty(reasoningEffort, info.ReasoningEffort)
+			collaborationMode = firstNonEmpty(collaborationMode, info.CollaborationMode)
 			_ = session.Stop()
 		}
 		if threadID != "" {
-			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, "codex resume --dangerously-bypass-approvals-and-sandbox --no-alt-screen "+shellQuote(threadID))
+			return a.wsMgr.LaunchCommand(repoRoot, workspacePath, codexResumeCommand(threadID, model, reasoningEffort, collaborationMode))
 		}
-		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, "codex")
+		return a.wsMgr.LaunchAgent(repoRoot, workspacePath, agentName)
 	default:
 		return "", fmt.Errorf("unsupported chat kind: %s", chatKind)
 	}
@@ -333,16 +355,78 @@ func (a *App) ConvertChatToTerminal(repoRoot string, workspacePath string, sessi
 // --- Claude chat methods ---
 
 func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudechat.SessionInfo, error) {
-	startedAt := time.Now().Add(-2 * time.Second)
-	tmuxSession, err := a.wsMgr.LaunchAgent(repoRoot, workspacePath, "claude")
-	if err != nil {
-		return nil, err
+	return a.LaunchClaudeChatWithOptions(repoRoot, workspacePath, "", "", "", "", "")
+}
+
+func (a *App) LaunchClaudeChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
+	_, agent := a.agentForProvider(repoRoot, "claude")
+	info, err := a.claudeMgr.StartWithOptions(claudechat.StartOptions{
+		WorkspacePath:    workspacePath,
+		Label:            chatLabel(agent, "Claude Chat"),
+		Icon:             agent.Icon,
+		Model:            firstNonEmpty(model, agent.Model),
+		ReasoningEffort:  firstNonEmpty(reasoningEffort, agent.ReasoningEffort),
+		ApprovalPolicy:   firstNonEmpty(approvalPolicy, agent.ApprovalPolicy),
+		SandboxMode:      firstNonEmpty(sandboxMode, agent.SandboxMode),
+		PermissionMode:   firstNonEmpty(permissionMode, agent.PermissionMode, "bypassPermissions"),
+		ClaudeExecutable: agentExecutable(agent.Command, "claude"),
+	})
+	if info != nil {
+		info.Provider = "claude"
+		info.Icon = firstNonEmpty(agent.Icon, "claude")
+		info.ViewMode = "chat"
 	}
-	return a.claudeMgr.AttachSince(tmuxSession, workspacePath, "Claude", startedAt)
+	return info, err
+}
+
+func (a *App) ResumeClaudeChat(repoRoot string, workspacePath string, threadID string) (*claudechat.SessionInfo, error) {
+	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, "", "", "", "", "")
+}
+
+func (a *App) ResumeClaudeChatWithOptions(repoRoot string, workspacePath string, threadID string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, fmt.Errorf("threadId required")
+	}
+	_, agent := a.agentForProvider(repoRoot, "claude")
+	info, err := a.claudeMgr.StartWithOptions(claudechat.StartOptions{
+		WorkspacePath:    workspacePath,
+		Label:            chatLabel(agent, "Claude Chat"),
+		Icon:             agent.Icon,
+		ThreadID:         threadID,
+		Model:            firstNonEmpty(model, agent.Model),
+		ReasoningEffort:  firstNonEmpty(reasoningEffort, agent.ReasoningEffort),
+		ApprovalPolicy:   firstNonEmpty(approvalPolicy, agent.ApprovalPolicy),
+		SandboxMode:      firstNonEmpty(sandboxMode, agent.SandboxMode),
+		PermissionMode:   firstNonEmpty(permissionMode, agent.PermissionMode, "bypassPermissions"),
+		ClaudeExecutable: agentExecutable(agent.Command, "claude"),
+	})
+	if info != nil {
+		info.Provider = "claude"
+		info.Icon = firstNonEmpty(agent.Icon, "claude")
+		info.ViewMode = "chat"
+	}
+	return info, err
 }
 
 func (a *App) AttachClaudeChat(tmuxSession string, workspacePath string) (*claudechat.SessionInfo, error) {
 	return a.claudeMgr.Attach(tmuxSession, workspacePath, "Claude")
+}
+
+func (a *App) ConvertTerminalToClaudeChat(repoRoot string, workspacePath string, tmuxSession string) (*claudechat.SessionInfo, error) {
+	return a.ConvertTerminalToClaudeChatWithOptions(repoRoot, workspacePath, tmuxSession, "", "", "", "", "")
+}
+
+func (a *App) ConvertTerminalToClaudeChatWithOptions(repoRoot string, workspacePath string, tmuxSession string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if tmuxSession == "" {
+		return nil, fmt.Errorf("tmuxSession required")
+	}
+	threadID, err := claudechat.ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
 }
 
 func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -355,9 +439,15 @@ func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInf
 			Label:            info.Label,
 			WorkspacePath:    info.WorkspacePath,
 			Provider:         "claude",
+			Icon:             firstNonEmpty(info.Icon, "claude"),
 			ViewMode:         "chat",
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
+			Model:            info.Model,
+			ReasoningEffort:  info.ReasoningEffort,
+			ApprovalPolicy:   info.ApprovalPolicy,
+			SandboxMode:      info.SandboxMode,
+			PermissionMode:   info.PermissionMode,
 		})
 	}
 	return sessions
@@ -369,6 +459,10 @@ func (a *App) GetClaudeChatMessages(sessionID string) []claudechat.Message {
 		return nil
 	}
 	return session.Messages()
+}
+
+func (a *App) ListClaudeChatHistory(workspacePath string, limit int) []claudechat.HistoryThread {
+	return claudechat.ListHistory(workspacePath, limit)
 }
 
 func (a *App) SendClaudeChatMessage(sessionID string, text string, attachments []chatattachments.Attachment) error {
@@ -396,37 +490,82 @@ func (a *App) ApproveClaudePlan(sessionID string) error {
 }
 
 func (a *App) StopClaudeChat(sessionID string) error {
-	return a.claudeMgr.Stop(sessionID)
+	if err := a.claudeMgr.Stop(sessionID); err != nil {
+		return err
+	}
+	a.EmitSessionKilled(sessionID)
+	return nil
 }
 
 // --- Codex chat methods ---
 
 func (a *App) LaunchCodexChat(repoRoot string, workspacePath string) (*codexchat.SessionInfo, error) {
-	return a.codexMgr.Start(workspacePath, "Codex Chat")
+	return a.LaunchCodexChatWithOptions(repoRoot, workspacePath, "", "", "", "", "")
+}
+
+func (a *App) LaunchCodexChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
+	_, agent := a.agentForProvider(repoRoot, "codex")
+	info, err := a.codexMgr.StartWithOptions(codexchat.StartOptions{
+		WorkspacePath:     workspacePath,
+		Label:             chatLabel(agent, "Codex Chat"),
+		Icon:              agent.Icon,
+		Model:             firstNonEmpty(model, agent.Model),
+		ReasoningEffort:   firstNonEmpty(reasoningEffort, agent.ReasoningEffort, "xhigh"),
+		ApprovalPolicy:    firstNonEmpty(approvalPolicy, agent.ApprovalPolicy, "never"),
+		SandboxMode:       firstNonEmpty(sandboxMode, agent.SandboxMode, "danger-full-access"),
+		CollaborationMode: firstNonEmpty(collaborationMode, agent.CollaborationMode, "default"),
+	})
+	if info != nil {
+		info.Icon = firstNonEmpty(agent.Icon, codexchat.Provider)
+	}
+	return info, err
 }
 
 func (a *App) ResumeCodexChat(repoRoot string, workspacePath string, threadID string) (*codexchat.SessionInfo, error) {
+	return a.ResumeCodexChatWithOptions(repoRoot, workspacePath, threadID, "", "", "", "", "")
+}
+
+func (a *App) ResumeCodexChatWithOptions(repoRoot string, workspacePath string, threadID string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, fmt.Errorf("threadId required")
 	}
-	return a.codexMgr.StartWithOptions(codexchat.StartOptions{
-		WorkspacePath: workspacePath,
-		Label:         "Codex Chat",
-		ThreadID:      threadID,
+	options := codexchat.ThreadOptions(threadID)
+	model = firstNonEmpty(options.Model, model)
+	reasoningEffort = firstNonEmpty(options.ReasoningEffort, reasoningEffort)
+	collaborationMode = firstNonEmpty(options.CollaborationMode, collaborationMode)
+	_, agent := a.agentForProvider(repoRoot, "codex")
+	info, err := a.codexMgr.StartWithOptions(codexchat.StartOptions{
+		WorkspacePath:     workspacePath,
+		Label:             chatLabel(agent, "Codex Chat"),
+		Icon:              agent.Icon,
+		ThreadID:          threadID,
+		Model:             firstNonEmpty(model, agent.Model),
+		ReasoningEffort:   firstNonEmpty(reasoningEffort, agent.ReasoningEffort, "xhigh"),
+		ApprovalPolicy:    firstNonEmpty(approvalPolicy, agent.ApprovalPolicy, "never"),
+		SandboxMode:       firstNonEmpty(sandboxMode, agent.SandboxMode, "danger-full-access"),
+		CollaborationMode: firstNonEmpty(collaborationMode, agent.CollaborationMode, "default"),
 	})
+	if info != nil {
+		info.Icon = firstNonEmpty(agent.Icon, codexchat.Provider)
+	}
+	return info, err
 }
 
 func (a *App) ConvertTerminalToCodexChat(repoRoot string, workspacePath string, tmuxSession string) (*codexchat.SessionInfo, error) {
+	return a.ConvertTerminalToCodexChatWithOptions(repoRoot, workspacePath, tmuxSession, "", "", "", "", "")
+}
+
+func (a *App) ConvertTerminalToCodexChatWithOptions(repoRoot string, workspacePath string, tmuxSession string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, collaborationMode string) (*codexchat.SessionInfo, error) {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
 	}
-	threadID := codexchat.ThreadIDForTmux(tmuxSession, workspacePath)
-	if threadID == "" {
-		return nil, fmt.Errorf("could not identify Codex thread for tmux session %s", tmuxSession)
+	threadID, err := codexchat.ResolveThreadIDForTmux(tmuxSession, workspacePath)
+	if err != nil {
+		return nil, err
 	}
-	return a.ResumeCodexChat(repoRoot, workspacePath, threadID)
+	return a.ResumeCodexChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, collaborationMode)
 }
 
 func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -434,18 +573,20 @@ func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 	sessions := make([]state.SessionInfo, 0, len(infos))
 	for _, info := range infos {
 		sessions = append(sessions, state.SessionInfo{
-			TmuxName:         info.ID,
-			Type:             codexchat.SessionType,
-			Label:            info.Label,
-			WorkspacePath:    info.WorkspacePath,
-			Provider:         codexchat.Provider,
-			ViewMode:         codexchat.ViewModeChat,
-			RuntimeSessionID: info.ID,
-			ThreadID:         info.ThreadID,
-			Model:            info.Model,
-			ReasoningEffort:  info.ReasoningEffort,
-			ApprovalPolicy:   info.ApprovalPolicy,
-			SandboxMode:      info.SandboxMode,
+			TmuxName:          info.ID,
+			Type:              codexchat.SessionType,
+			Label:             info.Label,
+			WorkspacePath:     info.WorkspacePath,
+			Provider:          codexchat.Provider,
+			Icon:              firstNonEmpty(info.Icon, codexchat.Provider),
+			ViewMode:          codexchat.ViewModeChat,
+			RuntimeSessionID:  info.ID,
+			ThreadID:          info.ThreadID,
+			Model:             info.Model,
+			ReasoningEffort:   info.ReasoningEffort,
+			ApprovalPolicy:    info.ApprovalPolicy,
+			SandboxMode:       info.SandboxMode,
+			CollaborationMode: info.CollaborationMode,
 		})
 	}
 	return sessions
@@ -457,6 +598,10 @@ func (a *App) GetCodexChatMessages(sessionID string) []codexchat.Message {
 		return nil
 	}
 	return session.Messages()
+}
+
+func (a *App) ListCodexChatHistory(workspacePath string, limit int) []codexchat.HistoryThread {
+	return codexchat.ListHistory(workspacePath, limit)
 }
 
 func (a *App) SendCodexChatMessage(sessionID string, text string, attachments []chatattachments.Attachment) error {
@@ -475,8 +620,20 @@ func (a *App) AnswerCodexChatRequest(sessionID string, toolUseID string, result 
 	return session.Answer(toolUseID, result)
 }
 
+func (a *App) ApproveCodexPlan(sessionID string) error {
+	session, ok := a.codexMgr.Get(sessionID)
+	if !ok {
+		return fmt.Errorf("codex chat session not found: %s", sessionID)
+	}
+	return session.ApprovePlan()
+}
+
 func (a *App) StopCodexChat(sessionID string) error {
-	return a.codexMgr.Stop(sessionID)
+	if err := a.codexMgr.Stop(sessionID); err != nil {
+		return err
+	}
+	a.EmitSessionKilled(sessionID)
+	return nil
 }
 
 func (a *App) GetConfig(repoRoot string) *config.OrionConfig {
@@ -528,6 +685,14 @@ func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {
 	cfg := config.Load(repoRoot)
 	wsID := filepath.Base(workspacePath)
 	alloc := a.portReg.GetAllocation(wsID)
+	if alloc == nil && filepath.Clean(repoRoot) == filepath.Clean(workspacePath) {
+		alloc = make(port.Allocation)
+		for name, srv := range cfg.Servers {
+			if srv.DefaultPort > 0 {
+				alloc[name] = srv.DefaultPort
+			}
+		}
+	}
 
 	if alloc == nil {
 		return fmt.Errorf("no servers running for this workspace")
@@ -586,7 +751,7 @@ func (a *App) GetSavedTabs() []state.SavedTab {
 	}
 	var alive []state.SavedTab
 	for _, tab := range saved {
-		if tab.TabType == codexchat.SessionType && strings.TrimSpace(tab.ThreadID) != "" {
+		if (tab.TabType == codexchat.SessionType || tab.TabType == claudechat.SessionType) && strings.TrimSpace(tab.ThreadID) != "" {
 			alive = append(alive, tab)
 			continue
 		}
@@ -627,19 +792,52 @@ func (a *App) EmitSessionCreated(tmuxSession string, sessionType string, label s
 
 func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 	wailsRuntime.EventsEmit(a.ctx, "mobile:session-created", map[string]string{
-		"tmuxSession":      session.TmuxName,
-		"type":             session.Type,
-		"label":            session.Label,
-		"workspacePath":    session.WorkspacePath,
-		"provider":         session.Provider,
-		"viewMode":         session.ViewMode,
-		"runtimeSessionId": session.RuntimeSessionID,
-		"threadId":         session.ThreadID,
-		"model":            session.Model,
-		"reasoningEffort":  session.ReasoningEffort,
-		"approvalPolicy":   session.ApprovalPolicy,
-		"sandboxMode":      session.SandboxMode,
+		"tmuxSession":       session.TmuxName,
+		"type":              session.Type,
+		"label":             session.Label,
+		"workspacePath":     session.WorkspacePath,
+		"provider":          session.Provider,
+		"icon":              session.Icon,
+		"viewMode":          session.ViewMode,
+		"runtimeSessionId":  session.RuntimeSessionID,
+		"threadId":          session.ThreadID,
+		"model":             session.Model,
+		"reasoningEffort":   session.ReasoningEffort,
+		"approvalPolicy":    session.ApprovalPolicy,
+		"sandboxMode":       session.SandboxMode,
+		"permissionMode":    session.PermissionMode,
+		"collaborationMode": session.CollaborationMode,
 	})
+}
+
+func (a *App) EmitSessionKilled(sessionID string) {
+	a.forgetSavedSession(sessionID)
+	wailsRuntime.EventsEmit(a.ctx, "mobile:session-killed", map[string]string{
+		"sessionId": sessionID,
+	})
+}
+
+func (a *App) forgetSavedSession(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || a.appState == nil {
+		return
+	}
+	saved := a.appState.GetSavedTabs()
+	if len(saved) == 0 {
+		return
+	}
+	filtered := make([]state.SavedTab, 0, len(saved))
+	for _, tab := range saved {
+		if tab.TmuxSession == sessionID ||
+			tab.RuntimeSessionID == sessionID ||
+			tab.ThreadID == sessionID {
+			continue
+		}
+		filtered = append(filtered, tab)
+	}
+	if len(filtered) != len(saved) {
+		a.appState.SaveTabs(filtered)
+	}
 }
 
 func shellQuote(value string) string {
@@ -649,11 +847,96 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func (a *App) agentForProvider(repoRoot string, provider string) (string, config.AgentConfig) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	cfg := config.Load(repoRoot)
+	if agent, ok := cfg.Agents[provider]; ok && agent.Provider == provider {
+		return provider, agent
+	}
+	for name, agent := range cfg.Agents {
+		if agent.Provider == provider {
+			return name, agent
+		}
+	}
+	return provider, config.DefaultAgent(provider)
+}
+
+func chatLabel(agent config.AgentConfig, fallback string) string {
+	label := strings.TrimSpace(agent.Label)
+	if label == "" {
+		return fallback
+	}
+	if strings.Contains(strings.ToLower(label), "chat") {
+		return label
+	}
+	return label + " Chat"
+}
+
+func agentExecutable(command string, fallback string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return fallback
+	}
+	return fields[0]
+}
+
+func claudeResumeCommand(command string, threadID string, model string, reasoningEffort string, permissionMode string) string {
+	base := strings.TrimSpace(command)
+	if base == "" {
+		base = config.DefaultAgent("claude").Command
+	}
+	parts := []string{base}
+	if model = strings.TrimSpace(model); model != "" {
+		parts = append(parts, "--model", shellQuote(model))
+	}
+	if reasoningEffort = strings.TrimSpace(reasoningEffort); reasoningEffort != "" {
+		parts = append(parts, "--effort", shellQuote(reasoningEffort))
+	}
+	if permissionMode = strings.TrimSpace(permissionMode); permissionMode == "plan" {
+		parts = append(parts, "--permission-mode", "plan")
+	}
+	parts = append(parts, "--resume", shellQuote(threadID))
+	return strings.Join(parts, " ")
+}
+
+func codexResumeCommand(threadID string, model string, reasoningEffort string, collaborationMode string) string {
+	parts := []string{"codex", "resume", "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen"}
+	if model = strings.TrimSpace(model); model != "" {
+		parts = append(parts, "-m", shellQuote(model))
+	}
+	if reasoningEffort = strings.TrimSpace(reasoningEffort); reasoningEffort != "" {
+		parts = append(parts, "-c", shellQuote("model_reasoning_effort="+strconv.Quote(reasoningEffort)))
+	}
+	parts = append(parts, shellQuote(threadID))
+	return strings.Join(parts, " ")
+}
+
 func (a *App) GetAgentNames(repoRoot string) []web.AgentType {
 	cfg := config.Load(repoRoot)
 	var agents []web.AgentType
-	for name := range cfg.Agents {
-		agents = append(agents, web.AgentType{Name: name, Label: capitalize(name)})
+	for name, agent := range cfg.Agents {
+		agents = append(agents, web.AgentType{
+			Name:              name,
+			Label:             firstNonEmpty(agent.Label, capitalize(name)),
+			Provider:          agent.Provider,
+			Icon:              agent.Icon,
+			Model:             agent.Model,
+			ReasoningEffort:   agent.ReasoningEffort,
+			ApprovalPolicy:    agent.ApprovalPolicy,
+			SandboxMode:       agent.SandboxMode,
+			PermissionMode:    agent.PermissionMode,
+			CollaborationMode: agent.CollaborationMode,
+			ChatCapable:       agent.Provider == "claude" || agent.Provider == "codex",
+		})
 	}
 	return agents
 }
@@ -665,9 +948,18 @@ func (a *App) GetAgentTypes(repoRoot string) []AgentTypeInfo {
 	var agents []AgentTypeInfo
 	for name, agent := range cfg.Agents {
 		agents = append(agents, AgentTypeInfo{
-			Name:    name,
-			Command: agent.Command,
-			Label:   capitalize(name),
+			Name:              name,
+			Command:           agent.Command,
+			Label:             firstNonEmpty(agent.Label, capitalize(name)),
+			Provider:          agent.Provider,
+			Icon:              agent.Icon,
+			Model:             agent.Model,
+			ReasoningEffort:   agent.ReasoningEffort,
+			ApprovalPolicy:    agent.ApprovalPolicy,
+			SandboxMode:       agent.SandboxMode,
+			PermissionMode:    agent.PermissionMode,
+			CollaborationMode: agent.CollaborationMode,
+			ChatCapable:       agent.Provider == "claude" || agent.Provider == "codex",
 		})
 	}
 	sortAgents(agents)
@@ -675,9 +967,18 @@ func (a *App) GetAgentTypes(repoRoot string) []AgentTypeInfo {
 }
 
 type AgentTypeInfo struct {
-	Name    string `json:"name"`
-	Command string `json:"command"`
-	Label   string `json:"label"`
+	Name              string `json:"name"`
+	Command           string `json:"command"`
+	Label             string `json:"label"`
+	Provider          string `json:"provider,omitempty"`
+	Icon              string `json:"icon,omitempty"`
+	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
+	SandboxMode       string `json:"sandboxMode,omitempty"`
+	PermissionMode    string `json:"permissionMode,omitempty"`
+	CollaborationMode string `json:"collaborationMode,omitempty"`
+	ChatCapable       bool   `json:"chatCapable"`
 }
 
 func capitalize(s string) string {

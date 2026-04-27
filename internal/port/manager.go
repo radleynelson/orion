@@ -98,6 +98,17 @@ func (r *Registry) GetAllocation(wsID string) Allocation {
 	return r.allocations[wsID]
 }
 
+func (r *Registry) SetAllocation(wsID string, alloc Allocation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := make(Allocation, len(alloc))
+	for name, port := range alloc {
+		next[name] = port
+	}
+	r.allocations[wsID] = next
+	r.save()
+}
+
 func (r *Registry) GetAllAllocations() map[string]Allocation {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

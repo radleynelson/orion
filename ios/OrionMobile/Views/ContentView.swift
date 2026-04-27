@@ -11,7 +11,7 @@ struct MainView: View {
     var body: some View {
         VStack(spacing: 0) {
             HeaderBar()
-            if !state.visibleTabs.isEmpty { TabStrip() }
+            if !state.showHome && (state.activeWorkspace != nil || !state.visibleTabs.isEmpty) { TabStrip() }
             if state.isReconnecting {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini).tint(OrionTheme.accentYellow)
@@ -80,22 +80,23 @@ struct MainView: View {
                     ProgressView()
                         .controlSize(.regular)
                         .tint(OrionTheme.accentBlue)
+                } else if let workspace = state.activeWorkspace {
+                    WorkspaceEmptyView(workspace: workspace)
                 } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "terminal").font(.system(size: 40)).foregroundStyle(OrionTheme.textDim)
-                        Text(emptyStateTitle).font(.subheadline).foregroundStyle(OrionTheme.textDim)
-                        Button("Browse Workspaces") { state.showWorkspaces = true }.buttonStyle(.bordered).tint(OrionTheme.accentBlue)
-                    }
+                    WorkspaceEmptyView(workspace: nil)
                 }
             }
-            if state.activeSession != nil && !state.activeSessionShowsChat { TerminalToolbar() }
+            if !state.showHome && state.activeSession != nil && !state.activeSessionShowsChat { TerminalToolbar() }
         }
         .background(OrionTheme.bgPrimary)
         .sheet(isPresented: Binding(get: { state.showWorkspaces }, set: { state.showWorkspaces = $0 })) {
-            WorkspaceSheet().presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+            WorkspaceSheet().presentationDetents([.height(420), .large]).presentationDragIndicator(.visible)
         }
         .sheet(isPresented: Binding(get: { state.showSettings }, set: { state.showSettings = $0 })) {
             SettingsView().presentationDetents([.medium]).presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: Binding(get: { state.showDiffReview }, set: { state.showDiffReview = $0 })) {
+            DiffReviewSheet().presentationDetents([.large]).presentationDragIndicator(.visible)
         }
         .confirmationDialog(
             state.pendingKillSession.map { "Close \($0.label)?" } ?? "Close Session?",
@@ -119,61 +120,118 @@ struct MainView: View {
                 Text("\(session.label) will be stopped and removed from this workspace.")
             }
         }
+        .task {
+            while state.isConnected {
+                await state.refreshSessions()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
     }
 
-    private var emptyStateTitle: String {
-        if let workspace = state.activeWorkspace {
-            return "Open a session in \(workspace.name)"
-        }
-        return "Open a session from workspaces"
-    }
 }
 
 // MARK: - Header with Project Switcher
 
 struct HeaderBar: View {
     @Environment(AppState.self) private var state
-    var body: some View {
-        HStack(spacing: 12) {
-            Button { state.showWorkspaces = true } label: {
-                Image(systemName: "sidebar.left").font(.system(size: 18)).foregroundStyle(OrionTheme.textSecondary)
-            }
-            Spacer()
+    @State private var serverStatuses: [ServerStatus] = []
+    @State private var isChangingServers = false
+    @State private var diffStats: DiffStats?
+    @State private var isLoadingDiffStats = false
 
-            // Project switcher in the header
-            if state.projects.count > 1 {
-                Menu {
-                    ForEach(state.projects, id: \.self) { p in
-                        Button {
-                            Task { try? await state.selectProject(p) }
-                        } label: {
-                            Label((p as NSString).lastPathComponent,
-                                  systemImage: p == state.selectedProject ? "checkmark" : "folder")
-                        }
-                    }
+    private var activeWorkspace: Workspace? { state.activeWorkspace }
+    private var runningServers: [ServerStatus] { serverStatuses.filter(\.running) }
+    private var serversRunning: Bool { !runningServers.isEmpty }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                state.showWorkspaces = true
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 18))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+
+            projectSwitcher
+                .frame(maxWidth: 148, alignment: .leading)
+
+            Spacer(minLength: 4)
+
+            Button {
+                state.showDiffReview = true
+            } label: {
+                DiffHeaderPill(stats: diffStats, isLoading: isLoadingDiffStats)
+            }
+            .buttonStyle(.plain)
+
+            if activeWorkspace != nil {
+                Button {
+                    Task { await toggleServers() }
                 } label: {
-                    titleView
+                    ServerHeaderPill(
+                        systemImage: serversRunning ? "stop.fill" : "play.fill",
+                        tint: serversRunning ? OrionTheme.accentRed : OrionTheme.accentGreen,
+                        isLoading: isChangingServers
+                    )
                 }
-            } else {
+                .buttonStyle(.plain)
+                .disabled(isChangingServers)
+            }
+
+            Button { state.showSettings = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 54)
+        .background(OrionTheme.bgPrimary)
+        .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
+        .task(id: state.activeWorkspacePath) {
+            await reloadServerStatuses()
+            await reloadDiffStats()
+        }
+        .onChange(of: state.sessions.count) { _, _ in
+            Task { await reloadServerStatuses() }
+        }
+        .onChange(of: state.showDiffReview) { _, isShowing in
+            guard !isShowing else { return }
+            Task { await reloadDiffStats() }
+        }
+    }
+
+    @ViewBuilder
+    private var projectSwitcher: some View {
+        if state.projects.count > 1 {
+            Menu {
+                ForEach(state.projects, id: \.self) { p in
+                    Button {
+                        Task { try? await state.selectProject(p) }
+                    } label: {
+                        Label((p as NSString).lastPathComponent,
+                              systemImage: p == state.selectedProject ? "checkmark" : "folder")
+                    }
+                }
+            } label: {
                 titleView
             }
-
-            Spacer()
-            Circle().fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed).frame(width: 8, height: 8)
-            Button { state.showSettings = true } label: {
-                Image(systemName: "gearshape").font(.system(size: 16)).foregroundStyle(OrionTheme.textSecondary)
-            }
+        } else {
+            titleView
         }
-        .padding(.horizontal, 12).frame(height: 48).background(OrionTheme.bgSecondary)
-        .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
     }
 
     @ViewBuilder
     private var titleView: some View {
-        VStack(spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(state.projectInfo?.name ?? "Orion")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(OrionTheme.textPrimary)
                 if state.projects.count > 1 {
                     Image(systemName: "chevron.up.chevron.down")
@@ -183,7 +241,7 @@ struct HeaderBar: View {
             }
             if let workspace = state.activeWorkspace {
                 Text(workspaceSubtitle(workspace))
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(OrionTheme.textDim)
                     .lineLimit(1)
             }
@@ -199,37 +257,1387 @@ struct HeaderBar: View {
         }
         return workspace.name
     }
+
+    private func reloadServerStatuses() async {
+        guard let workspace = activeWorkspace else {
+            serverStatuses = []
+            return
+        }
+        serverStatuses = await state.getServerStatuses(workspace: workspace)
+    }
+
+    private func reloadDiffStats() async {
+        guard let workspace = activeWorkspace else {
+            diffStats = nil
+            return
+        }
+        let workspacePath = workspace.path
+        isLoadingDiffStats = true
+        defer { isLoadingDiffStats = false }
+
+        do {
+            let files = try await state.changedFiles(workspacePath: workspacePath)
+            var totals = DiffStats()
+            for file in files {
+                let diff = try await state.unifiedDiff(for: file, workspacePath: workspacePath)
+                totals.add(countDiffChanges(diff))
+            }
+            guard state.activeWorkspacePath == workspacePath else { return }
+            diffStats = totals.isEmpty ? nil : totals
+        } catch {
+            guard state.activeWorkspacePath == workspacePath else { return }
+            diffStats = nil
+        }
+    }
+
+    private func toggleServers() async {
+        guard let workspace = activeWorkspace else { return }
+        isChangingServers = true
+        if serversRunning {
+            await state.stopServers(workspace: workspace)
+        } else {
+            await state.startServers(workspace: workspace)
+        }
+        serverStatuses = await state.getServerStatuses(workspace: workspace)
+        isChangingServers = false
+    }
 }
 
-// MARK: - Workspace Sheet (native List with swipe-to-delete)
+private struct DiffStats: Equatable {
+    var added = 0
+    var removed = 0
 
-struct WorkspaceSheet: View {
-    @Environment(AppState.self) private var state
+    var isEmpty: Bool { added == 0 && removed == 0 }
+
+    mutating func add(_ other: DiffStats) {
+        added += other.added
+        removed += other.removed
+    }
+}
+
+private struct DiffHeaderPill: View {
+    let stats: DiffStats?
+    var isLoading = false
 
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(state.workspaces) { ws in
-                    WorkspaceSection(workspace: ws)
+        HStack(spacing: 6) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(OrionTheme.accentBlue)
+            } else if let stats {
+                Text("+\(stats.added)")
+                    .foregroundStyle(OrionTheme.accentGreen)
+                Text("-\(stats.removed)")
+                    .foregroundStyle(OrionTheme.accentRed)
+            } else {
+                Text("Diff")
+                    .foregroundStyle(OrionTheme.textSecondary)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold, design: stats == nil ? .default : .monospaced))
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(OrionTheme.bgSurface)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.7))
+    }
+}
+
+private struct ServerHeaderPill: View {
+    let systemImage: String
+    let tint: Color
+    var isLoading = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(tint)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(tint)
+            }
+        }
+        .frame(width: 28)
+        .frame(height: 28)
+        .background(OrionTheme.bgSurface)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.7))
+    }
+}
+
+// MARK: - Mobile Home
+
+private struct WorkspaceEmptyView: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            OrionMarkView(size: 44)
+            VStack(spacing: 5) {
+                Text(workspace?.name ?? "No workspace selected")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(subtitle)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+            if let workspace {
+                NewSessionMenu(workspace: workspace, style: .prominent)
+            } else {
+                Button { state.showWorkspaces = true } label: {
+                    Label("Choose workspace", systemImage: "sidebar.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 16)
+                        .frame(height: 38)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(OrionTheme.accentBlue)
+            }
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var subtitle: String {
+        guard let workspace else { return "Open a workspace to start a session." }
+        if workspace.isMain { return "Main workspace" }
+        return workspace.branch.isEmpty ? workspace.name : workspace.branch
+    }
+}
+
+private struct MobileHomeView: View {
+    @Environment(AppState.self) private var state
+    @State private var serverStatusesByWorkspace: [String: [ServerStatus]] = [:]
+    @State private var changedFiles: [GitChangedFile] = []
+    @State private var loadingHome = false
+    @State private var showQuickAsk = false
+    @State private var detailWorkspace: Workspace?
+
+    private var projectSubtitle: String {
+        let projectCount = state.workspaces.count
+        let projectRoot = state.projectInfo?.root ?? state.selectedProject ?? ""
+        let folder = (projectRoot as NSString).lastPathComponent
+        if folder.isEmpty { return "\(projectCount) workspace\(projectCount == 1 ? "" : "s")" }
+        return "\(folder) · \(projectCount) workspace\(projectCount == 1 ? "" : "s")"
+    }
+
+    private var featuredSession: SessionInfo? {
+        if let active = state.activeSession, active.isChat { return active }
+        if let activeWorkspace = state.activeWorkspacePath,
+           let chat = state.sessions.first(where: { $0.workspacePath == activeWorkspace && $0.isChat }) {
+            return chat
+        }
+        return state.sessions.first(where: \.isChat)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                homeHero
+                readyCard
+                workspaceList
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+        }
+        .background(OrionTheme.bgTerminal)
+        .refreshable { await loadHome() }
+        .safeAreaInset(edge: .bottom) {
+            quickAskBar
+        }
+        .task { await loadHome() }
+        .onChange(of: state.activeWorkspacePath) { _, _ in
+            Task { await loadHome() }
+        }
+        .sheet(isPresented: $showQuickAsk) {
+            QuickAskSheet(
+                defaultWorkspacePath: state.activeWorkspacePath,
+                onCancel: { showQuickAsk = false },
+                onDone: {
+                    showQuickAsk = false
+                    Task { await loadHome() }
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $detailWorkspace) { workspace in
+            WorkspaceDetailSheet(
+                workspace: workspace,
+                onClose: { detailWorkspace = nil },
+                onRefresh: { await loadHome() }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var homeHero: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                    .frame(width: 7, height: 7)
+                Text(state.isConnected ? "Connected" : "Offline")
+                    .font(.system(size: 13))
+                    .foregroundStyle(OrionTheme.textDim)
+                Spacer()
+                Button {
+                    Task { await loadHome() }
+                } label: {
+                    if loadingHome {
+                        ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(alignment: .center, spacing: 14) {
+                OrionMarkView(size: 46)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("orion")
+                        .font(.system(size: 31, weight: .bold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(projectSubtitle)
+                        .font(.system(size: 14, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Menu {
+                    Button { state.showWorkspaces = true } label: {
+                        Label("Workspaces", systemImage: "sidebar.left")
+                    }
+                    Button { state.showDiffReview = true } label: {
+                        Label("Review diff", systemImage: "doc.text.magnifyingglass")
+                    }
+                    Button { showQuickAsk = true } label: {
+                        Label("Ask agent", systemImage: "paperplane")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(OrionTheme.textSecondary)
+                        .frame(width: 42, height: 42)
+                        .background(OrionTheme.bgSurface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var readyCard: some View {
+        let session = featuredSession
+        let label = session?.label ?? "Codex"
+        return HStack(spacing: 12) {
+            AgentSigilView(sessionIconID(session), size: 38)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(label) is ready when you are")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.86)
+                Text(readyCardSubtitle)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.86)
+            }
+            Spacer(minLength: 8)
+            Button {
+                if let session {
+                    Task { try? await state.activateSession(session) }
+                } else if changedFiles.isEmpty {
+                    showQuickAsk = true
+                } else {
+                    state.showDiffReview = true
+                }
+            } label: {
+                Text(session == nil && changedFiles.isEmpty ? "Ask" : "Review")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(hex: 0x18233A))
+                    .padding(.horizontal, 17)
+                    .frame(height: 34)
+                    .background(OrionTheme.accentBlue)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+
+    private var readyCardSubtitle: String {
+        if !changedFiles.isEmpty {
+            return "\(changedFiles.count) changed file\(changedFiles.count == 1 ? "" : "s") in \(state.activeWorkspace?.name ?? "workspace")"
+        }
+        if let session = featuredSession {
+            return "\(sessionLabel(session.type)) · \(workspaceName(for: session.workspacePath))"
+        }
+        return "Start a plan, chat, or shell"
+    }
+
+    private var workspaceList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Workspaces")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(OrionTheme.textDim)
+                Spacer()
+                Text("\(state.workspaces.count)")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+            }
+            ForEach(state.workspaces) { workspace in
+                MobileWorkspaceCard(
+                    workspace: workspace,
+                    sessions: state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" },
+                    servers: serverStatusesByWorkspace[workspace.path] ?? [],
+                    onOpenDetail: { detailWorkspace = workspace },
+                    onRefresh: { await loadHome() }
+                )
+            }
+        }
+    }
+
+    private var quickAskBar: some View {
+        Button { showQuickAsk = true } label: {
+            HStack(spacing: 10) {
+                Text("Ask an agent...")
+                    .font(.system(size: 15))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "mic")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OrionTheme.textDim)
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color(hex: 0x18233A))
+                    .frame(width: 42, height: 42)
+                    .background(OrionTheme.accentBlue)
+                    .clipShape(Circle())
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 6)
+            .frame(height: 58)
+            .background(OrionTheme.bgSurface)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.8))
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .background(OrionTheme.bgTerminal.opacity(0.96))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func loadHome() async {
+        loadingHome = true
+        defer { loadingHome = false }
+
+        await state.refreshSessions()
+        var statuses: [String: [ServerStatus]] = [:]
+        for workspace in state.workspaces {
+            statuses[workspace.path] = await state.getServerStatuses(workspace: workspace)
+        }
+        serverStatusesByWorkspace = statuses
+
+        do {
+            changedFiles = try await state.changedFiles()
+        } catch {
+            changedFiles = []
+        }
+    }
+
+    private func workspaceName(for path: String) -> String {
+        state.workspaces.first(where: { $0.path == path })?.name ?? "workspace"
+    }
+}
+
+private struct MobileWorkspaceCard: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+    let sessions: [SessionInfo]
+    let servers: [ServerStatus]
+    let onOpenDetail: () -> Void
+    let onRefresh: () async -> Void
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
+    @State private var serverBusy = false
+
+    private var isActiveWorkspace: Bool { state.activeWorkspacePath == workspace.path }
+    private var activeSessionInWorkspace: Bool { state.activeSession?.workspacePath == workspace.path }
+    private var runningServers: [ServerStatus] { servers.filter(\.running) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button {
+                onOpenDetail()
+            } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    Circle()
+                        .fill(statusDotColor)
+                        .frame(width: 9, height: 9)
+                        .shadow(color: statusDotColor.opacity(isActiveWorkspace ? 0.55 : 0), radius: 5)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 7) {
+                            Text(workspace.name)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                                .lineLimit(1)
+                            if workspace.isMain {
+                                Text("MAIN")
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.accentBlue)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(OrionTheme.accentBlue.opacity(0.15))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            }
+                        }
+                        Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text(statusText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(statusDotColor)
                 }
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(OrionTheme.bgPrimary)
-            .navigationTitle("Workspaces")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { state.showWorkspaces = false }.foregroundStyle(OrionTheme.accentBlue)
+            .buttonStyle(.plain)
+
+            if sessions.isEmpty {
+                HStack(spacing: 9) {
+                    AgentSigilView("codex-chat", size: 25)
+                    Text("No live sessions")
+                        .font(.system(size: 13))
+                        .foregroundStyle(OrionTheme.textDim)
+                    Spacer()
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { Task { await state.refreshSessions() } } label: {
-                        Image(systemName: "arrow.clockwise").foregroundStyle(OrionTheme.accentBlue)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(Array(sessions.prefix(3))) { session in
+                        Button {
+                            Task {
+                                do { try await state.activateSession(session) }
+                                catch { state.showTransientError("Failed to open session: \(error.localizedDescription)") }
+                            }
+                        } label: {
+                            HomeSessionRow(
+                                session: session,
+                                isActive: state.activeSession?.id == session.id
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if sessions.count > 3 {
+                        Text("+ \(sessions.count - 3) more session\(sessions.count - 3 == 1 ? "" : "s")")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
-            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+
+            if !runningServers.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(runningServers) { server in
+                            HStack(spacing: 5) {
+                                Circle().fill(OrionTheme.accentGreen).frame(width: 6, height: 6)
+                                Text("\(server.name):\(server.port)")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    if !state.agentTypes.isEmpty {
+                        ForEach(state.agentTypes) { agent in
+                            Button {
+                                Task {
+                                    do {
+                                        _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
+                                        await onRefresh()
+                                    } catch {
+                                        state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
+                                    }
+                                }
+                            } label: {
+                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
+                            }
+                        }
+                        Divider()
+                    }
+                    Button {
+                        Task {
+                            do {
+                                try await state.launchShell(workspacePath: workspace.path)
+                                await onRefresh()
+                            } catch {
+                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
+                    }
+                } label: {
+                    Label("New", systemImage: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .padding(.horizontal, 11)
+                        .frame(height: 32)
+                        .background(OrionTheme.bgActive)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                if !servers.isEmpty {
+                    Button {
+                        Task {
+                            serverBusy = true
+                            if runningServers.isEmpty {
+                                await state.startServers(workspace: workspace)
+                            } else {
+                                await state.stopServers(workspace: workspace)
+                            }
+                            await onRefresh()
+                            serverBusy = false
+                        }
+                    } label: {
+                        if serverBusy {
+                            ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
+                        } else {
+                            Label(runningServers.isEmpty ? "Servers" : "Stop", systemImage: runningServers.isEmpty ? "play.fill" : "stop.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(runningServers.isEmpty ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(serverBusy)
+                }
+            }
         }
+        .padding(14)
+        .background(isActiveWorkspace ? OrionTheme.bgSurface : OrionTheme.bgSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isActiveWorkspace ? OrionTheme.accentBlue.opacity(0.22) : OrionTheme.borderDim, lineWidth: 0.8)
+        )
+        .sheet(isPresented: $showingCodexOptions) {
+            CodexLaunchOptionsSheet(
+                workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                options: $codexOptions,
+                onCancel: { showingCodexOptions = false },
+                onLaunch: {
+                    let selected = codexOptions
+                    showingCodexOptions = false
+                    Task {
+                        do {
+                            _ = try await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                            await onRefresh()
+                        } catch {
+                            state.showTransientError("Failed to start Codex: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var statusText: String {
+        if activeSessionInWorkspace { return "Open" }
+        if !sessions.isEmpty { return "\(sessions.count) session\(sessions.count == 1 ? "" : "s")" }
+        if !runningServers.isEmpty { return "Servers" }
+        if isActiveWorkspace { return "Selected" }
+        return "Idle"
+    }
+
+    private var statusDotColor: Color {
+        if activeSessionInWorkspace { return OrionTheme.accentBlue }
+        if !sessions.isEmpty || !runningServers.isEmpty { return OrionTheme.accentGreen }
+        if isActiveWorkspace { return OrionTheme.accentBlue }
+        return OrionTheme.border
+    }
+}
+
+private struct HomeSessionRow: View {
+    let session: SessionInfo
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 9) {
+            AgentSigilView(sessionIconID(session), size: 25)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.label)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(sessionLabel(session.type))
+                    if let model = session.model, !model.isEmpty {
+                        Text(modelLabel(model))
+                    }
+                    if let reasoning = session.reasoningEffort, !reasoning.isEmpty {
+                        Text(reasoningLabel(reasoning))
+                    }
+                }
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .lineLimit(1)
+            }
+            Spacer()
+            Circle()
+                .fill(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+                .frame(width: 7, height: 7)
+                .opacity(isActive ? 1 : 0.7)
+        }
+    }
+}
+
+private struct QuickAskSheet: View {
+    @Environment(AppState.self) private var state
+    let onCancel: () -> Void
+    let onDone: () -> Void
+    @State private var workspacePath: String
+    @State private var provider = "codex-chat"
+    @State private var prompt = ""
+    @State private var codexOptions = CodexLaunchOptions()
+    @State private var launching = false
+
+    init(defaultWorkspacePath: String?, onCancel: @escaping () -> Void, onDone: @escaping () -> Void) {
+        self.onCancel = onCancel
+        self.onDone = onDone
+        _workspacePath = State(initialValue: defaultWorkspacePath ?? "")
+    }
+
+    private var canLaunch: Bool {
+        !workspacePath.isEmpty && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !launching
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Workspace") {
+                    Picker("Workspace", selection: $workspacePath) {
+                        ForEach(state.workspaces) { workspace in
+                            Text(workspace.name).tag(workspace.path)
+                        }
+                    }
+                }
+
+                Section("Agent") {
+                    Picker("Agent", selection: $provider) {
+                        Text("Codex Chat").tag("codex-chat")
+                        Text("Claude Chat").tag("claude-chat")
+                    }
+                    .pickerStyle(.segmented)
+                    if provider == "codex-chat" {
+                        Picker("Model", selection: $codexOptions.model) {
+                            ForEach(["", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
+                                Text(modelLabel($0)).tag($0)
+                            }
+                        }
+                        Picker("Reasoning", selection: $codexOptions.reasoningEffort) {
+                            ForEach(["low", "medium", "high", "xhigh"], id: \.self) {
+                                Text(reasoningLabel($0)).tag($0)
+                            }
+                        }
+                    }
+                }
+
+                Section("Prompt") {
+                    TextEditor(text: $prompt)
+                        .frame(minHeight: 170)
+                        .font(.system(size: 15))
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Ask agent")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await launch() }
+                    } label: {
+                        if launching {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Text("Start").fontWeight(.semibold)
+                        }
+                    }
+                    .disabled(!canLaunch)
+                    .foregroundStyle(canLaunch ? OrionTheme.accentBlue : OrionTheme.textDim)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .onAppear {
+                if workspacePath.isEmpty {
+                    workspacePath = state.activeWorkspacePath ?? state.workspaces.first?.path ?? ""
+                }
+            }
+        }
+    }
+
+    private func launch() async {
+        guard canLaunch else { return }
+        launching = true
+        do {
+            _ = try await state.launchChatWithPrompt(
+                workspacePath: workspacePath,
+                provider: provider,
+                prompt: prompt,
+                codexOptions: codexOptions
+            )
+            launching = false
+            onDone()
+        } catch {
+            launching = false
+            state.showTransientError("Failed to start chat: \(error.localizedDescription)")
+        }
+    }
+}
+
+private struct WorkspaceDetailSheet: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+    let onClose: () -> Void
+    let onRefresh: () async -> Void
+    @State private var serverStatuses: [ServerStatus] = []
+    @State private var history: [CodexHistoryThread] = []
+    @State private var changedFiles: [GitChangedFile] = []
+    @State private var loading = false
+    @State private var serverBusy = false
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
+
+    private var sessions: [SessionInfo] {
+        state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" }
+    }
+
+    private var runningServers: [ServerStatus] {
+        serverStatuses.filter(\.running)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    summaryGrid
+                    primaryActions
+                    liveSessionsSection
+                    recentHistorySection
+                }
+                .padding(16)
+                .padding(.bottom, 28)
+            }
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Workspace")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close", action: onClose)
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await load() } } label: {
+                        if loading {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .foregroundStyle(OrionTheme.accentBlue)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .task { await load() }
+            .sheet(isPresented: $showingCodexOptions) {
+                CodexLaunchOptionsSheet(
+                    workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                    options: $codexOptions,
+                    onCancel: { showingCodexOptions = false },
+                    onLaunch: {
+                        let selected = codexOptions
+                        showingCodexOptions = false
+                        Task {
+                            do {
+                                _ = try await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                                await onRefresh()
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to start Codex: \(error.localizedDescription)")
+                            }
+                        }
+                    }
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            OrionMarkView(size: 46)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(workspace.name)
+                        .font(.system(size: 25, weight: .bold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(1)
+                    if workspace.isMain {
+                        Text("MAIN")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.accentBlue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(OrionTheme.accentBlue.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+                }
+                Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+    }
+
+    private var summaryGrid: some View {
+        HStack(spacing: 10) {
+            WorkspaceSummaryTile(value: "\(sessions.count)", label: "sessions", tint: sessions.isEmpty ? OrionTheme.textDim : OrionTheme.accentBlue)
+            WorkspaceSummaryTile(value: "\(runningServers.count)", label: "servers", tint: runningServers.isEmpty ? OrionTheme.textDim : OrionTheme.accentGreen)
+            WorkspaceSummaryTile(value: "\(changedFiles.count)", label: "files", tint: changedFiles.isEmpty ? OrionTheme.textDim : OrionTheme.accentYellow)
+        }
+    }
+
+    private var primaryActions: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    if let preferred = sessions.first {
+                        Task {
+                            do {
+                                try await state.activateSession(preferred)
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to open session: \(error.localizedDescription)")
+                            }
+                        }
+                    } else {
+                        showingCodexOptions = true
+                    }
+                } label: {
+                    Label(sessions.isEmpty ? "Start Codex" : "Open latest", systemImage: sessions.isEmpty ? "plus" : "arrow.up.forward")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 38)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(OrionTheme.accentBlue)
+
+                Button {
+                    Task {
+                        await state.activateWorkspace(workspace.path)
+                        state.showDiffReview = true
+                        onClose()
+                    }
+                } label: {
+                    Label("Diff", systemImage: "doc.text.magnifyingglass")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 38)
+                }
+                .buttonStyle(.bordered)
+                .tint(OrionTheme.accentBlue)
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    if !state.agentTypes.isEmpty {
+                        ForEach(state.agentTypes) { agent in
+                            Button {
+                                Task {
+                                    do {
+                                        _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
+                                        await onRefresh()
+                                        onClose()
+                                    } catch {
+                                        state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
+                                    }
+                                }
+                            } label: {
+                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
+                            }
+                        }
+                        Divider()
+                    }
+                    Button {
+                        Task {
+                            do {
+                                try await state.launchShell(workspacePath: workspace.path)
+                                await onRefresh()
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        Label("Shell", systemImage: "terminal")
+                    }
+                } label: {
+                    Label("New session", systemImage: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                }
+                .buttonStyle(.bordered)
+                .tint(OrionTheme.textSecondary)
+
+                if !serverStatuses.isEmpty {
+                    Button {
+                        Task {
+                            serverBusy = true
+                            if runningServers.isEmpty {
+                                await state.startServers(workspace: workspace)
+                            } else {
+                                await state.stopServers(workspace: workspace)
+                            }
+                            await load()
+                            await onRefresh()
+                            serverBusy = false
+                        }
+                    } label: {
+                        if serverBusy {
+                            ProgressView().controlSize(.mini)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 36)
+                        } else {
+                            Label(runningServers.isEmpty ? "Start servers" : "Stop servers", systemImage: runningServers.isEmpty ? "play.fill" : "stop.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 36)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(runningServers.isEmpty ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                    .disabled(serverBusy)
+                }
+            }
+        }
+    }
+
+    private var liveSessionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Live sessions", count: sessions.count)
+            if sessions.isEmpty {
+                EmptyDetailRow(icon: "codex-chat", title: "No live sessions", subtitle: "Start or resume an agent from this workspace.")
+            } else {
+                ForEach(Array(sessions.prefix(3))) { session in
+                    Button {
+                        Task {
+                            do {
+                                try await state.activateSession(session)
+                                onClose()
+                            } catch {
+                                state.showTransientError("Failed to open session: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        DetailSessionRow(session: session, isActive: state.activeSession?.id == session.id)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if sessions.count > 3 {
+                    Text("+ \(sessions.count - 3) more session\(sessions.count - 3 == 1 ? "" : "s")")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 2)
+                }
+            }
+        }
+    }
+
+    private var recentHistorySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Recent Codex threads", count: history.count)
+            if history.isEmpty {
+                EmptyDetailRow(icon: "codex-chat", title: "No saved Codex threads", subtitle: "Completed Codex chats for this workspace will appear here.")
+            } else {
+                ForEach(history) { thread in
+                    DetailHistoryRow(
+                        thread: thread,
+                        liveSession: liveSession(for: thread),
+                        onOpen: { open(thread) }
+                    )
+                }
+            }
+        }
+    }
+
+    private func sectionTitle(_ title: String, count: Int) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(OrionTheme.textDim)
+            Spacer()
+            Text("\(count)")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+        }
+    }
+
+    private func load() async {
+        loading = true
+        defer { loading = false }
+        await state.refreshSessions()
+        async let loadedServers = state.getServerStatuses(workspace: workspace)
+        async let loadedHistory = state.codexHistory(workspace: workspace)
+        let loadedChanges = (try? await state.changedFiles(workspacePath: workspace.path)) ?? []
+        serverStatuses = await loadedServers
+        history = await loadedHistory
+        changedFiles = loadedChanges
+    }
+
+    private func liveSession(for thread: CodexHistoryThread) -> SessionInfo? {
+        sessions.first { $0.threadId == thread.threadId || $0.tmuxName == thread.threadId }
+    }
+
+    private func open(_ thread: CodexHistoryThread) {
+        Task {
+            do {
+                if let live = liveSession(for: thread) {
+                    try await state.activateSession(live)
+                } else {
+                    _ = try await state.resumeCodexChat(workspacePath: workspace.path, threadId: thread.threadId)
+                }
+                await onRefresh()
+                onClose()
+            } catch {
+                state.showTransientError("Failed to resume thread: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+private struct WorkspaceSummaryTile: View {
+    let value: String
+    let label: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(value)
+                .font(.system(size: 19, weight: .bold, design: .monospaced))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+private struct DetailSessionRow: View {
+    let session: SessionInfo
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 11) {
+            AgentSigilView(sessionIconID(session), size: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.label)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(sessionLabel(session.type))
+                    if let model = session.model, !model.isEmpty { Text(modelLabel(model)) }
+                    if let reasoning = session.reasoningEffort, !reasoning.isEmpty { Text(reasoningLabel(reasoning)) }
+                }
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .lineLimit(1)
+            }
+            Spacer()
+            Text(isActive ? "Active" : "Open")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+        }
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isActive ? OrionTheme.accentBlue.opacity(0.32) : OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+private struct DetailHistoryRow: View {
+    let thread: CodexHistoryThread
+    let liveSession: SessionInfo?
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            AgentSigilView("codex-chat", size: 30)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(shortThreadLabel(thread.threadId))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(relativeTimeLabel(thread.updatedAt))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                }
+                Text(thread.preview?.isEmpty == false ? thread.preview! : "No preview")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    if let model = thread.model, !model.isEmpty {
+                        Text(modelLabel(model))
+                    }
+                    Text("\(thread.messageCount) msg\(thread.messageCount == 1 ? "" : "s")")
+                }
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+            }
+            Spacer()
+            Button(liveSession == nil ? "Resume" : "Open", action: onOpen)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OrionTheme.accentBlue)
+        }
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+private struct EmptyDetailRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(spacing: 11) {
+            AgentSigilView(icon, size: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                Text(subtitle)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(OrionTheme.bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+    }
+}
+
+// MARK: - Workspace Sheet
+
+struct WorkspaceSheet: View {
+    @Environment(AppState.self) private var state
+    @State private var showingNewWorktree = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Workspaces")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                        Text(state.projectInfo?.name ?? "Orion")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await state.refreshSessions() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .frame(width: 34, height: 34)
+                            .background(OrionTheme.bgSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    Button { showingNewWorktree = true } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                            .frame(width: 34, height: 34)
+                            .background(OrionTheme.bgSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(state.workspaces) { workspace in
+                            WorkspaceSwitcherRow(workspace: workspace)
+                        }
+                    }
+                    .padding(.bottom, 10)
+                }
+
+                Button { showingNewWorktree = true } label: {
+                    Label("New workspace", systemImage: "plus")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .background(OrionTheme.bgSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.8))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+            .background(OrionTheme.bgPrimary.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { state.showWorkspaces = false }
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .sheet(isPresented: $showingNewWorktree) {
+                NewWorktreeSheet(
+                    baseRefs: workspaceBaseRefs(mainBranch: state.projectInfo?.mainBranch, workspaces: state.workspaces),
+                    onCancel: { showingNewWorktree = false },
+                    onCreate: { draft in
+                        showingNewWorktree = false
+                        Task {
+                            do {
+                                try await state.createWorkspace(
+                                    name: draft.name,
+                                    baseRef: draft.baseRef,
+                                    startWith: draft.startWith,
+                                    firstPrompt: draft.firstPrompt,
+                                    codexOptions: draft.codexOptions
+                                )
+                                state.showWorkspaces = false
+                            } catch {
+                                state.showTransientError("Failed to create worktree: \(error.localizedDescription)")
+                            }
+                        }
+                    }
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+    }
+}
+
+private struct WorkspaceSwitcherRow: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+
+    private var sessions: [SessionInfo] {
+        state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" }
+    }
+
+    private var isActive: Bool { state.activeWorkspacePath == workspace.path }
+
+    var body: some View {
+        Button {
+            Task {
+                await state.activateWorkspace(workspace.path)
+                state.showWorkspaces = false
+            }
+        } label: {
+            HStack(spacing: 11) {
+                Circle()
+                    .fill(isActive ? OrionTheme.accentBlue : sessions.isEmpty ? OrionTheme.border : OrionTheme.accentGreen)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: isActive ? OrionTheme.accentBlue.opacity(0.45) : .clear, radius: 5)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(workspace.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                            .lineLimit(1)
+                        if workspace.isMain {
+                            Text("MAIN")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(OrionTheme.accentBlue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(OrionTheme.accentBlue.opacity(0.15))
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        }
+                    }
+                    Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(sessions.isEmpty ? "idle" : "\(sessions.count)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 58)
+            .background(isActive ? OrionTheme.bgSurface : OrionTheme.bgSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isActive ? OrionTheme.accentBlue.opacity(0.24) : OrionTheme.borderDim, lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -238,6 +1646,8 @@ struct WorkspaceSection: View {
     let workspace: Workspace
     @State private var serverStatuses: [ServerStatus] = []
     @State private var loadingServers = false
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
 
     // Non-server sessions only (shells, agents)
     private var sessions: [SessionInfo] {
@@ -267,13 +1677,18 @@ struct WorkspaceSection: View {
                     }
                     state.showWorkspaces = false
                 } label: {
-                    HStack(spacing: 8) {
-                        Text(sessionIcon(session.type)).font(.system(size: 14))
-                            .foregroundStyle(sessionColor(session.type))
-                        Text(session.label).font(.system(size: 14)).foregroundStyle(OrionTheme.textPrimary)
+                    HStack(spacing: 10) {
+                        AgentSigilView(sessionIconID(session), size: 26)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.label).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
+                            Text(session.type.replacingOccurrences(of: "-chat", with: " chat"))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                        }
                         Spacer()
                         Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(OrionTheme.textDim)
                     }
+                    .padding(.vertical, 3)
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -283,22 +1698,38 @@ struct WorkspaceSection: View {
                     }
                 }
                 .listRowBackground(OrionTheme.bgSurface)
+                .listRowSeparator(.hidden)
             }
 
             // Only show running servers
             ForEach(runningServers) { srv in
-                HStack(spacing: 8) {
-                    Circle().fill(OrionTheme.accentGreen).frame(width: 7, height: 7)
-                    Text(srv.name.capitalized).font(.system(size: 14)).foregroundStyle(OrionTheme.textPrimary)
+                HStack(spacing: 10) {
+                    AgentSigilView("server", size: 24)
+                    Text(srv.name.capitalized).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
                     Spacer()
                     Text(":\(srv.port)").font(.system(size: 12, design: .monospaced)).foregroundStyle(OrionTheme.textDim)
                 }
                 .listRowBackground(OrionTheme.bgSurface)
+                .listRowSeparator(.hidden)
             }
 
             // Actions row: New session menu + server controls
             HStack(spacing: 10) {
                 Menu {
+                    if !state.agentTypes.isEmpty {
+                        ForEach(state.agentTypes) { agent in
+                            Button {
+                                Task {
+                                    _ = try? await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
+                                    state.showWorkspaces = false
+                                }
+                            } label: {
+                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
+                            }
+                        }
+                        Divider()
+                    }
+
                     Button {
                         Task {
                             try? await state.launchShell(workspacePath: workspace.path)
@@ -306,38 +1737,6 @@ struct WorkspaceSection: View {
                         }
                     } label: {
                         Label("Shell", systemImage: "terminal")
-                    }
-
-                    Button {
-                        Task {
-                            try? await state.launchCodexChat(workspacePath: workspace.path)
-                            state.showWorkspaces = false
-                        }
-                    } label: {
-                        Label("Codex Chat", systemImage: "bubble.left.and.bubble.right")
-                    }
-
-                    Button {
-                        Task {
-                            try? await state.launchClaudeChat(workspacePath: workspace.path)
-                            state.showWorkspaces = false
-                        }
-                    } label: {
-                        Label("Claude Chat", systemImage: "bubble.left.and.bubble.right.fill")
-                    }
-
-                    if !state.agentTypes.isEmpty {
-                        Divider()
-                        ForEach(state.agentTypes) { agent in
-                            Button {
-                                Task {
-                                    try? await state.launchAgent(workspacePath: workspace.path, agentType: agent.name)
-                                    state.showWorkspaces = false
-                                }
-                            } label: {
-                                Label(agent.label, systemImage: agentIcon(agent.name))
-                            }
-                        }
                     }
                 } label: {
                     Label("New", systemImage: "plus").font(.system(size: 13))
@@ -369,6 +1768,7 @@ struct WorkspaceSection: View {
                 }
             }
             .listRowBackground(OrionTheme.bgSurface)
+            .listRowSeparator(.hidden)
         } header: {
             Button {
                 Task {
@@ -376,11 +1776,24 @@ struct WorkspaceSection: View {
                     state.showWorkspaces = false
                 }
             } label: {
-                HStack(spacing: 6) {
-                    Text(workspace.name).font(.system(size: 13, weight: .semibold))
-                    if workspace.isMain {
-                        Text("MAIN").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(OrionTheme.accentBlue).foregroundStyle(.black).clipShape(RoundedRectangle(cornerRadius: 3))
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isActiveWorkspace ? OrionTheme.accentBlue : openTabCount > 0 ? OrionTheme.accentGreen : OrionTheme.border)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: isActiveWorkspace ? OrionTheme.accentBlue.opacity(0.45) : .clear, radius: 5)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(workspace.name).font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            if workspace.isMain {
+                                Text("MAIN").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(OrionTheme.accentBlue.opacity(0.16)).foregroundStyle(OrionTheme.accentBlue).clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                        }
+                        Text(workspace.branch.isEmpty ? workspace.name : workspace.branch)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .lineLimit(1)
                     }
                     Spacer()
                     if openTabCount > 0 {
@@ -388,28 +1801,586 @@ struct WorkspaceSection: View {
                             .font(.system(size: 11))
                             .foregroundStyle(OrionTheme.textDim)
                     }
-                    if !workspace.branch.isEmpty {
-                        Text(workspace.branch).font(.system(size: 11)).foregroundStyle(OrionTheme.textDim)
-                    }
                     Image(systemName: isActiveWorkspace ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 13))
-                        .foregroundStyle(isActiveWorkspace ? OrionTheme.accentGreen : OrionTheme.textDim)
+                        .foregroundStyle(isActiveWorkspace ? OrionTheme.accentBlue : OrionTheme.textDim)
                 }
+                .padding(.vertical, 4)
             }
             .buttonStyle(.plain)
         }
         .onAppear { Task { serverStatuses = await state.getServerStatuses(workspace: workspace) } }
+        .sheet(isPresented: $showingCodexOptions) {
+            CodexLaunchOptionsSheet(
+                workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                options: $codexOptions,
+                onCancel: { showingCodexOptions = false },
+                onLaunch: {
+                    let selected = codexOptions
+                    showingCodexOptions = false
+                    Task {
+                        _ = try? await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                        state.showWorkspaces = false
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+private struct NewWorktreeDraft {
+    var name = ""
+    var baseRef: String
+    var startWith = "codex-chat"
+    var firstPrompt = ""
+    var codexOptions = CodexLaunchOptions()
+}
+
+private struct NewWorktreeSheet: View {
+    let baseRefs: [String]
+    let onCancel: () -> Void
+    let onCreate: (NewWorktreeDraft) -> Void
+    @State private var draft: NewWorktreeDraft
+
+    private let starts = [
+        ("codex-chat", "Codex Chat"),
+        ("claude-chat", "Claude Chat"),
+        ("codex", "Codex CLI"),
+        ("claude", "Claude CLI"),
+        ("shell", "Shell"),
+        ("none", "Nothing")
+    ]
+
+    init(baseRefs: [String], onCancel: @escaping () -> Void, onCreate: @escaping (NewWorktreeDraft) -> Void) {
+        let refs = baseRefs.isEmpty ? ["main"] : baseRefs
+        self.baseRefs = refs
+        self.onCancel = onCancel
+        self.onCreate = onCreate
+        _draft = State(initialValue: NewWorktreeDraft(baseRef: refs[0]))
+    }
+
+    private var normalizedName: String {
+        normalizedWorktreeName(draft.name)
+    }
+
+    private var canCreate: Bool {
+        !normalizedName.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("fix-stripe-webhook", text: $draft.name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 15, design: .monospaced))
+                    Text(normalizedName.isEmpty ? "Use lowercase letters, numbers, dots, underscores, and dashes." : "New branch: \(normalizedName)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                }
+
+                Section("Branch from") {
+                    Picker("Base", selection: $draft.baseRef) {
+                        ForEach(baseRefs, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+
+                Section("Start with") {
+                    Picker("Session", selection: $draft.startWith) {
+                        ForEach(starts, id: \.0) { item in
+                            Text(item.1).tag(item.0)
+                        }
+                    }
+                    if draft.startWith == "codex-chat" {
+                        Picker("Model", selection: $draft.codexOptions.model) {
+                            ForEach(["", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"], id: \.self) {
+                                Text(modelLabel($0)).tag($0)
+                            }
+                        }
+                        Picker("Reasoning", selection: $draft.codexOptions.reasoningEffort) {
+                            ForEach(["low", "medium", "high", "xhigh"], id: \.self) {
+                                Text(reasoningLabel($0)).tag($0)
+                            }
+                        }
+                    }
+                }
+
+                Section("First prompt") {
+                    TextEditor(text: $draft.firstPrompt)
+                        .frame(minHeight: 110)
+                        .font(.system(size: 14))
+                        .disabled(draft.startWith != "codex-chat" && draft.startWith != "claude-chat")
+                    Text("Sent automatically when the worktree starts with a chat session.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(OrionTheme.textDim)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("New worktree")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Create") {
+                        var normalized = draft
+                        normalized.name = normalizedName
+                        onCreate(normalized)
+                    }
+                    .disabled(!canCreate)
+                    .foregroundStyle(canCreate ? OrionTheme.accentBlue : OrionTheme.textDim)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+        }
+    }
+}
+
+private struct DiffReviewSheet: View {
+    @Environment(AppState.self) private var state
+    @State private var files: [GitChangedFile] = []
+    @State private var selectedIndex = 0
+    @State private var rawDiff = ""
+    @State private var loading = false
+    @State private var baseMode = "uncommitted"
+
+    private var baseRef: String {
+        baseMode == "main" ? (state.projectInfo?.mainBranch ?? "main") : ""
+    }
+
+    private var selectedFile: GitChangedFile? {
+        guard !files.isEmpty else { return nil }
+        return files[min(selectedIndex, files.count - 1)]
+    }
+
+    private var diffLines: [MobileDiffLine] {
+        parseMobileDiff(rawDiff)
+    }
+
+    private var counts: (added: Int, removed: Int) {
+        diffLines.reduce((0, 0)) { partial, line in
+            switch line.kind {
+            case .add: return (partial.0 + 1, partial.1)
+            case .delete: return (partial.0, partial.1 + 1)
+            default: return partial
+            }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Review base", selection: $baseMode) {
+                    Text("Uncommitted").tag("uncommitted")
+                    Text("vs \(state.projectInfo?.mainBranch ?? "main")").tag("main")
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+
+                if files.isEmpty && !loading {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 30))
+                            .foregroundStyle(OrionTheme.accentGreen)
+                        Text("No changes")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                        Text(state.activeWorkspace.map(workspaceReviewSubtitle) ?? "Pick a workspace to review.")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                    Spacer()
+                } else {
+                    diffHeader
+                    fileStrip
+                    diffBody
+                    diffFooter
+                }
+            }
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Diff review")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { state.showDiffReview = false }
+                        .foregroundStyle(OrionTheme.accentBlue)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await loadFiles() } } label: {
+                        if loading {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .foregroundStyle(OrionTheme.accentBlue)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+            .task { await loadFiles() }
+            .onChange(of: baseMode) { _, _ in Task { await loadFiles() } }
+        }
+    }
+
+    private var diffHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(files.isEmpty ? "0 files" : "\(min(selectedIndex + 1, files.count)) of \(files.count) files")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .textCase(.uppercase)
+                    Text(selectedFile?.path ?? "Loading")
+                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                HStack(spacing: 7) {
+                    Text("+\(counts.added)").foregroundStyle(OrionTheme.accentGreen)
+                    Text("-\(counts.removed)").foregroundStyle(OrionTheme.accentRed)
+                }
+                .font(.system(size: 12, design: .monospaced))
+            }
+
+            HStack(spacing: 10) {
+                AgentSigilView("codex-chat", size: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(baseMode == "main" ? "Branch review" : "Workspace changes")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(state.activeWorkspace.map(workspaceReviewSubtitle) ?? "Active workspace")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(selectedFile?.statusText ?? "")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .foregroundStyle(statusColor(selectedFile?.status ?? ""))
+                    .background(statusColor(selectedFile?.status ?? "").opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+
+    private var fileStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(files.enumerated()), id: \.element.path) { index, file in
+                    Button {
+                        selectedIndex = index
+                        Task { await loadDiff(file: file) }
+                    } label: {
+                        HStack(spacing: 7) {
+                            Text(file.status)
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(statusColor(file.status))
+                            Text((file.path as NSString).lastPathComponent)
+                                .font(.system(size: 12, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(index == selectedIndex ? OrionTheme.accentBlue.opacity(0.16) : OrionTheme.bgSurface)
+                        .foregroundStyle(index == selectedIndex ? OrionTheme.textPrimary : OrionTheme.textSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(index == selectedIndex ? OrionTheme.accentBlue.opacity(0.5) : OrionTheme.borderDim, lineWidth: 0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+        }
+    }
+
+    private var diffBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if loading {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 28)
+                } else if diffLines.isEmpty {
+                    Text("(no textual diff)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                } else {
+                    ForEach(Array(diffLines.enumerated()), id: \.offset) { _, line in
+                        diffLine(line)
+                    }
+                }
+            }
+            .background(OrionTheme.bgTerminal)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var diffFooter: some View {
+        HStack(spacing: 10) {
+            Button("Previous") {
+                let nextIndex = max(selectedIndex - 1, 0)
+                selectedIndex = nextIndex
+                Task { await loadDiff(file: files[nextIndex]) }
+            }
+            .disabled(selectedIndex == 0)
+            Spacer()
+            Button("Next file") {
+                let nextIndex = min(selectedIndex + 1, max(files.count - 1, 0))
+                selectedIndex = nextIndex
+                Task { await loadDiff(file: files[nextIndex]) }
+            }
+            .disabled(files.isEmpty || selectedIndex >= files.count - 1)
+            .buttonStyle(.borderedProminent)
+            .tint(OrionTheme.accentBlue)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 18)
+        .background(OrionTheme.bgSecondary)
+        .overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
+    }
+
+    private func diffLine(_ line: MobileDiffLine) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(line.kind.sign)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: 22)
+                .foregroundStyle(line.kind.foreground)
+            Text(line.text.isEmpty ? " " : line.text)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(line.kind == .context ? OrionTheme.textSecondary : OrionTheme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(nil)
+        }
+        .padding(.vertical, line.kind == .hunk ? 7 : 2)
+        .padding(.horizontal, 8)
+        .background(line.kind.background)
+    }
+
+    private func loadFiles() async {
+        loading = true
+        defer { loading = false }
+        do {
+            files = try await state.changedFiles(base: baseRef)
+            selectedIndex = min(selectedIndex, max(files.count - 1, 0))
+            await loadDiff()
+        } catch {
+            files = []
+            rawDiff = ""
+            state.showTransientError("Failed to load diff: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadDiff(file explicitFile: GitChangedFile? = nil) async {
+        guard let file = explicitFile ?? selectedFile else {
+            rawDiff = ""
+            return
+        }
+        do {
+            rawDiff = try await state.unifiedDiff(for: file, base: baseRef)
+        } catch {
+            rawDiff = ""
+        }
+    }
+}
+
+private struct CodexLaunchOptionsSheet: View {
+    let workspaceName: String
+    @Binding var options: CodexLaunchOptions
+    let onCancel: () -> Void
+    let onLaunch: () -> Void
+
+    private let models = ["", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+    private let efforts = ["low", "medium", "high", "xhigh"]
+    private let approvals = ["never", "on-request", "on-failure", "untrusted"]
+    private let sandboxes = ["danger-full-access", "workspace-write", "read-only"]
+    private let modes = ["default", "plan"]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Model", selection: $options.model) {
+                        ForEach(models, id: \.self) { Text(modelLabel($0)).tag($0) }
+                    }
+                    Picker("Reasoning", selection: $options.reasoningEffort) {
+                        ForEach(efforts, id: \.self) { Text(reasoningLabel($0)).tag($0) }
+                    }
+                    Picker("Approvals", selection: $options.approvalPolicy) {
+                        ForEach(approvals, id: \.self) { Text(approvalPickerLabel($0)).tag($0) }
+                    }
+                    Picker("Sandbox", selection: $options.sandboxMode) {
+                        ForEach(sandboxes, id: \.self) { Text(sandboxPickerLabel($0)).tag($0) }
+                    }
+                    Picker("Mode", selection: $options.collaborationMode) {
+                        ForEach(modes, id: \.self) { Text($0 == "plan" ? "Plan first" : "Default").tag($0) }
+                    }
+                } header: {
+                    Text(workspaceName)
+                } footer: {
+                    Text("These options are sent when the Codex app-server thread starts.")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrionTheme.bgPrimary)
+            .navigationTitle("Codex Chat")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Start", action: onLaunch)
+                        .fontWeight(.semibold)
+                }
+            }
+            .toolbarBackground(OrionTheme.bgSecondary, for: .navigationBar)
+        }
     }
 }
 
 // MARK: - Tabs
 
+private enum NewSessionMenuStyle {
+    case tabBar
+    case prominent
+}
+
+private struct NewSessionMenu: View {
+    @Environment(AppState.self) private var state
+    let workspace: Workspace
+    var style: NewSessionMenuStyle = .tabBar
+    @State private var showingCodexOptions = false
+    @State private var codexOptions = CodexLaunchOptions()
+
+    var body: some View {
+        Menu {
+            if !state.agentTypes.isEmpty {
+                ForEach(state.agentTypes) { agent in
+                    Button {
+                        Task { await launch { _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent) } }
+                    } label: {
+                        Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
+                    }
+                }
+                Divider()
+            }
+            Button {
+                Task { await launch { try await state.launchShell(workspacePath: workspace.path) } }
+            } label: {
+                Label("Shell", systemImage: "terminal")
+            }
+        } label: {
+            menuLabel
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingCodexOptions) {
+            CodexLaunchOptionsSheet(
+                workspaceName: workspace.branch.isEmpty ? workspace.name : workspace.branch,
+                options: $codexOptions,
+                onCancel: { showingCodexOptions = false },
+                onLaunch: {
+                    let selected = codexOptions
+                    showingCodexOptions = false
+                    Task {
+                        await launch {
+                            _ = try await state.launchCodexChat(workspacePath: workspace.path, options: selected)
+                        }
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private var menuLabel: some View {
+        switch style {
+        case .tabBar:
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OrionTheme.textPrimary)
+                .frame(width: 34, height: 30)
+                .background(OrionTheme.bgSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+        case .prominent:
+            Label("New session", systemImage: "plus")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(hex: 0x18233A))
+                .padding(.horizontal, 17)
+                .frame(height: 38)
+                .background(OrionTheme.accentBlue)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    private func launch(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            state.showWorkspaces = false
+        } catch {
+            state.showTransientError("Failed to start session: \(error.localizedDescription)")
+        }
+    }
+}
+
 struct TabStrip: View {
     @Environment(AppState.self) private var state
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) { ForEach(state.visibleTabs) { tab in TabPill(tab: tab, isActive: tab.id == state.activeTabId) } }
-        }.frame(height: 36).background(OrionTheme.bgSecondary).overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
+        HStack(spacing: 7) {
+            if let workspace = state.activeWorkspace {
+                NewSessionMenu(workspace: workspace, style: .tabBar)
+            } else {
+                Button { state.showWorkspaces = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(width: 34, height: 30)
+                }
+                .buttonStyle(.plain)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if state.visibleTabs.isEmpty {
+                        Text(state.activeWorkspace?.name ?? "Workspace")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .frame(height: 30)
+                    } else {
+                        ForEach(state.visibleTabs) { tab in
+                            TabPill(tab: tab, isActive: tab.id == state.activeTabId)
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 44)
+        .background(OrionTheme.bgSecondary)
+        .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
     }
 }
 
@@ -419,10 +2390,17 @@ struct TabPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Button { state.activateTab(tab.id) } label: {
-                Text(tab.label).font(.system(size: 13)).foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
-                    .padding(.leading, 16)
-                    .padding(.trailing, 2)
-                    .frame(height: 36)
+                HStack(spacing: 7) {
+                    AgentSigilView(tab.icon ?? tab.type, size: 20)
+                    Text(tab.label)
+                        .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                        .foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
+                        .lineLimit(1)
+                        .frame(maxWidth: 130, alignment: .leading)
+                }
+                .padding(.leading, 4)
+                .padding(.trailing, 6)
+                .frame(height: 30)
             }
             .buttonStyle(.plain)
             if isConvertibleSession(tab.type) {
@@ -434,7 +2412,7 @@ struct TabPill: View {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(OrionTheme.textDim)
-                        .frame(width: 24, height: 36)
+                        .frame(width: 22, height: 30)
                 }
                 .buttonStyle(.plain)
             }
@@ -442,14 +2420,15 @@ struct TabPill: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(OrionTheme.textDim)
-                    .frame(width: 24, height: 36)
-                    .padding(.trailing, 8)
+                    .frame(width: 22, height: 30)
+                    .padding(.trailing, 6)
             }
             .buttonStyle(.plain)
         }
-        .frame(height: 36)
-        .background(isActive ? OrionTheme.bgPrimary : .clear)
-        .overlay(alignment: .trailing) { OrionTheme.borderDim.frame(width: 0.5) }
+        .frame(height: 30)
+        .background(isActive ? OrionTheme.bgSurface : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(isActive ? OrionTheme.borderDim : .clear, lineWidth: 0.7))
     }
 }
 
@@ -466,6 +2445,23 @@ func sessionIcon(_ type: String) -> String {
     }
 }
 
+func sessionLabel(_ type: String) -> String {
+    switch type {
+    case "claude": return "Claude CLI"
+    case "claude-chat": return "Claude chat"
+    case "codex-chat": return "Codex chat"
+    case "codex": return "Codex CLI"
+    case "server": return "Server"
+    case "shell": return "Shell"
+    default: return type.replacingOccurrences(of: "-", with: " ")
+    }
+}
+
+func sessionIconID(_ session: SessionInfo?) -> String {
+    guard let session else { return "codex" }
+    return session.icon ?? session.provider ?? session.type
+}
+
 func isConvertibleSession(_ type: String) -> Bool {
     type == "claude" || type == "codex" || type == "claude-chat" || type == "codex-chat"
 }
@@ -475,6 +2471,141 @@ func agentIcon(_ name: String) -> String {
     case "claude": return "diamond.fill"
     case "codex":  return "diamond"
     default:       return "sparkles"
+    }
+}
+
+private func workspaceBaseRefs(mainBranch: String?, workspaces: [Workspace]) -> [String] {
+    var refs: [String] = []
+    func append(_ value: String?) {
+        guard let value else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "(detached)", !refs.contains(trimmed) else { return }
+        refs.append(trimmed)
+    }
+    append(mainBranch)
+    workspaces.forEach { append($0.branch) }
+    if refs.isEmpty { refs.append("main") }
+    return refs
+}
+
+private func normalizedWorktreeName(_ name: String) -> String {
+    let lowercased = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    var output = ""
+    var previousWasDash = false
+    for scalar in lowercased.unicodeScalars {
+        let isAllowed = CharacterSet.alphanumerics.contains(scalar) || scalar == "." || scalar == "_" || scalar == "-"
+        if isAllowed {
+            output.unicodeScalars.append(scalar)
+            previousWasDash = scalar == "-"
+        } else if !previousWasDash {
+            output.append("-")
+            previousWasDash = true
+        }
+    }
+    return output.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+}
+
+private func workspaceReviewSubtitle(_ workspace: Workspace) -> String {
+    if workspace.isMain { return "Main workspace" }
+    if !workspace.branch.isEmpty { return workspace.branch }
+    return workspace.name
+}
+
+private func shortThreadLabel(_ threadId: String) -> String {
+    let trimmed = threadId.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.count <= 12 { return trimmed }
+    return String(trimmed.prefix(8))
+}
+
+private func relativeTimeLabel(_ value: String) -> String {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let standard = ISO8601DateFormatter()
+    let date = fractional.date(from: value) ?? standard.date(from: value)
+    guard let date else { return "" }
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter.localizedString(for: date, relativeTo: Date())
+}
+
+private struct MobileDiffLine {
+    let kind: MobileDiffKind
+    let text: String
+}
+
+private enum MobileDiffKind: Equatable {
+    case add
+    case delete
+    case context
+    case hunk
+
+    var sign: String {
+        switch self {
+        case .add: return "+"
+        case .delete: return "-"
+        case .hunk: return "@"
+        case .context: return " "
+        }
+    }
+
+    var foreground: Color {
+        switch self {
+        case .add: return OrionTheme.accentGreen
+        case .delete: return OrionTheme.accentRed
+        case .hunk: return OrionTheme.accentBlue
+        case .context: return OrionTheme.textDim
+        }
+    }
+
+    var background: Color {
+        switch self {
+        case .add: return OrionTheme.accentGreen.opacity(0.10)
+        case .delete: return OrionTheme.accentRed.opacity(0.10)
+        case .hunk: return OrionTheme.bgSecondary
+        case .context: return .clear
+        }
+    }
+}
+
+private func parseMobileDiff(_ raw: String) -> [MobileDiffLine] {
+    raw.split(separator: "\n", omittingEmptySubsequences: false).compactMap { part in
+        let line = String(part)
+        if line.hasPrefix("diff --git") || line.hasPrefix("index ") || line.hasPrefix("--- ") || line.hasPrefix("+++ ") {
+            return nil
+        }
+        if line.hasPrefix("@@") {
+            return MobileDiffLine(kind: .hunk, text: line)
+        }
+        if line.hasPrefix("+") {
+            return MobileDiffLine(kind: .add, text: String(line.dropFirst()))
+        }
+        if line.hasPrefix("-") {
+            return MobileDiffLine(kind: .delete, text: String(line.dropFirst()))
+        }
+        return MobileDiffLine(kind: .context, text: line.hasPrefix(" ") ? String(line.dropFirst()) : line)
+    }
+}
+
+private func countDiffChanges(_ raw: String) -> DiffStats {
+    raw.split(separator: "\n", omittingEmptySubsequences: false).reduce(DiffStats()) { partial, part in
+        let line = String(part)
+        var next = partial
+        if line.hasPrefix("+"), !line.hasPrefix("+++ ") {
+            next.added += 1
+        } else if line.hasPrefix("-"), !line.hasPrefix("--- ") {
+            next.removed += 1
+        }
+        return next
+    }
+}
+
+private func statusColor(_ status: String) -> Color {
+    switch status {
+    case "A": return OrionTheme.accentGreen
+    case "D": return OrionTheme.accentRed
+    case "R": return OrionTheme.accentBlue
+    case "M": return OrionTheme.accentYellow
+    default: return OrionTheme.textDim
     }
 }
 
@@ -499,6 +2630,60 @@ private struct CodexChatRow: Identifiable {
     let toolUseId: String?
     let planPath: String?
     let attachments: [ChatAttachmentPayload]
+    var resultText: String?
+    var resultDetails: String?
+    var toolStatus: String?
+    var permissionState: String? = nil
+    var planState: String? = nil
+    var answerText: String? = nil
+}
+
+private struct StructuredQuestionPayload: Decodable {
+    let questions: [StructuredQuestion]
+}
+
+private struct StructuredQuestion: Decodable, Identifiable {
+    let question: String
+    let header: String?
+    let multiSelect: Bool?
+    let options: [StructuredQuestionOption]?
+
+    var id: String {
+        "\(header ?? "")|\(question)"
+    }
+}
+
+private struct StructuredQuestionOption: Decodable, Identifiable {
+    let label: String
+    let description: String?
+
+    var id: String {
+        "\(label)|\(description ?? "")"
+    }
+}
+
+private struct StructuredAnswerDraft {
+    var selections: [String: [String]] = [:]
+    var notes: [String: String] = [:]
+}
+
+private struct ChatSessionMetadata: Decodable {
+    let provider: String?
+    let viewMode: String?
+    let model: String?
+    let reasoningEffort: String?
+    let approvalPolicy: String?
+    let sandboxMode: String?
+    let permissionMode: String?
+    let collaborationMode: String?
+    let threadId: String?
+}
+
+private struct MobileLiveActivityItem: Identifiable {
+    let id: String
+    let kind: String
+    let label: String
+    let value: String?
 }
 
 private struct PendingChatImage: Identifiable {
@@ -513,80 +2698,139 @@ private struct PendingChatImage: Identifiable {
     }
 }
 
+private struct ChatBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct CompactChatChip: View {
+    let title: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(tint)
+                .frame(width: 5, height: 5)
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(OrionTheme.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(OrionTheme.bgPrimary.opacity(0.55))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.5))
+    }
+}
+
 struct CodexChatView: View {
     @Environment(AppState.self) private var state
     let connection: CodexChatConnection
     @State private var input = ""
     @State private var answers: [String: String] = [:]
+    @State private var submittedAnswers: [String: String] = [:]
+    @State private var structuredAnswerDrafts: [String: StructuredAnswerDraft] = [:]
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var pendingImages: [PendingChatImage] = []
     @State private var isLoadingPhotos = false
     @State private var expandedPlan: CodexChatRow?
     @State private var dismissedKeyboardDuringDrag = false
+    @State private var chatIsNearBottom = true
+    @State private var didInitialChatScroll = false
     @FocusState private var composerFocused: Bool
 
     private let chatBottomID = "chat-bottom"
+    private let chatScrollCoordinateSpace = "codex-chat-scroll"
     private var assistantName: String { connection.displayName }
-    private var assistantAvatar: String { connection.avatar }
     private var assistantColor: Color { sessionColor(connection.sessionType) }
+    private var sessionMetadata: ChatSessionMetadata? { chatSessionMetadata(connection.messages) }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(assistantName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(OrionTheme.textPrimary)
-                    Text(statusLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(OrionTheme.textDim)
-                }
-                Spacer()
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(connection.connectionState == .connected ? OrionTheme.accentGreen : OrionTheme.textDim)
-                        .frame(width: 7, height: 7)
-                    Text(connection.connectionState == .connected ? "Online" : "Offline")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(connection.connectionState == .connected ? OrionTheme.textSecondary : OrionTheme.textDim)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 52)
+            compactHeader
+                .padding(.horizontal, 12)
+                .frame(height: 42)
             .background(OrionTheme.bgSecondary)
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        if chatRows.isEmpty {
-                            Text("Ask \(assistantName) to inspect, edit, or explain this workspace.")
-                                .font(.system(size: 14))
-                                .foregroundStyle(OrionTheme.textDim)
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 120)
+                GeometryReader { scrollGeometry in
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 14) {
+                                if chatRows.isEmpty {
+                                    Text("Ask \(assistantName) to inspect, edit, or explain this workspace.")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(OrionTheme.textDim)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.top, 120)
+                                }
+                                ForEach(chatRows) { row in
+                                    chatRow(row)
+                                        .id(row.id)
+                                }
+                                GeometryReader { bottomProxy in
+                                    Color.clear
+                                        .preference(
+                                            key: ChatBottomPreferenceKey.self,
+                                            value: bottomProxy.frame(in: .named(chatScrollCoordinateSpace)).maxY
+                                        )
+                                }
+                                .frame(height: 1)
+                                .id(chatBottomID)
+                            }
+                            .padding(14)
                         }
-                        ForEach(chatRows) { row in
-                            chatRow(row)
-                                .id(row.id)
+                        .coordinateSpace(name: chatScrollCoordinateSpace)
+                        .scrollDismissesKeyboard(.interactively)
+                        .simultaneousGesture(keyboardDismissGesture)
+                        .background(OrionTheme.bgTerminal)
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            composer
                         }
-                        Color.clear
-                            .frame(height: 1)
-                            .id(chatBottomID)
+                        .onPreferenceChange(ChatBottomPreferenceKey.self) { bottomY in
+                            let viewportBottom = scrollGeometry.size.height
+                            chatIsNearBottom = bottomY <= viewportBottom + 96
+                        }
+                        .onAppear {
+                            didInitialChatScroll = true
+                            scrollToChatBottom(proxy, delay: 0.08, animated: false)
+                        }
+                        .onChange(of: connection.messages.count) { _, _ in
+                            guard chatIsNearBottom || !didInitialChatScroll else { return }
+                            didInitialChatScroll = true
+                            scrollToChatBottom(proxy)
+                        }
+
+                        if !chatIsNearBottom {
+                            Button {
+                                chatIsNearBottom = true
+                                scrollToChatBottom(proxy)
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "arrow.down")
+                                        .font(.system(size: 11, weight: .bold))
+                                    Text("Latest")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .foregroundStyle(OrionTheme.textPrimary)
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 7)
+                                .background(OrionTheme.bgSurface.opacity(0.94))
+                                .overlay(Capsule().stroke(OrionTheme.border, lineWidth: 0.6))
+                                .clipShape(Capsule())
+                                .shadow(color: .black.opacity(0.22), radius: 10, y: 4)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 16)
+                            .padding(.bottom, 98)
+                        }
                     }
-                    .padding(14)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(keyboardDismissGesture)
-                .background(OrionTheme.bgTerminal)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    composer
-                }
-                .onChange(of: connection.messages.count) { _, _ in
-                    scrollToChatBottom(proxy)
                 }
             }
         }
@@ -596,15 +2840,61 @@ struct CodexChatView: View {
                 assistantName: assistantName,
                 accentColor: assistantColor,
                 onClose: { expandedPlan = nil },
+                onReviewDiff: {
+                    expandedPlan = nil
+                    state.showDiffReview = true
+                },
                 onApprove: {
+                    chatIsNearBottom = true
                     connection.approvePlan()
                     expandedPlan = nil
                 }
             )
         }
+        .onAppear {
+            connection.reconnectOrProbe()
+        }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await loadPhotoAttachments(items) }
+        }
+    }
+
+    private var compactHeader: some View {
+        HStack(spacing: 8) {
+            AgentSigilView(connection.sessionIcon, size: 24, strong: true)
+            Text(assistantName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OrionTheme.textPrimary)
+                .lineLimit(1)
+
+            if let mode = compactModeLabel(sessionMetadata) {
+                CompactChatChip(title: mode, tint: mode == "plan" ? OrionTheme.accentBlue : OrionTheme.textDim)
+            }
+
+            if let activity = liveActivityItems.first {
+                CompactChatChip(
+                    title: activity.value.map { "\(activity.label) \($0)" } ?? activity.label,
+                    tint: liveActivityColor(activity.kind)
+                )
+            } else {
+                Text(statusLabel)
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(connectionBadgeColor)
+                    .frame(width: 6, height: 6)
+                Text(connectionBadgeText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(connectionBadgeForeground)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -619,6 +2909,34 @@ struct CodexChatView: View {
             }
         }
         return "Ready"
+    }
+
+    private var connectionBadgeText: String {
+        if connection.queuedMessageCount > 0 {
+            return connection.queuedMessageCount == 1 ? "1 queued" : "\(connection.queuedMessageCount) queued"
+        }
+        switch connection.connectionState {
+        case .connected: return "Online"
+        case .reconnecting: return "Reconnecting"
+        case .failed: return "Reconnect"
+        case .disconnected: return "Offline"
+        }
+    }
+
+    private var connectionBadgeColor: Color {
+        if connection.queuedMessageCount > 0 { return OrionTheme.accentYellow }
+        switch connection.connectionState {
+        case .connected: return OrionTheme.accentGreen
+        case .reconnecting: return OrionTheme.accentYellow
+        case .failed: return OrionTheme.accentRed
+        case .disconnected: return OrionTheme.textDim
+        }
+    }
+
+    private var connectionBadgeForeground: Color {
+        connection.connectionState == .disconnected && connection.queuedMessageCount == 0
+            ? OrionTheme.textDim
+            : OrionTheme.textSecondary
     }
 
     private var isAssistantRunning: Bool {
@@ -638,12 +2956,101 @@ struct CodexChatView: View {
         mergeChatRows(connection.messages, assistantName: assistantName)
     }
 
+    private var liveActivityItems: [MobileLiveActivityItem] {
+        liveChatActivityItems(messages: connection.messages, rows: chatRows, assistantName: assistantName)
+    }
+
+    private func compactModeLabel(_ metadata: ChatSessionMetadata?) -> String? {
+        guard let metadata else { return nil }
+        let rawMode = (metadata.permissionMode ?? metadata.collaborationMode ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !rawMode.isEmpty, rawMode != "default" else { return nil }
+        if rawMode == "plan" { return "plan" }
+        if rawMode == "approved" { return "approved" }
+        return rawMode
+    }
+
+    @ViewBuilder
+    private func modeStrip(_ metadata: ChatSessionMetadata) -> some View {
+        let items: [(String, String?)] = [
+            ("model", metadata.model),
+            ("reasoning", metadata.reasoningEffort),
+            ("approvals", approvalLabel(metadata.approvalPolicy)),
+            ("sandbox", sandboxLabel(metadata.sandboxMode)),
+            ("mode", modeLabel(metadata.permissionMode ?? metadata.collaborationMode))
+        ]
+        let visible = items.compactMap { item -> (String, String)? in
+            let (label, value) = item
+            guard let value, !value.isEmpty else { return nil }
+            return (label, value)
+        }
+        if !visible.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(visible.enumerated()), id: \.offset) { _, item in
+                        HStack(spacing: 5) {
+                            Text(item.0)
+                                .foregroundStyle(OrionTheme.textDim)
+                            Text(item.1)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(OrionTheme.textSecondary)
+                        }
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 5)
+                        .background(OrionTheme.bgActive.opacity(0.72))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                }
+            }
+        }
+    }
+
+    private func liveActivityStrip(_ items: [MobileLiveActivityItem]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(items) { item in
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(liveActivityColor(item.kind))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: liveActivityColor(item.kind).opacity(0.35), radius: 4)
+                        Text(item.label)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .lineLimit(1)
+                        if let value = item.value, !value.isEmpty {
+                            Text(value)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(OrionTheme.bgPrimary.opacity(0.58))
+                    .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                    .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func chatRow(_ row: CodexChatRow) -> some View {
         if row.type == "plan" {
             planRow(row)
         } else if row.type == "loading" {
             loadingRow(row)
+        } else if row.type == "tool" {
+            toolRow(row)
+        } else if row.type == "thinking_delta" {
+            reasoningRow(row)
+        } else if row.type == "permission_request" {
+            permissionRow(row)
         } else if isActivityRow(row) {
             activityRow(row)
         } else if row.type == "user" {
@@ -659,13 +3066,7 @@ struct CodexChatView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             HStack(alignment: .bottom, spacing: 8) {
-                Text(assistantAvatar)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(OrionTheme.textPrimary)
-                    .frame(width: 24, height: 24)
-                    .background(assistantColor.opacity(0.18))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(assistantColor.opacity(0.35), lineWidth: 0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                AgentSigilView(connection.sessionIcon, size: 24)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(row.type == "permission_request" ? "\(assistantName) needs an answer" : assistantName)
                         .font(.system(size: 11))
@@ -679,14 +3080,13 @@ struct CodexChatView: View {
     }
 
     private func planRow(_ row: CodexChatRow) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Text(assistantAvatar)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(OrionTheme.textPrimary)
-                .frame(width: 24, height: 24)
-                .background(assistantColor.opacity(0.18))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(assistantColor.opacity(0.35), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        let markdown = row.details ?? row.text
+        let insights = planInsights(markdown)
+        let sections = planSections(markdown)
+        let isWaiting = row.planState != "approved"
+        let planTint = isWaiting ? OrionTheme.accentBlue : OrionTheme.accentGreen
+        return HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text("\(assistantName) has a plan")
                     .font(.system(size: 11))
@@ -694,42 +3094,84 @@ struct CodexChatView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Waiting for approval")
+                            Text(isWaiting ? "PLAN · WAITING FOR YOU" : "PLAN · APPROVED")
                                 .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(OrionTheme.textDim)
+                                .foregroundStyle(planTint)
                             Text(row.text.isEmpty ? "Plan ready" : row.text)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(OrionTheme.textPrimary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
-                        Text("Plan")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(OrionTheme.accentYellow)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(OrionTheme.accentYellow.opacity(0.55), lineWidth: 0.5))
+                        VStack(alignment: .trailing, spacing: 6) {
+                            Text(isWaiting ? "Plan" : "Approved")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(planTint)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .overlay(Capsule().stroke(planTint.opacity(0.45), lineWidth: 0.5))
+                            if insights.sections > 0 {
+                                Text("\(insights.sections) sections")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                            }
+                        }
                     }
 
-                    Text(planPreview(row.details ?? row.text))
-                        .font(.system(size: 13))
-                        .foregroundStyle(OrionTheme.textSecondary)
-                        .lineLimit(5)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !sections.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(sections.prefix(4), id: \.self) { section in
+                                    Text(section)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(OrionTheme.textSecondary)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(OrionTheme.accentBlue.opacity(0.08))
+                                        .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.18), lineWidth: 0.5))
+                                        .clipShape(Capsule())
+                                }
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(Array(planPreview(markdown).components(separatedBy: .newlines).filter { !$0.isEmpty }.prefix(4).enumerated()), id: \.offset) { _, line in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "circle")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(OrionTheme.accentBlue)
+                                    .frame(width: 20, height: 20)
+                                Text(cleanPlanPreviewLine(line))
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(OrionTheme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
 
                     HStack(spacing: 8) {
-                        Button("Review") { expandedPlan = row }
+                        Button("Review plan") { expandedPlan = row }
                             .buttonStyle(.bordered)
-                        Button("Approve and run") { connection.approvePlan() }
+                        Button("Review diff") { state.showDiffReview = true }
+                            .buttonStyle(.bordered)
+                    }
+                    if isWaiting {
+                        Button("Approve & run") {
+                            chatIsNearBottom = true
+                            connection.approvePlan()
+                        }
                             .buttonStyle(.borderedProminent)
                             .tint(OrionTheme.accentBlue)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
                 .padding(12)
                 .frame(maxWidth: 340, alignment: .leading)
-                .background(OrionTheme.accentYellow.opacity(0.08))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.accentYellow.opacity(0.55), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(planTint.opacity(0.28), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             Spacer(minLength: 22)
         }
@@ -737,14 +3179,8 @@ struct CodexChatView: View {
     }
 
     private func loadingRow(_ row: CodexChatRow) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Text(assistantAvatar)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(OrionTheme.textPrimary)
-                .frame(width: 24, height: 24)
-                .background(assistantColor.opacity(0.18))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(assistantColor.opacity(0.35), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        return HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionIcon, size: 24)
             VStack(alignment: .leading, spacing: 5) {
                 Text(assistantName)
                     .font(.system(size: 11))
@@ -768,8 +3204,419 @@ struct CodexChatView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func toolRow(_ row: CodexChatRow) -> some View {
+        let complete = row.toolStatus == "complete"
+        let output = row.resultText ?? row.resultDetails ?? ""
+        return HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionIcon, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(complete ? "Tool finished" : "Tool running")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 10) {
+                        Text(toolIcon(row.label))
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.accentGreen)
+                            .frame(width: 28, height: 28)
+                            .background(OrionTheme.accentGreen.opacity(0.13))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentGreen.opacity(0.28), lineWidth: 0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.label.isEmpty ? "Tool" : row.label)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            if let toolUseId = row.toolUseId {
+                                Text(shortID(toolUseId))
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                            }
+                        }
+                        Spacer()
+                        Text(complete ? "complete" : "running")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(complete ? OrionTheme.accentGreen : OrionTheme.accentBlue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .overlay(Capsule().stroke((complete ? OrionTheme.accentGreen : OrionTheme.accentBlue).opacity(0.42), lineWidth: 0.5))
+                    }
+                    .padding(12)
+
+                    if !row.text.isEmpty {
+                        Text(row.text)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(OrionTheme.bgTerminal.opacity(0.72))
+                    }
+
+                    if let details = row.details, !details.isEmpty {
+                        detailsView(details)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                    }
+
+                    if !output.isEmpty {
+                        DisclosureGroup {
+                            Text(prettyDetails(output))
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textSecondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 6)
+                        } label: {
+                            Text(toolLooksLikeCommand(row.label) ? "Output" : "Result")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                        }
+                        .tint(OrionTheme.textDim)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .top) { OrionTheme.borderDim.frame(height: 0.5) }
+                    }
+                }
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentGreen.opacity(0.24), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            Spacer(minLength: 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reasoningRow(_ row: CodexChatRow) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionIcon, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Reasoning")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                DisclosureGroup {
+                    Text(row.text.isEmpty ? "Reasoning in progress." : row.text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(OrionTheme.textSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(OrionTheme.accentPurple)
+                            .frame(width: 7, height: 7)
+                        Text(reasoningActivityTitle(row.text))
+                            .font(.system(size: 13))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                    }
+                }
+                .tint(OrionTheme.textDim)
+                .padding(12)
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OrionTheme.accentPurple.opacity(0.24), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            Spacer(minLength: 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func permissionRow(_ row: CodexChatRow) -> some View {
+        let state = row.permissionState ?? "waiting"
+        let resolved = state == "submitted" || state == "answered"
+        let accent = resolved ? OrionTheme.accentGreen : OrionTheme.accentYellow
+        let questions = structuredQuestions(from: row)
+        let toolUseId = row.toolUseId
+        let draft = toolUseId.flatMap { structuredAnswerDrafts[$0] } ?? StructuredAnswerDraft()
+        let structuredReady = !questions.isEmpty && structuredAnswerComplete(questions, draft: draft)
+        let structuredAnswer = !questions.isEmpty ? composeStructuredAnswer(questions, draft: draft) : ""
+        let questionText = row.text.isEmpty ? (row.details ?? "") : row.text
+        let titleText = questions.count == 1 ? (questions[0].header ?? row.label) : row.label
+        let subtitleText: String = {
+            if !questions.isEmpty {
+                return questions.count == 1 ? questions[0].question : "\(questions.count) questions need your answer."
+            }
+            return questionText.isEmpty ? "The session is waiting for your answer." : questionText
+        }()
+        let answerDisplay: String = {
+            if let id = row.toolUseId, let optimistic = submittedAnswers[id], !optimistic.isEmpty {
+                return optimistic
+            }
+            if let stored = row.answerText, !stored.isEmpty { return stored }
+            return state == "answered" ? "Answer delivered." : "Waiting for the session to continue."
+        }()
+        return HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(connection.sessionIcon, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(resolved ? "\(assistantName) answered" : "\(assistantName) needs input")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Text(resolved ? "✓" : "?")
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(accent)
+                            .frame(width: 28, height: 28)
+                            .background(accent.opacity(0.13))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(accent.opacity(0.34), lineWidth: 0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(titleText.isEmpty ? "Question" : titleText)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                            if !resolved {
+                                Text(subtitleText)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(OrionTheme.textDim)
+                                    .lineLimit(2)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    if resolved {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !questions.isEmpty {
+                                structuredQuestionList(questions, toolUseId: nil, draft: StructuredAnswerDraft(), disabled: true)
+                            } else if !questionText.isEmpty {
+                                qaBlock(label: "Question", text: questionText, color: OrionTheme.textSecondary, accent: nil)
+                            }
+                            qaBlock(label: "Your answer", text: answerDisplay, color: OrionTheme.textPrimary, accent: accent)
+                        }
+                    } else {
+                        if !questions.isEmpty {
+                            structuredQuestionList(questions, toolUseId: toolUseId, draft: draft, disabled: false)
+                        } else {
+                            Text(row.details ?? row.text)
+                                .font(.system(size: 13))
+                                .foregroundStyle(OrionTheme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let toolUseId = row.toolUseId {
+                            if questions.isEmpty {
+                                HStack(alignment: .bottom, spacing: 8) {
+                                    TextField("Answer \(assistantName)...", text: Binding(
+                                        get: { answers[toolUseId] ?? "" },
+                                        set: { answers[toolUseId] = $0 }
+                                    ), axis: .vertical)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(OrionTheme.textPrimary)
+                                    .padding(8)
+                                    .background(OrionTheme.bgPrimary)
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(OrionTheme.border, lineWidth: 0.5))
+
+                                    Button("Send") {
+                                        let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                        guard !text.isEmpty else { return }
+                                        submitAnswer(toolUseId: toolUseId, text: text)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(OrionTheme.accentBlue)
+                                }
+                            } else {
+                                HStack {
+                                    Spacer(minLength: 0)
+                                    Button("Send Answer") {
+                                        submitAnswer(toolUseId: toolUseId, text: structuredAnswer)
+                                    }
+                                    .disabled(!structuredReady)
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(OrionTheme.accentBlue)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(accent.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(accent.opacity(0.42), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            Spacer(minLength: 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func structuredQuestionList(_ questions: [StructuredQuestion], toolUseId: String?, draft: StructuredAnswerDraft, disabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
+                let questionKey = structuredQuestionKey(question, index: index)
+                let selected = Set(draft.selections[questionKey] ?? [])
+                let note = draft.notes[questionKey] ?? ""
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(question.header?.isEmpty == false ? question.header ?? "" : "Question \(index + 1)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .textCase(.uppercase)
+                        if question.multiSelect == true {
+                            Text("multiple")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(OrionTheme.accentYellow)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(OrionTheme.accentYellow.opacity(0.1))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text(question.question)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let options = question.options, !options.isEmpty {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(Array(options.enumerated()), id: \.offset) { optionIndex, option in
+                                let optionKey = structuredOptionKey(option, index: optionIndex)
+                                let isSelected = selected.contains(optionKey)
+                                Button {
+                                    guard let toolUseId, !disabled else { return }
+                                    toggleStructuredOption(toolUseId: toolUseId, question: question, questionIndex: index, option: option, optionIndex: optionIndex, questions: questions)
+                                } label: {
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Image(systemName: selectedOptionIcon(isSelected: isSelected, multiSelect: question.multiSelect == true))
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(isSelected ? OrionTheme.accentBlue : OrionTheme.accentYellow)
+                                            .frame(width: 16, height: 18)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(option.label)
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(OrionTheme.textSecondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            if let description = option.description, !description.isEmpty {
+                                                Text(description)
+                                                    .font(.system(size: 11))
+                                                    .foregroundStyle(OrionTheme.textDim)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                    }
+                                    .padding(6)
+                                    .background(isSelected ? OrionTheme.accentYellow.opacity(0.08) : Color.clear)
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isSelected ? OrionTheme.accentYellow.opacity(0.24) : Color.clear, lineWidth: 0.5))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .disabled(disabled || toolUseId == nil)
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(9)
+                        .background(OrionTheme.bgPrimary.opacity(0.55))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    if let toolUseId, !disabled {
+                        TextField(question.options?.isEmpty == false ? "Add context for this answer..." : "Answer this question...", text: Binding(
+                            get: { note },
+                            set: { setStructuredNote(toolUseId: toolUseId, question: question, questionIndex: index, text: $0) }
+                        ), axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(1...4)
+                        .padding(8)
+                        .background(OrionTheme.bgPrimary.opacity(0.68))
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+                    }
+                }
+                .padding(.bottom, index == questions.count - 1 ? 0 : 2)
+            }
+        }
+    }
+
+    private func selectedOptionIcon(isSelected: Bool, multiSelect: Bool) -> String {
+        if multiSelect {
+            return isSelected ? "checkmark.square.fill" : "square"
+        }
+        return isSelected ? "largecircle.fill.circle" : "circle"
+    }
+
+    private func toggleStructuredOption(
+        toolUseId: String,
+        question: StructuredQuestion,
+        questionIndex: Int,
+        option: StructuredQuestionOption,
+        optionIndex: Int,
+        questions: [StructuredQuestion]
+    ) {
+        var draft = structuredAnswerDrafts[toolUseId] ?? StructuredAnswerDraft()
+        let qKey = structuredQuestionKey(question, index: questionIndex)
+        let optKey = structuredOptionKey(option, index: optionIndex)
+        let current = draft.selections[qKey] ?? []
+        if question.multiSelect == true {
+            if current.contains(optKey) {
+                draft.selections[qKey] = current.filter { $0 != optKey }
+            } else {
+                draft.selections[qKey] = current + [optKey]
+            }
+        } else {
+            draft.selections[qKey] = current.contains(optKey) ? [] : [optKey]
+        }
+        structuredAnswerDrafts[toolUseId] = normalizeStructuredDraft(questions, draft: draft)
+    }
+
+    private func setStructuredNote(toolUseId: String, question: StructuredQuestion, questionIndex: Int, text: String) {
+        var draft = structuredAnswerDrafts[toolUseId] ?? StructuredAnswerDraft()
+        draft.notes[structuredQuestionKey(question, index: questionIndex)] = text
+        structuredAnswerDrafts[toolUseId] = draft
+    }
+
+    private func submitAnswer(toolUseId: String, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        submittedAnswers[toolUseId] = trimmed
+        answers[toolUseId] = ""
+        structuredAnswerDrafts[toolUseId] = nil
+        chatIsNearBottom = true
+        connection.answer(toolUseId: toolUseId, text: trimmed)
+    }
+
+    @ViewBuilder
+    private func qaBlock(label: String, text: String, color: Color, accent: Color?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .tracking(0.4)
+            HStack(alignment: .top, spacing: 8) {
+                if let accent {
+                    Rectangle()
+                        .fill(accent.opacity(0.55))
+                        .frame(width: 2)
+                        .frame(maxHeight: .infinity)
+                }
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     private var composer: some View {
         VStack(spacing: 7) {
+            if connection.queuedMessageCount > 0 {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(connection.queuedMessageCount == 1 ? "Message queued. It will send when chat reconnects." : "\(connection.queuedMessageCount) messages queued. They will send when chat reconnects.")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(OrionTheme.accentYellow)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(OrionTheme.accentYellow.opacity(0.08))
+                .clipShape(Capsule())
+            }
+
             if isAssistantRunning {
                 workingIndicator
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -830,14 +3677,14 @@ struct CodexChatView: View {
                 }
             }
             .padding(8)
-            .background(OrionTheme.bgSurface.opacity(0.94))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(OrionTheme.borderDim, lineWidth: 0.5))
+            .background(OrionTheme.bgSurface.opacity(0.96))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.5))
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 8)
-        .background(OrionTheme.bgTerminal.opacity(0.98))
+        .background(OrionTheme.bgPrimary.opacity(0.98))
         .simultaneousGesture(keyboardDismissGesture)
     }
 
@@ -852,7 +3699,7 @@ struct CodexChatView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(assistantColor.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Capsule())
     }
 
     private var canSend: Bool {
@@ -972,6 +3819,7 @@ struct CodexChatView: View {
         let attachments = pendingImages.map(\.payload)
         input = ""
         pendingImages = []
+        chatIsNearBottom = true
         connection.sendInput(text, attachments: attachments)
     }
 
@@ -1064,7 +3912,8 @@ struct CodexChatView: View {
             if !row.text.isEmpty {
                 Text(row.text)
                     .font(.system(size: 15))
-                    .foregroundStyle(row.type == "error" ? OrionTheme.accentRed : OrionTheme.textPrimary)
+                    .fontWeight(row.type == "user" ? .medium : .regular)
+                    .foregroundStyle(row.type == "user" ? Color(hex: 0x0B1B3D) : row.type == "error" ? OrionTheme.accentRed : OrionTheme.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1087,6 +3936,7 @@ struct CodexChatView: View {
                     Button("Send") {
                         let text = (answers[toolUseId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !text.isEmpty else { return }
+                        submittedAnswers[toolUseId] = text
                         answers[toolUseId] = ""
                         connection.answer(toolUseId: toolUseId, text: text)
                     }
@@ -1099,8 +3949,8 @@ struct CodexChatView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: 320, alignment: .leading)
         .background(rowBackground(row.type))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(rowBorder(row.type), lineWidth: 0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: row.type == "user" ? 18 : 14, style: .continuous).stroke(rowBorder(row.type), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: row.type == "user" ? 18 : 14, style: .continuous))
     }
 
     private func attachmentList(_ attachments: [ChatAttachmentPayload]) -> some View {
@@ -1174,14 +4024,14 @@ struct CodexChatView: View {
 
     private func isActivityRow(_ row: CodexChatRow) -> Bool {
         switch row.type {
-        case "user", "assistant", "permission_request", "plan", "loading": return false
+        case "user", "assistant", "permission_request", "plan", "loading", "tool", "thinking_delta": return false
         default: return true
         }
     }
 
     private func rowBackground(_ type: String) -> Color {
         switch type {
-        case "user": return OrionTheme.accentBlue.opacity(0.16)
+        case "user": return OrionTheme.accentBlue
         case "permission_request": return OrionTheme.accentYellow.opacity(0.08)
         default: return OrionTheme.bgSurface
         }
@@ -1223,6 +4073,7 @@ private struct PlanReviewView: View {
     let assistantName: String
     let accentColor: Color
     let onClose: () -> Void
+    let onReviewDiff: () -> Void
     let onApprove: () -> Void
 
     private var markdown: String {
@@ -1230,8 +4081,12 @@ private struct PlanReviewView: View {
         return value.isEmpty ? "Plan ready" : value
     }
 
-    private var renderedPlan: AttributedString {
-        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+    private var reviewBlocks: [PlanReviewBlock] {
+        planReviewBlocks(markdown)
+    }
+
+    private var isWaiting: Bool {
+        plan.planState != "approved"
     }
 
     var body: some View {
@@ -1256,21 +4111,26 @@ private struct PlanReviewView: View {
             .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
 
             ScrollView {
-                Text(renderedPlan)
-                    .font(.system(size: 14))
-                    .foregroundStyle(OrionTheme.textPrimary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(reviewBlocks.enumerated()), id: \.offset) { _, block in
+                        PlanReviewBlockRow(block: block)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
             }
             .background(OrionTheme.bgPrimary)
 
             HStack(spacing: 10) {
                 Button("Back to chat", action: onClose)
                     .buttonStyle(.bordered)
-                Button("Approve and run", action: onApprove)
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentColor)
+                Button("Review diff", action: onReviewDiff)
+                    .buttonStyle(.bordered)
+                if isWaiting {
+                    Button("Approve & run", action: onApprove)
+                        .buttonStyle(.borderedProminent)
+                        .tint(accentColor)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(14)
@@ -1278,6 +4138,44 @@ private struct PlanReviewView: View {
             .overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
         }
         .background(OrionTheme.bgPrimary)
+    }
+}
+
+private struct PlanReviewBlock {
+    let kind: String
+    let text: String
+}
+
+private struct PlanReviewBlockRow: View {
+    let block: PlanReviewBlock
+
+    var body: some View {
+        switch block.kind {
+        case "heading":
+            Text(block.text)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OrionTheme.textPrimary)
+                .textSelection(.enabled)
+                .padding(.top, 2)
+        case "step":
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: block.text.lowercased().contains("[completed]") ? "checkmark.circle" : "circle")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OrionTheme.accentBlue)
+                    .frame(width: 20, height: 20)
+                Text(block.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        default:
+            Text(block.text)
+                .font(.system(size: 14))
+                .foregroundStyle(OrionTheme.textSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -1304,14 +4202,31 @@ private struct TypingDotsView: View {
 
 private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String) -> [CodexChatRow] {
     var rows: [CodexChatRow] = []
+    var planApprovedSinceLastUser = false
     for message in messages {
         if message.type == "status" { continue }
+        if message.type == "user" {
+            planApprovedSinceLastUser = false
+        }
+        if message.type == "permission_submitted" {
+            updatePermissionRow(&rows, update: message, state: "submitted")
+            continue
+        }
+        if message.type == "permission_resolved" {
+            updatePermissionRow(&rows, update: message, state: "answered")
+            continue
+        }
+        if message.type == "plan_resolved" {
+            markLatestPlanRowApproved(&rows)
+            planApprovedSinceLastUser = true
+            continue
+        }
         if shouldHideChatMessage(message) { continue }
         if message.type == "stream_delta" {
             if let lastIndex = rows.indices.last, rows[lastIndex].type == "assistant", rows[lastIndex].id.hasPrefix("assistant-stream") {
                 rows[lastIndex].text += message.text ?? ""
             } else {
-                rows.append(CodexChatRow(id: "assistant-stream-\(message.id)", type: "assistant", label: assistantName, text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: []))
+                rows.append(CodexChatRow(id: "assistant-stream-\(message.id)", type: "assistant", label: assistantName, text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: [], resultText: nil, resultDetails: nil, toolStatus: nil))
             }
             continue
         }
@@ -1319,8 +4234,66 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             if let lastIndex = rows.indices.last, rows[lastIndex].type == "thinking_delta" {
                 rows[lastIndex].text += message.text ?? ""
             } else {
-                rows.append(CodexChatRow(id: message.id, type: message.type, label: "Thinking", text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: []))
+                rows.append(CodexChatRow(id: message.id, type: message.type, label: "Thinking", text: message.text ?? "", details: nil, toolUseId: nil, planPath: nil, attachments: [], resultText: nil, resultDetails: nil, toolStatus: nil))
             }
+            continue
+        }
+        if message.type == "tool_result" {
+            if let index = findOpenToolRow(rows, result: message) {
+                rows[index].resultText = message.text
+                rows[index].resultDetails = message.details
+                rows[index].toolStatus = "complete"
+                continue
+            }
+        }
+        if message.type == "tool" {
+            rows.append(CodexChatRow(
+                id: message.id,
+                type: message.type,
+                label: chatLabel(message, assistantName: assistantName),
+                text: message.text ?? "",
+                details: message.details,
+                toolUseId: message.toolUseId,
+                planPath: message.planPath,
+                attachments: message.attachments ?? [],
+                resultText: nil,
+                resultDetails: nil,
+                toolStatus: "running"
+            ))
+            continue
+        }
+        if message.type == "permission_request" {
+            rows.append(CodexChatRow(
+                id: message.id,
+                type: message.type,
+                label: chatLabel(message, assistantName: assistantName),
+                text: message.text ?? "",
+                details: message.details,
+                toolUseId: message.toolUseId,
+                planPath: message.planPath,
+                attachments: message.attachments ?? [],
+                resultText: nil,
+                resultDetails: nil,
+                toolStatus: nil,
+                permissionState: "waiting"
+            ))
+            continue
+        }
+        if message.type == "plan" {
+            rows.append(CodexChatRow(
+                id: message.id,
+                type: message.type,
+                label: chatLabel(message, assistantName: assistantName),
+                text: message.text ?? "",
+                details: message.details,
+                toolUseId: message.toolUseId,
+                planPath: message.planPath,
+                attachments: message.attachments ?? [],
+                resultText: nil,
+                resultDetails: nil,
+                toolStatus: nil,
+                planState: planApprovedSinceLastUser ? "approved" : "waiting"
+            ))
             continue
         }
         rows.append(CodexChatRow(
@@ -1331,10 +4304,90 @@ private func mergeChatRows(_ messages: [CodexChatMessage], assistantName: String
             details: message.details,
             toolUseId: message.toolUseId,
             planPath: message.planPath,
-            attachments: message.attachments ?? []
+            attachments: message.attachments ?? [],
+            resultText: nil,
+            resultDetails: nil,
+            toolStatus: nil
         ))
     }
+    appendLiveLoadingRow(&rows, messages: messages, assistantName: assistantName)
     return rows
+}
+
+private func appendLiveLoadingRow(_ rows: inout [CodexChatRow], messages: [CodexChatMessage], assistantName: String) {
+    guard let status = messages.reversed().first(where: { $0.type == "status" && $0.status != nil }),
+          status.status == "running" else {
+        return
+    }
+    if let last = rows.last {
+        if last.type == "loading" { return }
+        if last.type == "tool" && last.toolStatus == "running" { return }
+        if last.type == "thinking_delta" { return }
+        if last.type == "assistant" && last.id.hasPrefix("assistant-stream-") { return }
+        if last.type == "permission_request" && last.permissionState == "waiting" { return }
+        if last.type == "plan" && last.planState == "waiting" { return }
+    }
+    rows.append(CodexChatRow(
+        id: "live-loading-\(status.id)",
+        type: "loading",
+        label: assistantName,
+        text: status.text?.isEmpty == false ? status.text! : "\(assistantName) is thinking",
+        details: nil,
+        toolUseId: nil,
+        planPath: nil,
+        attachments: [],
+        resultText: nil,
+        resultDetails: nil,
+        toolStatus: nil
+    ))
+}
+
+private func updatePermissionRow(_ rows: inout [CodexChatRow], update: CodexChatMessage, state: String) {
+    let requestedToolUseId = update.toolUseId?.trimmingCharacters(in: .whitespacesAndNewlines)
+    for index in rows.indices.reversed() {
+        guard rows[index].type == "permission_request" else { continue }
+        if let requestedToolUseId, !requestedToolUseId.isEmpty, rows[index].toolUseId != requestedToolUseId { continue }
+        resolvePermissionRow(&rows[index], update: update, state: state)
+        return
+    }
+    guard let fallbackIndex = rows.indices.reversed().first(where: {
+        rows[$0].type == "permission_request" && rows[$0].permissionState == "waiting"
+    }) else { return }
+    resolvePermissionRow(&rows[fallbackIndex], update: update, state: state)
+}
+
+private func resolvePermissionRow(_ row: inout CodexChatRow, update: CodexChatMessage, state: String) {
+    row.permissionState = state
+    if let text = update.text, !text.isEmpty, !isGenericPermissionAnswer(text) {
+        row.answerText = text
+    }
+}
+
+private func markLatestPlanRowApproved(_ rows: inout [CodexChatRow]) {
+    guard let index = rows.indices.reversed().first(where: { rows[$0].type == "plan" }) else {
+        return
+    }
+    rows[index].planState = "approved"
+}
+
+private func isGenericPermissionAnswer(_ text: String) -> Bool {
+    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "answered" || normalized == "answer submitted"
+}
+
+private func findOpenToolRow(_ rows: [CodexChatRow], result: CodexChatMessage) -> Int? {
+    for index in rows.indices.reversed() {
+        let row = rows[index]
+        guard row.type == "tool" else { continue }
+        guard row.resultText == nil && row.resultDetails == nil else { continue }
+        if let toolUseId = result.toolUseId, row.toolUseId == toolUseId {
+            return index
+        }
+        if result.toolUseId == nil && row.label == (result.toolName ?? "") {
+            return index
+        }
+    }
+    return nil
 }
 
 private func chatLabel(_ message: CodexChatMessage, assistantName: String) -> String {
@@ -1353,6 +4406,93 @@ private func chatLabel(_ message: CodexChatMessage, assistantName: String) -> St
     }
 }
 
+private func structuredQuestions(from row: CodexChatRow) -> [StructuredQuestion] {
+    let sources = [row.details, row.text]
+    for source in sources {
+        let questions = parseStructuredQuestions(source)
+        if !questions.isEmpty {
+            return questions
+        }
+    }
+    return []
+}
+
+private func parseStructuredQuestions(_ raw: String?) -> [StructuredQuestion] {
+    guard let raw else { return [] }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")),
+          let data = trimmed.data(using: .utf8) else {
+        return []
+    }
+    let decoder = JSONDecoder()
+    if let payload = try? decoder.decode(StructuredQuestionPayload.self, from: data) {
+        return payload.questions.filter { !$0.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    if let questions = try? decoder.decode([StructuredQuestion].self, from: data) {
+        return questions.filter { !$0.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    if let question = try? decoder.decode(StructuredQuestion.self, from: data),
+       !question.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return [question]
+    }
+    return []
+}
+
+private func structuredQuestionKey(_ question: StructuredQuestion, index: Int) -> String {
+    "\(index):\(question.header ?? ""):\(question.question)"
+}
+
+private func structuredOptionKey(_ option: StructuredQuestionOption, index: Int) -> String {
+    "\(index):\(option.label):\(option.description ?? "")"
+}
+
+private func normalizeStructuredDraft(_ questions: [StructuredQuestion], draft: StructuredAnswerDraft) -> StructuredAnswerDraft {
+    var normalized = StructuredAnswerDraft()
+    for (index, question) in questions.enumerated() {
+        let qKey = structuredQuestionKey(question, index: index)
+        if let selections = draft.selections[qKey], !selections.isEmpty {
+            normalized.selections[qKey] = selections
+        }
+        if let note = draft.notes[qKey], !note.isEmpty {
+            normalized.notes[qKey] = note
+        }
+    }
+    return normalized
+}
+
+private func structuredAnswerComplete(_ questions: [StructuredQuestion], draft: StructuredAnswerDraft) -> Bool {
+    for (index, question) in questions.enumerated() {
+        let qKey = structuredQuestionKey(question, index: index)
+        let selections = draft.selections[qKey] ?? []
+        let note = (draft.notes[qKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if selections.isEmpty && note.isEmpty {
+            return false
+        }
+    }
+    return true
+}
+
+private func composeStructuredAnswer(_ questions: [StructuredQuestion], draft: StructuredAnswerDraft) -> String {
+    var lines: [String] = []
+    for (questionIndex, question) in questions.enumerated() {
+        let qKey = structuredQuestionKey(question, index: questionIndex)
+        let selected = Set(draft.selections[qKey] ?? [])
+        let selectedLabels = (question.options ?? []).enumerated().compactMap { optionIndex, option -> String? in
+            selected.contains(structuredOptionKey(option, index: optionIndex)) ? option.label : nil
+        }
+        let note = (draft.notes[qKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = (question.header?.isEmpty == false ? question.header : question.question) ?? "Question \(questionIndex + 1)"
+        var parts = selectedLabels
+        if !note.isEmpty {
+            parts.append(note)
+        }
+        if !parts.isEmpty {
+            lines.append("\(label): \(parts.joined(separator: " - "))")
+        }
+    }
+    return lines.joined(separator: "\n")
+}
+
 private func attachmentDisplayName(_ attachment: ChatAttachmentPayload) -> String {
     if let name = attachment.name, !name.isEmpty {
         return name
@@ -1365,6 +4505,7 @@ private func attachmentDisplayName(_ attachment: ChatAttachmentPayload) -> Strin
 
 private func shouldHideChatMessage(_ message: CodexChatMessage) -> Bool {
     if message.type == "permission_resolved" { return true }
+    if message.type == "permission_submitted" { return true }
     if message.type == "plan_resolved" { return true }
     if message.type == "result" {
         let value = (message.subtype ?? message.text ?? "").lowercased()
@@ -1403,4 +4544,286 @@ private func planPreview(_ markdown: String) -> String {
         .filter { !$0.isEmpty && !$0.hasPrefix("#") }
     let preview = lines.prefix(4).joined(separator: "\n")
     return preview.isEmpty ? "Review the plan before changes start." : preview
+}
+
+private func planInsights(_ markdown: String) -> (sections: Int, steps: Int) {
+    let lines = markdown
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    let sections = lines.filter { $0.range(of: #"^#{1,4}\s+"#, options: .regularExpression) != nil }.count
+    let steps = lines.filter { $0.range(of: #"^([-*]|\d+\.)\s+"#, options: .regularExpression) != nil }.count
+    return (sections, steps)
+}
+
+private func planSections(_ markdown: String) -> [String] {
+    markdown
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { $0.range(of: #"^#{1,4}\s+"#, options: .regularExpression) != nil }
+        .map { $0.replacingOccurrences(of: #"^#{1,4}\s+"#, with: "", options: .regularExpression) }
+        .filter { !$0.isEmpty }
+}
+
+private func planReviewBlocks(_ markdown: String) -> [PlanReviewBlock] {
+    let blocks = markdown
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .compactMap { line -> PlanReviewBlock? in
+            guard !line.isEmpty else { return nil }
+            if line.range(of: #"^#{1,4}\s+"#, options: .regularExpression) != nil {
+                let text = line.replacingOccurrences(of: #"^#{1,4}\s+"#, with: "", options: .regularExpression)
+                return PlanReviewBlock(kind: "heading", text: text)
+            }
+            if line.range(of: #"^([-*]|\d+\.)\s+"#, options: .regularExpression) != nil {
+                return PlanReviewBlock(kind: "step", text: cleanPlanPreviewLine(line))
+            }
+            return PlanReviewBlock(kind: "paragraph", text: line)
+        }
+    return blocks.isEmpty ? [PlanReviewBlock(kind: "paragraph", text: "Plan ready")] : blocks
+}
+
+private func cleanPlanPreviewLine(_ line: String) -> String {
+    line
+        .replacingOccurrences(of: #"^[-*]\s+"#, with: "", options: .regularExpression)
+        .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
+}
+
+private func chatSessionMetadata(_ messages: [CodexChatMessage]) -> ChatSessionMetadata? {
+    let planApproved = messages.contains { $0.type == "plan_resolved" }
+    for message in messages.reversed() where message.type == "system" {
+        guard let details = message.details, let data = details.data(using: .utf8) else { continue }
+        if let metadata = try? JSONDecoder().decode(ChatSessionMetadata.self, from: data) {
+            if metadata.model != nil || metadata.reasoningEffort != nil || metadata.approvalPolicy != nil || metadata.sandboxMode != nil || metadata.permissionMode != nil || metadata.collaborationMode != nil || metadata.threadId != nil {
+                if planApproved && (metadata.permissionMode == "plan" || metadata.collaborationMode == "plan") {
+                    return ChatSessionMetadata(
+                        provider: metadata.provider,
+                        viewMode: metadata.viewMode,
+                        model: metadata.model,
+                        reasoningEffort: metadata.reasoningEffort,
+                        approvalPolicy: metadata.approvalPolicy,
+                        sandboxMode: metadata.sandboxMode,
+                        permissionMode: "approved",
+                        collaborationMode: metadata.collaborationMode,
+                        threadId: metadata.threadId
+                    )
+                }
+                return metadata
+            }
+        }
+    }
+    return nil
+}
+
+private func liveChatActivityItems(messages: [CodexChatMessage], rows: [CodexChatRow], assistantName: String) -> [MobileLiveActivityItem] {
+    var items: [MobileLiveActivityItem] = []
+    let statusMessage = messages.reversed().first { $0.type == "status" }
+    let status = statusMessage?.status ?? "idle"
+    let openPlan = openPlanMessage(messages)
+    let hasWaitingPermission = rows.contains { $0.type == "permission_request" && $0.permissionState == "waiting" }
+
+    switch status {
+    case "starting":
+        items.append(MobileLiveActivityItem(id: "status-starting", kind: "status", label: "Starting", value: assistantName))
+    case "running":
+        let value = compactActivityValue(statusMessage?.text ?? "\(assistantName) is working")
+        items.append(MobileLiveActivityItem(id: "status-running", kind: "status", label: "Working", value: value))
+    case "waiting_input":
+        if hasWaitingPermission {
+            items.append(MobileLiveActivityItem(id: "status-waiting", kind: "question", label: "Waiting", value: "needs your input"))
+        } else if openPlan == nil {
+            items.append(MobileLiveActivityItem(id: "status-paused", kind: "status", label: "Ready", value: nil))
+        }
+    default:
+        break
+    }
+
+    let runningTools = rows.filter { $0.type == "tool" && $0.toolStatus == "running" }
+    if let latestTool = runningTools.last {
+        items.append(MobileLiveActivityItem(
+            id: "tool-\(latestTool.id)",
+            kind: "tool",
+            label: "Using",
+            value: compactActivityValue(latestTool.label.isEmpty ? latestTool.text : latestTool.label)
+        ))
+        if runningTools.count > 1 {
+            items.append(MobileLiveActivityItem(id: "tool-count", kind: "tool", label: "\(runningTools.count) tools", value: "active"))
+        }
+    }
+
+    let lastVisibleRow = rows.last
+    if let lastReasoning = rows.reversed().first(where: { $0.type == "thinking_delta" }),
+       status == "running" || lastVisibleRow?.id == lastReasoning.id {
+        items.append(MobileLiveActivityItem(
+            id: "reasoning-\(lastReasoning.id)",
+            kind: "reasoning",
+            label: "Reasoning",
+            value: reasoningActivitySummary(lastReasoning.text)
+        ))
+    }
+
+    if status == "running",
+       let lastVisibleRow,
+       lastVisibleRow.type == "assistant",
+       lastVisibleRow.id.hasPrefix("assistant-stream-") {
+        items.append(MobileLiveActivityItem(id: "stream-\(lastVisibleRow.id)", kind: "stream", label: "Streaming", value: "answer"))
+    }
+
+    if let plan = openPlan {
+        let markdown = plan.details ?? ""
+        let title = plan.text?.isEmpty == false ? plan.text! : planTitle(markdown)
+        items.append(MobileLiveActivityItem(id: "plan-\(plan.id)", kind: "plan", label: "Plan ready", value: compactActivityValue(title)))
+    }
+
+    return Array(uniqueActivityItems(items).prefix(4))
+}
+
+private func uniqueActivityItems(_ items: [MobileLiveActivityItem]) -> [MobileLiveActivityItem] {
+    var seen = Set<String>()
+    return items.filter { item in
+        let key = "\(item.kind):\(item.label):\(item.value ?? "")"
+        guard !seen.contains(key) else { return false }
+        seen.insert(key)
+        return true
+    }
+}
+
+private func openPlanMessage(_ messages: [CodexChatMessage]) -> CodexChatMessage? {
+    var lastOpenPlan: CodexChatMessage?
+    var planApprovedSinceLastUser = false
+    for message in messages {
+        switch message.type {
+        case "user":
+            lastOpenPlan = nil
+            planApprovedSinceLastUser = false
+        case "plan_resolved":
+            lastOpenPlan = nil
+            planApprovedSinceLastUser = true
+        case "plan":
+            if !planApprovedSinceLastUser {
+                lastOpenPlan = message
+            }
+        default:
+            break
+        }
+    }
+    return lastOpenPlan
+}
+
+private func compactActivityValue(_ value: String) -> String {
+    let collapsed = value
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    guard collapsed.count > 48 else { return collapsed }
+    return "\(collapsed.prefix(45))..."
+}
+
+private func reasoningActivitySummary(_ value: String) -> String {
+    let firstLine = value
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty } ?? "thinking"
+    return compactActivityValue(firstLine)
+}
+
+private func reasoningActivityTitle(_ value: String) -> String {
+    let summary = reasoningActivitySummary(value)
+    return summary == "thinking" ? "Thinking through the plan" : summary
+}
+
+private func liveActivityColor(_ kind: String) -> Color {
+    switch kind {
+    case "tool": return OrionTheme.accentGreen
+    case "reasoning": return OrionTheme.accentPurple
+    case "plan", "question": return OrionTheme.accentYellow
+    default: return OrionTheme.accentBlue
+    }
+}
+
+private func approvalLabel(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    if value == "never" { return "full access" }
+    if value == "on-request" { return "ask first" }
+    return value.replacingOccurrences(of: "_", with: " ")
+}
+
+private func sandboxLabel(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    if value == "danger-full-access" { return "workspace + network" }
+    return value.replacingOccurrences(of: "-", with: " ")
+}
+
+private func modeLabel(_ value: String?) -> String? {
+    guard let value, !value.isEmpty else { return nil }
+    switch value {
+    case "bypassPermissions", "never":
+        return "full access"
+    case "dontAsk":
+        return "don't ask"
+    case "default":
+        return "default"
+    case "plan":
+        return "plan"
+    case "approved":
+        return "approved"
+    default:
+        return value
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+    }
+}
+
+private func modelLabel(_ value: String) -> String {
+    switch value {
+    case "": return "Default"
+    case "gpt-5.4-mini": return "GPT-5.4 Mini"
+    case "gpt-5.3-codex": return "GPT-5.3 Codex"
+    case "gpt-5.3-codex-spark": return "GPT-5.3 Codex Spark"
+    default: return value.uppercased()
+    }
+}
+
+private func reasoningLabel(_ value: String) -> String {
+    switch value {
+    case "xhigh": return "Extra high"
+    default: return value.capitalized
+    }
+}
+
+private func approvalPickerLabel(_ value: String) -> String {
+    switch value {
+    case "never": return "Full access"
+    case "on-request": return "Ask first"
+    case "on-failure": return "On failure"
+    default: return value.capitalized
+    }
+}
+
+private func sandboxPickerLabel(_ value: String) -> String {
+    switch value {
+    case "danger-full-access": return "Workspace + network"
+    case "workspace-write": return "Workspace write"
+    case "read-only": return "Read only"
+    default: return value
+    }
+}
+
+private func toolLooksLikeCommand(_ toolName: String) -> Bool {
+    let value = toolName.lowercased()
+    return value.contains("bash") || value.contains("command") || value.contains("shell")
+}
+
+private func toolIcon(_ toolName: String) -> String {
+    let value = toolName.lowercased()
+    if value.contains("bash") || value.contains("command") { return "$" }
+    if value.contains("file") { return "±" }
+    if value.contains("web") { return "⌕" }
+    if value.contains("mcp") { return "◆" }
+    return "∴"
+}
+
+private func shortID(_ id: String) -> String {
+    guard id.count > 12 else { return id }
+    return "\(id.prefix(6))…\(id.suffix(4))"
 }

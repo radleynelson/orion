@@ -3,11 +3,13 @@ import { useStore, generateId, PaneLeaf, sortWorkspaces } from '../store';
 import { server, main } from '../../wailsjs/go/models';
 import {
   ListWorkspaces,
-  CreateWorkspace,
+  CreateWorkspaceFrom,
   DeleteWorkspace,
   LaunchAgent,
   LaunchClaudeChat,
-  LaunchCodexChat,
+  LaunchCodexChatWithOptions,
+  SendClaudeChatMessage,
+  SendCodexChatMessage,
   CreateAttachedTerminal,
   CreateTerminalInDir,
   CloseTerminal,
@@ -22,8 +24,83 @@ import {
   GetWorkspaceEnv,
   AllocatePorts,
 } from '../../wailsjs/go/main/App';
+import OrionMark from './OrionMark';
+import WorkspaceDetailPanel from './WorkspaceDetailPanel';
+import AgentSigil from './AgentSigil';
 
-export default function Sidebar() {
+interface SidebarProps {
+  onNewSession: () => void;
+}
+
+type CodexLaunchOptions = {
+  model: string;
+  reasoningEffort: string;
+  approvalPolicy: string;
+  sandboxMode: string;
+  collaborationMode: string;
+};
+
+type NewWorkspaceDraft = {
+  name: string;
+  baseRef: string;
+  startWith: 'codex-chat' | 'claude-chat' | 'codex' | 'claude' | 'shell' | 'none';
+  prompt: string;
+  codexOptions: CodexLaunchOptions;
+};
+
+const DEFAULT_CODEX_OPTIONS: CodexLaunchOptions = {
+  model: '',
+  reasoningEffort: 'xhigh',
+  approvalPolicy: 'never',
+  sandboxMode: 'danger-full-access',
+  collaborationMode: 'default',
+};
+
+const DEFAULT_WORKSPACE_DRAFT: NewWorkspaceDraft = {
+  name: '',
+  baseRef: '',
+  startWith: 'codex-chat',
+  prompt: '',
+  codexOptions: DEFAULT_CODEX_OPTIONS,
+};
+
+function agentProvider(agent?: main.AgentTypeInfo): 'claude' | 'codex' | undefined {
+  const provider = (agent?.provider || agent?.name || '').toLowerCase();
+  return provider === 'claude' || provider === 'codex' ? provider : undefined;
+}
+
+function agentIcon(agent?: main.AgentTypeInfo): string | undefined {
+  return agent?.icon || agentProvider(agent);
+}
+
+function codexOptionsForAgent(agent?: main.AgentTypeInfo): CodexLaunchOptions {
+  return {
+    model: agent?.model || DEFAULT_CODEX_OPTIONS.model,
+    reasoningEffort: agent?.reasoningEffort || DEFAULT_CODEX_OPTIONS.reasoningEffort,
+    approvalPolicy: agent?.approvalPolicy || DEFAULT_CODEX_OPTIONS.approvalPolicy,
+    sandboxMode: agent?.sandboxMode || DEFAULT_CODEX_OPTIONS.sandboxMode,
+    collaborationMode: agent?.collaborationMode || DEFAULT_CODEX_OPTIONS.collaborationMode,
+  };
+}
+
+const CODEX_MODELS = [
+  { value: '', label: 'Default' },
+  { value: 'gpt-5.5', label: 'GPT-5.5' },
+  { value: 'gpt-5.4', label: 'GPT-5.4' },
+  { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+  { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+  { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+  { value: 'gpt-5.2', label: 'GPT-5.2' },
+];
+
+const REASONING_EFFORTS = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra high' },
+];
+
+export default function Sidebar({ onNewSession }: SidebarProps) {
   const {
     project,
     setProject,
@@ -33,21 +110,23 @@ export default function Sidebar() {
     setActiveWorkspace,
     addTab,
     addServerTab,
-    serverTabs,
     tabs,
     workspaceActive,
     setWorkspaceActive,
   } = useStore();
 
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
+  const [newWorkspaceDraft, setNewWorkspaceDraft] = useState<NewWorkspaceDraft>(DEFAULT_WORKSPACE_DRAFT);
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [serverStatuses, setServerStatuses] = useState<Record<string, server.ServerStatus[]>>({});
   const [agentTypes, setAgentTypes] = useState<main.AgentTypeInfo[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
-  const [envVisible, setEnvVisible] = useState(false);
+  const [inspectorEnvVars, setInspectorEnvVars] = useState<Record<string, string>>({});
+  const [inspector, setInspector] = useState<{ path: string; top: number; left: number } | null>(null);
 
   // Init is handled by App.tsx (which never unmounts)
 
@@ -73,6 +152,21 @@ export default function Sidebar() {
     })();
   }, [activeWorkspacePath, serverStatuses]);
 
+  useEffect(() => {
+    if (!inspector?.path) {
+      setInspectorEnvVars({});
+      return;
+    }
+    (async () => {
+      try {
+        const env = await GetWorkspaceEnv(inspector.path);
+        setInspectorEnvVars(env || {});
+      } catch {
+        setInspectorEnvVars({});
+      }
+    })();
+  }, [inspector?.path, serverStatuses]);
+
   // Poll server statuses for ALL workspaces (so indicators are correct on startup)
   useEffect(() => {
     if (!project || workspaces.length === 0) return;
@@ -95,9 +189,14 @@ export default function Sidebar() {
         });
       } catch {}
     };
+    const handleServerChange = () => fetchAll();
     fetchAll();
     const interval = setInterval(fetchAll, 5000);
-    return () => clearInterval(interval);
+    window.addEventListener('orion:servers-changed', handleServerChange);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('orion:servers-changed', handleServerChange);
+    };
   }, [project, workspaces]);
 
   // Recompute activity tier whenever tabs or server statuses change.
@@ -132,6 +231,13 @@ export default function Sidebar() {
       // Cmd+N: new workspace
       if (e.metaKey && !e.shiftKey && e.key === 'n') {
         e.preventDefault();
+        const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
+        setNewWorkspaceDraft({
+          ...DEFAULT_WORKSPACE_DRAFT,
+          baseRef: baseRefs[0] || project?.mainBranch || 'main',
+          codexOptions: { ...DEFAULT_CODEX_OPTIONS },
+        });
+        setCreateError(null);
         setCreating(true);
       }
       // Cmd+Shift+Backspace: delete active workspace
@@ -157,21 +263,39 @@ export default function Sidebar() {
     }
   }, [project, setWorkspaces]);
 
-  const handleCreate = useCallback(async () => {
-    if (!project || !newName.trim()) return;
-    try {
-      const ws = await CreateWorkspace(project.root, newName.trim());
-      setNewName('');
-      setCreating(false);
-      await refreshWorkspaces();
-      if (ws?.path) {
-        setActiveWorkspace(ws.path);
-        AllocatePorts(project.root, ws.path, false).catch(() => {});
-      }
-    } catch (err) {
-      console.error('Failed to create workspace:', err);
-    }
-  }, [project, newName, refreshWorkspaces, setActiveWorkspace]);
+  const openNewWorkspace = useCallback(() => {
+    const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
+    setNewWorkspaceDraft({
+      ...DEFAULT_WORKSPACE_DRAFT,
+      baseRef: baseRefs[0] || project?.mainBranch || 'main',
+      codexOptions: { ...DEFAULT_CODEX_OPTIONS },
+    });
+    setCreateError(null);
+    setCreating(true);
+  }, [project?.mainBranch, workspaces]);
+
+  useEffect(() => {
+    const handler = () => openNewWorkspace();
+    window.addEventListener('orion:new-workspace', handler);
+    return () => window.removeEventListener('orion:new-workspace', handler);
+  }, [openNewWorkspace]);
+
+  useEffect(() => {
+    const closeInspector = () => setInspector(null);
+    window.addEventListener('orion:close-workspace-inspector', closeInspector);
+    return () => window.removeEventListener('orion:close-workspace-inspector', closeInspector);
+  }, []);
+
+  const updateNewWorkspaceDraft = useCallback(<K extends keyof NewWorkspaceDraft>(key: K, value: NewWorkspaceDraft[K]) => {
+    setNewWorkspaceDraft((current) => ({ ...current, [key]: value }));
+  }, []);
+
+  const updateNewWorkspaceCodexOption = useCallback((key: keyof CodexLaunchOptions, value: string) => {
+    setNewWorkspaceDraft((current) => ({
+      ...current,
+      codexOptions: { ...current.codexOptions, [key]: value },
+    }));
+  }, []);
 
   const handleDelete = useCallback(async (path: string) => {
     if (!project) return;
@@ -201,31 +325,50 @@ export default function Sidebar() {
       const termId = generateId('term');
       await CreateAttachedTerminal(termId, tmuxSession);
       const agent = agentTypes.find((a) => a.name === agentName);
+      const provider = agentProvider(agent);
+      const icon = agentIcon(agent);
       addTab({
         id: generateId('tab'),
         label: agent?.label || agentName,
         rootPane: { type: 'terminal', id: generateId('pane'), terminalId: termId } as PaneLeaf,
-        tabType: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : 'shell',
+        tabType: provider || 'shell',
         workspacePath: wsPath,
-        provider: (agentName === 'claude' || agentName === 'codex') ? agentName as 'claude' | 'codex' : undefined,
+        icon,
+        provider,
         viewMode: 'terminal',
         runtimeSessionId: tmuxSession,
+        model: agent?.model,
+        reasoningEffort: agent?.reasoningEffort,
+        approvalPolicy: agent?.approvalPolicy,
+        sandboxMode: agent?.sandboxMode,
+        permissionMode: agent?.permissionMode,
+        collaborationMode: agent?.collaborationMode,
       });
     } catch (err) {
       console.error('Failed to launch agent:', err);
     }
   }, [project, agentTypes, addTab]);
 
-  const handleLaunchCodexChat = useCallback(async (wsPath: string) => {
+  const handleLaunchCodexChat = useCallback(async (wsPath: string, options?: CodexLaunchOptions) => {
     if (!project) return;
+    const selected = options || codexOptionsForAgent(agentTypes.find((agent) => agentProvider(agent) === 'codex'));
     try {
-      const session = await LaunchCodexChat(project.root, wsPath);
+      const session = await LaunchCodexChatWithOptions(
+        project.root,
+        wsPath,
+        selected.model,
+        selected.reasoningEffort,
+        selected.approvalPolicy,
+        selected.sandboxMode,
+        selected.collaborationMode,
+      );
       addTab({
         id: generateId('tab'),
         label: session?.label || 'Codex Chat',
         rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
         tabType: 'codex-chat',
         workspacePath: wsPath,
+        icon: 'codex',
         provider: 'codex',
         viewMode: 'chat',
         runtimeSessionId: session.id,
@@ -234,11 +377,14 @@ export default function Sidebar() {
         reasoningEffort: session.reasoningEffort,
         approvalPolicy: session.approvalPolicy,
         sandboxMode: session.sandboxMode,
+        collaborationMode: session.collaborationMode,
       });
+      return session;
     } catch (err) {
       console.error('Failed to launch Codex chat:', err);
+      throw err;
     }
-  }, [project, addTab]);
+  }, [project, agentTypes, addTab]);
 
   const handleLaunchClaudeChat = useCallback(async (wsPath: string) => {
     if (!project) return;
@@ -250,13 +396,21 @@ export default function Sidebar() {
         rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'claude' } as PaneLeaf,
         tabType: 'claude-chat',
         workspacePath: wsPath,
+        icon: 'claude',
         provider: 'claude',
         viewMode: 'chat',
         runtimeSessionId: session.id,
         threadId: session.threadId,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
+        approvalPolicy: session.approvalPolicy,
+        sandboxMode: session.sandboxMode,
+        permissionMode: session.permissionMode,
       });
+      return session;
     } catch (err) {
       console.error('Failed to launch Claude chat:', err);
+      throw err;
     }
   }, [project, addTab]);
 
@@ -278,11 +432,56 @@ export default function Sidebar() {
     }
   }, [project, tabs, addTab]);
 
+  const handleCreate = useCallback(async () => {
+    if (!project || !newWorkspaceDraft.name.trim()) return;
+    setCreatingWorkspace(true);
+    setCreateError(null);
+    try {
+      const ws = await CreateWorkspaceFrom(project.root, normalizedWorkspaceName(newWorkspaceDraft.name), newWorkspaceDraft.baseRef);
+      setCreating(false);
+      await refreshWorkspaces();
+      if (ws?.path) {
+        setActiveWorkspace(ws.path);
+        AllocatePorts(project.root, ws.path, false).catch(() => {});
+        const prompt = newWorkspaceDraft.prompt.trim();
+        switch (newWorkspaceDraft.startWith) {
+          case 'codex-chat': {
+            const session = await handleLaunchCodexChat(ws.path, newWorkspaceDraft.codexOptions);
+            if (session?.id && prompt) await SendCodexChatMessage(session.id, prompt, []);
+            break;
+          }
+          case 'claude-chat': {
+            const session = await handleLaunchClaudeChat(ws.path);
+            if (session?.id && prompt) await SendClaudeChatMessage(session.id, prompt, []);
+            break;
+          }
+          case 'codex':
+            await handleLaunchAgent(ws.path, 'codex');
+            break;
+          case 'claude':
+            await handleLaunchAgent(ws.path, 'claude');
+            break;
+          case 'shell':
+            await handleLaunchShell(ws.path);
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to create workspace:', err);
+      setCreateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  }, [project, newWorkspaceDraft, refreshWorkspaces, setActiveWorkspace, handleLaunchCodexChat, handleLaunchClaudeChat, handleLaunchAgent, handleLaunchShell]);
+
   const handleStartServers = useCallback(async (wsPath: string, isMain: boolean) => {
     if (!project) return;
     try {
       const statuses = await StartServers(project.root, wsPath, isMain);
       setServerStatuses((prev) => ({ ...prev, [wsPath]: statuses }));
+      window.dispatchEvent(new Event('orion:servers-changed'));
       for (const srv of statuses) {
         if (srv.running && srv.tmuxSession) {
           const termId = generateId('term');
@@ -299,13 +498,14 @@ export default function Sidebar() {
     } catch (err) {
       console.error('Failed to start servers:', err);
     }
-  }, [project, addTab]);
+  }, [project, addServerTab]);
 
   const handleStopServers = useCallback(async (wsPath: string) => {
     if (!project) return;
     try {
       await StopServers(wsPath);
       setServerStatuses((prev) => ({ ...prev, [wsPath]: [] }));
+      window.dispatchEvent(new Event('orion:servers-changed'));
       // Clean up server tabs from the bottom pane
       const srvTabs = useStore.getState().serverTabs.filter((t) => t.workspacePath === wsPath);
       for (const tab of srvTabs) {
@@ -317,15 +517,6 @@ export default function Sidebar() {
       }
     } catch (err) {
       console.error('Failed to stop servers:', err);
-    }
-  }, [project, tabs]);
-
-  const handleOpenBrowser = useCallback(async (wsPath: string) => {
-    if (!project) return;
-    try {
-      await OpenBrowser(project.root, wsPath);
-    } catch (err) {
-      console.error('Failed to open browser:', err);
     }
   }, [project]);
 
@@ -366,18 +557,28 @@ export default function Sidebar() {
     );
   }
 
+  const baseRefs = workspaceBaseRefs(project.mainBranch, workspaces);
+  const normalizedName = normalizedWorkspaceName(newWorkspaceDraft.name);
+  const previewPath = normalizedName ? `${project.root}-${normalizedName}` : `${project.root}-new-worktree`;
+  const createDisabled = creatingWorkspace || !normalizedName;
+  const inspectedWorkspace = inspector ? workspaces.find((ws) => ws.path === inspector.path) : undefined;
+
   return (
     <div className="sidebar">
       {/* Project name */}
       <div className="sidebar-section">
-        <div className="sidebar-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>{project.name}</span>
+        <div className="sidebar-brand">
+          <OrionMark size={30} />
+          <div className="sidebar-brand-text">
+            <div className="sidebar-brand-title">{project.name}</div>
+            <div className="sidebar-brand-subtitle">{project.root}</div>
+          </div>
           <span
             style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size-xs)' }}
             onClick={handleOpenProject}
             title="Switch project"
           >
-            ↗
+            ▾
           </span>
         </div>
       </div>
@@ -396,7 +597,7 @@ export default function Sidebar() {
             </span>
             <span
               style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 'var(--font-size)' }}
-              onClick={() => setCreating(true)}
+              onClick={openNewWorkspace}
               title="New workspace"
             >
               +
@@ -407,14 +608,17 @@ export default function Sidebar() {
         {sortWorkspaces(workspaces, workspaceActive).map((ws) => {
           const wsStatuses = serverStatuses[ws.path] || [];
           const wsHasServers = wsStatuses.some((s) => s.running);
-          const wsHasAgent = tabs.some(
-            (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex'),
+          const wsAgentTabs = tabs.filter((t) =>
+            t.workspacePath === ws.path &&
+            (t.tabType === 'claude' || t.tabType === 'codex' || t.tabType === 'claude-chat' || t.tabType === 'codex-chat'),
           );
+          const wsHasAgent = wsAgentTabs.length > 0;
+          const active = ws.path === activeWorkspacePath;
 
           return (
-            <div key={ws.path}>
+            <div key={ws.path} className="sidebar-workspace-row">
               <div
-                className={`sidebar-item ${ws.path === activeWorkspacePath ? 'active' : ''}`}
+                className={`sidebar-item ${active ? 'active' : ''}`}
                 onClick={() => {
                   setActiveWorkspace(ws.path);
                   // Pre-allocate ports so agents/shells know them immediately
@@ -425,6 +629,23 @@ export default function Sidebar() {
                   {ws.isMain ? '◉' : wsHasAgent || wsHasServers ? '●' : '○'}
                 </span>
                 <span className="label">{ws.isMain ? 'main' : (project ? ws.name.replace(project.name + '-', '') : ws.name)}</span>
+                <WorkspaceActivityBadges tabs={wsAgentTabs} />
+                <button
+                  type="button"
+                  className={`workspace-info-button ${inspector?.path === ws.path ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setInspector((current) =>
+                      current?.path === ws.path
+                        ? null
+                        : { path: ws.path, top: Math.max(72, rect.top - 26), left: rect.right + 10 },
+                    );
+                  }}
+                  title="Workspace details"
+                >
+                  i
+                </button>
                 {!ws.isMain && deletingPath === ws.path && (
                   <span className="ws-delete-spinner" title="Deleting...">⟳</span>
                 )}
@@ -446,120 +667,158 @@ export default function Sidebar() {
                   </span>
                 )}
               </div>
-
-              {/* Actions when workspace is selected */}
-              {ws.path === activeWorkspacePath && (
-                <>
-                  {/* Dynamic agent buttons from config */}
-                  <div className="sidebar-actions">
-                    {agentTypes.map((agent) => (
-                      <span
-                        key={agent.name}
-                        className="sidebar-action"
-                        onClick={() => handleLaunchAgent(ws.path, agent.name)}
-                        title={agent.command}
-                      >
-                        + {agent.label}
-                      </span>
-                    ))}
-                    <span className="sidebar-action" onClick={() => handleLaunchCodexChat(ws.path)}>
-                      + Codex Chat
-                    </span>
-                    <span className="sidebar-action" onClick={() => handleLaunchClaudeChat(ws.path)}>
-                      + Claude Chat
-                    </span>
-                    <span className="sidebar-action" onClick={() => handleLaunchShell(ws.path)}>
-                      + Shell
-                    </span>
-                  </div>
-
-                  {/* Server controls */}
-                  <div className="sidebar-actions">
-                    {!wsHasServers ? (
-                      <span className="sidebar-action" onClick={() => handleStartServers(ws.path, ws.isMain)} style={{ color: 'var(--accent-green)' }}>
-                        ▶ Start Servers
-                      </span>
-                    ) : (
-                      <>
-                        <span className="sidebar-action" onClick={() => handleStopServers(ws.path)} style={{ color: 'var(--accent-red)' }}>
-                          ■ Stop
-                        </span>
-                        <span className="sidebar-action" onClick={() => handleOpenBrowser(ws.path)} style={{ color: 'var(--accent-cyan)' }}>
-                          ◎ Browser
-                        </span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Server port display */}
-                  {wsStatuses.length > 0 && (
-                    <div className="sidebar-servers">
-                      {[...wsStatuses].sort((a, b) => {
-                        const order: Record<string, number> = { frontend: 0, backend: 1, sidekiq: 2 };
-                        return (order[a.name] ?? 99) - (order[b.name] ?? 99);
-                      }).map((srv) => (
-                        <div key={srv.name} className="sidebar-server">
-                          <span className={`server-dot ${srv.running ? 'running' : 'stopped'}`}>●</span>
-                          <span className="server-name">{srv.name}</span>
-                          {srv.port > 0 && <span className="server-port">:{srv.port}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Environment variables panel */}
-                  {Object.keys(envVars).length > 0 && ws.path === activeWorkspacePath && (
-                    <div className="sidebar-env">
-                      <div
-                        className="sidebar-env-header"
-                        onClick={() => setEnvVisible(!envVisible)}
-                      >
-                        <span>{envVisible ? '▾' : '▸'} Env</span>
-                      </div>
-                      {envVisible && (
-                        <div className="sidebar-env-list">
-                          {Object.entries(envVars).map(([key, val]) => (
-                            <div
-                              key={key}
-                              className="sidebar-env-item"
-                              onClick={() => navigator.clipboard.writeText(val)}
-                              title="Click to copy"
-                            >
-                              <span className="env-key">{key}</span>
-                              <span className="env-val">{val}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-
             </div>
           );
         })}
 
+        {inspector && inspectedWorkspace && (
+          <>
+            <div className="workspace-inspector-dismiss" onMouseDown={() => setInspector(null)} />
+            <div
+              className="workspace-inspector-popover"
+              style={{ top: inspector.top, left: inspector.left }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="workspace-inspector-header">
+                <span className={`icon ${(serverStatuses[inspectedWorkspace.path] || []).some((s) => s.running) ? '' : 'inactive'}`} />
+                <div>
+                  <strong>{inspectedWorkspace.isMain ? 'main' : (project ? inspectedWorkspace.name.replace(project.name + '-', '') : inspectedWorkspace.name)}</strong>
+                  <code>{inspectedWorkspace.branch || inspectedWorkspace.name}</code>
+                </div>
+                <button type="button" onClick={() => setInspector(null)} title="Close">×</button>
+              </div>
+              <WorkspaceDetailPanel
+                workspace={inspectedWorkspace}
+                serverStatuses={serverStatuses[inspectedWorkspace.path] || []}
+                envVars={inspectedWorkspace.path === activeWorkspacePath ? envVars : inspectorEnvVars}
+                onStartServers={handleStartServers}
+                onStopServers={handleStopServers}
+                onNewSession={() => {
+                  setActiveWorkspace(inspectedWorkspace.path);
+                  onNewSession();
+                }}
+              />
+            </div>
+          </>
+        )}
+
         {creating && (
-          <div style={{ padding: '4px 12px' }}>
-            <input
-              autoFocus
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className="sidebar-input"
-              placeholder="branch-name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreate();
-                if (e.key === 'Escape') { setCreating(false); setNewName(''); }
-              }}
-              onBlur={() => { if (!newName.trim()) { setCreating(false); setNewName(''); } }}
-            />
+          <div className="workspace-create-overlay" onMouseDown={() => !creatingWorkspace && setCreating(false)}>
+            <div className="workspace-create-sheet" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="workspace-create-header">
+                <button type="button" onClick={() => setCreating(false)} disabled={creatingWorkspace}>Cancel</button>
+                <div>
+                  <div>New worktree</div>
+                  <span>{project.name}</span>
+                </div>
+                <button type="button" className="workspace-create-primary" onClick={handleCreate} disabled={createDisabled}>
+                  {creatingWorkspace ? 'Creating' : 'Create'}
+                </button>
+              </div>
+
+              <div className="workspace-create-body">
+                <label className="workspace-create-field workspace-create-wide">
+                  <span>Name</span>
+                  <input
+                    autoFocus
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder="fix-stripe-webhook"
+                    value={newWorkspaceDraft.name}
+                    onChange={(e) => updateNewWorkspaceDraft('name', e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !createDisabled) handleCreate();
+                      if (e.key === 'Escape') setCreating(false);
+                    }}
+                  />
+                  <small>{previewPath}</small>
+                </label>
+
+                <label className="workspace-create-field">
+                  <span>Branch from</span>
+                  <select value={newWorkspaceDraft.baseRef || baseRefs[0]} onChange={(e) => updateNewWorkspaceDraft('baseRef', e.target.value)}>
+                    {baseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+                  </select>
+                </label>
+
+                <label className="workspace-create-field">
+                  <span>Start with</span>
+                  <select value={newWorkspaceDraft.startWith} onChange={(e) => updateNewWorkspaceDraft('startWith', e.target.value as NewWorkspaceDraft['startWith'])}>
+                    <option value="codex-chat">Codex Chat</option>
+                    <option value="claude-chat">Claude Chat</option>
+                    <option value="codex">Codex CLI</option>
+                    <option value="claude">Claude CLI</option>
+                    <option value="shell">Shell</option>
+                    <option value="none">Nothing</option>
+                  </select>
+                </label>
+
+                {newWorkspaceDraft.startWith === 'codex-chat' && (
+                  <div className="workspace-create-codex">
+                    <label>
+                      <span>Model</span>
+                      <select value={newWorkspaceDraft.codexOptions.model} onChange={(e) => updateNewWorkspaceCodexOption('model', e.target.value)}>
+                        {CODEX_MODELS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Reasoning</span>
+                      <select value={newWorkspaceDraft.codexOptions.reasoningEffort} onChange={(e) => updateNewWorkspaceCodexOption('reasoningEffort', e.target.value)}>
+                        {REASONING_EFFORTS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                <label className="workspace-create-field workspace-create-wide">
+                  <span>First prompt</span>
+                  <textarea
+                    placeholder="Trace the failing checkout webhook and propose a fix."
+                    value={newWorkspaceDraft.prompt}
+                    onChange={(e) => updateNewWorkspaceDraft('prompt', e.target.value)}
+                    disabled={newWorkspaceDraft.startWith !== 'codex-chat' && newWorkspaceDraft.startWith !== 'claude-chat'}
+                  />
+                  <small>Sent automatically when the new worktree starts with a chat session.</small>
+                </label>
+
+                {createError && <div className="workspace-create-error">{createError}</div>}
+              </div>
+            </div>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function WorkspaceActivityBadges({ tabs }: { tabs: { tabType: string; provider?: string; icon?: string }[] }) {
+  const ids = Array.from(new Set(tabs.map((tab) => {
+    if (tab.icon) return tab.icon;
+    if (tab.provider) return tab.provider;
+    if (tab.tabType === 'claude-chat') return 'claude';
+    if (tab.tabType === 'codex-chat') return 'codex';
+    return tab.tabType;
+  }))).slice(0, 3);
+  if (ids.length === 0) return null;
+  return (
+    <span className="workspace-activity-badges">
+      {ids.map((id) => <AgentSigil key={id} id={id} size={15} />)}
+    </span>
+  );
+}
+
+function workspaceBaseRefs(mainBranch: string | undefined, workspaces: { branch?: string }[]): string[] {
+  const refs = new Set<string>();
+  if (mainBranch) refs.add(mainBranch);
+  for (const ws of workspaces) {
+    const branch = (ws.branch || '').trim();
+    if (branch && branch !== '(detached)') refs.add(branch);
+  }
+  if (refs.size === 0) refs.add('main');
+  return Array.from(refs);
+}
+
+function normalizedWorkspaceName(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
 }

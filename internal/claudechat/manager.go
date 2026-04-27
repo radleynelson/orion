@@ -703,7 +703,7 @@ func assistantContent(raw json.RawMessage) ([]Message, string) {
 			if normalize(toolName) == "exitplanmode" {
 				plan := strings.TrimSpace(stringValue(input["plan"]))
 				if plan == "" {
-					plan = strings.TrimSpace(compactAny(input))
+					continue
 				}
 				tools = append(tools, Message{
 					ID:        "claude-" + toolUseID + ":plan",

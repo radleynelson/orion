@@ -29,7 +29,7 @@ struct TerminalToolbar: View {
             }
         }
         .padding(.horizontal, 4).padding(.top, 4).padding(.bottom, safeAreaBottom)
-        .background(OrionTheme.bgSecondary).overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
+        .background(OrionTheme.bgPrimary).overlay(alignment: .top) { OrionTheme.border.frame(height: 0.5) }
     }
 
     private var safeAreaBottom: CGFloat {
@@ -48,11 +48,11 @@ struct ShortcutButton: View {
     var body: some View {
         Button(action: action) {
             Text(label).font(monospace ? .system(size: 11, design: .monospaced) : .system(size: 14))
-                .foregroundStyle(highlight ? OrionTheme.accentBlue : OrionTheme.textSecondary)
                 .frame(maxWidth: .infinity).frame(height: 32)
-                .background(highlight ? OrionTheme.bgActive : OrionTheme.bgSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(highlight ? OrionTheme.accentBlue : OrionTheme.border, lineWidth: 0.5))
+                .background(highlight ? OrionTheme.accentBlue : OrionTheme.bgSurface)
+                .foregroundStyle(highlight ? Color(hex: 0x0B1B3D) : OrionTheme.textSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(highlight ? Color.clear : OrionTheme.borderDim, lineWidth: 0.5))
         }
     }
 }

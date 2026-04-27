@@ -2,31 +2,31 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { EventsOn, EventsEmit, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
+import { EventsOn, EventsEmit, BrowserOpenURL, ClipboardGetText, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 
-// Warp-inspired dark theme for xterm.js
+// Nocturne dark theme for xterm.js
 const THEME = {
-  background: '#1e1e1e',
-  foreground: '#d4d4d4',
-  cursor: '#d4d4d4',
-  cursorAccent: '#1e1e1e',
-  selectionBackground: 'rgba(108, 182, 255, 0.3)',
+  background: '#131316',
+  foreground: '#EAEAEC',
+  cursor: '#EAEAEC',
+  cursorAccent: '#131316',
+  selectionBackground: 'rgba(124, 169, 247, 0.3)',
   selectionForeground: undefined,
-  black: '#1e1e1e',
-  red: '#ff7b72',
-  green: '#7ee787',
-  yellow: '#d29922',
-  blue: '#6cb6ff',
-  magenta: '#d2a8ff',
-  cyan: '#76e3ea',
-  white: '#d4d4d4',
-  brightBlack: '#5a5a5a',
-  brightRed: '#ffa198',
-  brightGreen: '#90ee90',
-  brightYellow: '#e3b341',
-  brightBlue: '#79c0ff',
-  brightMagenta: '#d8b4fe',
-  brightCyan: '#a5f3fc',
+  black: '#131316',
+  red: '#E89180',
+  green: '#8ACFA3',
+  yellow: '#E6B86B',
+  blue: '#7CA9F7',
+  magenta: '#B9A3EC',
+  cyan: '#9BC5FF',
+  white: '#EAEAEC',
+  brightBlack: '#6E6E78',
+  brightRed: '#F2B6AA',
+  brightGreen: '#BDE8CA',
+  brightYellow: '#F1D497',
+  brightBlue: '#AFCBFA',
+  brightMagenta: '#D4C4F4',
+  brightCyan: '#C5DCFF',
   brightWhite: '#ffffff',
 };
 
@@ -36,6 +36,109 @@ export interface OrionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
   dispose: () => void;
+}
+
+function clipboardTextFromSelection(selection: string, cols: number): string {
+  const lines = selection.split('\n').map((line: string) => line.trimEnd());
+  const joined: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = joined.length > 0 ? joined[joined.length - 1] : '';
+    if (joined.length > 0 && line.length > 0 && !line.startsWith(' ') && !line.startsWith('\t')) {
+      const prevLen = prevLine.length;
+      const nearFullWidth = prevLen >= cols - 2;
+      const endsWithContinuation = /[^.\s:;,)}\]>]$/.test(prevLine);
+      if (nearFullWidth || (endsWithContinuation && prevLen > 20)) {
+        joined[joined.length - 1] = prevLine + line;
+        continue;
+      }
+    }
+    joined.push(line);
+  }
+  return joined.join('\n');
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  try {
+    const ok = await ClipboardSetText(text);
+    if (ok) return;
+  } catch {}
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {}
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function readClipboardText(): Promise<string> {
+  try {
+    return await ClipboardGetText();
+  } catch {}
+
+  return navigator.clipboard.readText();
+}
+
+function isShiftKeyEvent(e: KeyboardEvent): boolean {
+  return e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.keyCode === 16;
+}
+
+function isEnterKeyEvent(e: KeyboardEvent): boolean {
+  return e.key === 'Enter' || e.key === 'Return' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.keyCode === 13;
+}
+
+let lastTerminalCopyText = '';
+let lastTerminalCopyAt = 0;
+let pendingTerminalClipboardWrite: Promise<void> | null = null;
+
+function copyTerminalText(text: string): void {
+  lastTerminalCopyText = text;
+  lastTerminalCopyAt = Date.now();
+  const write = writeClipboardText(text);
+  pendingTerminalClipboardWrite = write;
+  void write.finally(() => {
+    if (pendingTerminalClipboardWrite === write) {
+      pendingTerminalClipboardWrite = null;
+    }
+  });
+}
+
+async function readPasteClipboardText(): Promise<string> {
+  const terminalCopyAge = Date.now() - lastTerminalCopyAt;
+  const hasRecentTerminalCopy = lastTerminalCopyText.length > 0 && terminalCopyAge < 2500;
+  if (hasRecentTerminalCopy && pendingTerminalClipboardWrite) {
+    try {
+      await pendingTerminalClipboardWrite;
+    } catch {}
+  }
+
+  try {
+    const text = await readClipboardText();
+    return hasRecentTerminalCopy ? lastTerminalCopyText : text;
+  } catch (error) {
+    if (hasRecentTerminalCopy) return lastTerminalCopyText;
+    throw error;
+  }
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select';
 }
 
 export function createTerminal(
@@ -162,32 +265,160 @@ export function createTerminal(
 
   fitAddon.fit();
 
-  // Helper to send a raw escape sequence to the PTY
-  const sendSeq = (seq: string) => {
-    const bytes = new TextEncoder().encode(seq);
+  // Helper to send raw text/control sequences to the PTY.
+  const sendData = (data: string) => {
+    const bytes = new TextEncoder().encode(data);
     const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
     EventsEmit('terminal:input', terminalId, btoa(binary));
   };
+  const sendSeq = (seq: string) => sendData(seq);
+
+  const isVisible = () => {
+    const rect = container.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && getComputedStyle(container).display !== 'none';
+  };
+
+  const isTerminalActive = (target?: EventTarget | null) => {
+    if (!isVisible()) return false;
+    if (target instanceof Node && container.contains(target)) return true;
+    if (terminal.hasSelection()) return true;
+    const activeElement = container.ownerDocument.activeElement;
+    if (activeElement && container.contains(activeElement)) return true;
+    return container.closest('.pane-focused') !== null;
+  };
+
+  const pasteText = (text: string) => {
+    if (!text) return;
+    terminal.focus();
+    terminal.clearSelection();
+    const normalized = text.replace(/\r?\n/g, '\r');
+    const payload = terminal.modes.bracketedPasteMode
+      ? `\x1b[200~${normalized}\x1b[201~`
+      : normalized;
+    sendData(payload);
+  };
+
+  let lastPasteHandledAt = 0;
+  let pasteSuppressedUntil = 0;
+  let pasteRequestToken = 0;
+  let shiftKeyDown = false;
+  let lastShiftEnterSentAt = 0;
+  const pasteFromSystemClipboard = async () => {
+    const token = ++pasteRequestToken;
+    pasteSuppressedUntil = Date.now() + 250;
+    try {
+      const text = await readPasteClipboardText();
+      if (token !== pasteRequestToken) return;
+      lastPasteHandledAt = Date.now();
+      pasteText(text);
+    } catch (error) {
+      console.warn('Clipboard paste failed:', error);
+    }
+  };
+
+  const sendShiftEnter = () => {
+    if (Date.now() - lastShiftEnterSentAt < 80) {
+      return;
+    }
+    lastShiftEnterSentAt = Date.now();
+    sendSeq('\x1b[13;2u');
+  };
 
   const keyCaptureHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
+    if (isShiftKeyEvent(e)) {
+      shiftKeyDown = true;
+      return;
+    }
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c' && isTerminalActive(e.target)) {
+      if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+        return;
+      }
+      const selection = terminal.getSelection();
+      if (selection) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
+        return;
+      }
+    }
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'v' && isTerminalActive(e.target)) {
+      if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+        return;
+      }
+      terminal.focus();
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      sendSeq('\x1b[13;2u');
+      void pasteFromSystemClipboard();
+      return;
+    }
+
+    if (
+      isEnterKeyEvent(e) &&
+      (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown) &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.isComposing &&
+      isTerminalActive(e.target)
+    ) {
+      if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      sendShiftEnter();
     }
   };
   container.addEventListener('keydown', keyCaptureHandler, { capture: true });
+  container.addEventListener('keypress', keyCaptureHandler, { capture: true });
+
+  const keyReleaseHandler = (e: KeyboardEvent) => {
+    if (isShiftKeyEvent(e)) {
+      shiftKeyDown = false;
+    }
+  };
+  container.addEventListener('keyup', keyReleaseHandler, { capture: true });
+
+  const blurHandler = () => {
+    shiftKeyDown = false;
+  };
+  window.addEventListener('blur', blurHandler);
 
   // Handle keyboard shortcuts that the Wails webview doesn't route natively
   terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
 
+    if (isShiftKeyEvent(e)) {
+      shiftKeyDown = true;
+      return true;
+    }
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c') {
+      const selection = terminal.getSelection();
+      if (selection) {
+        e.preventDefault();
+        e.stopPropagation();
+        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
+        return false;
+      }
+    }
+
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'v') {
+      terminal.focus();
+      void pasteFromSystemClipboard();
+      return false;
+    }
+
     // Fallback for Shift+Enter if the DOM capture listener misses it.
-    if (e.key === 'Enter' && e.shiftKey) {
+    if (isEnterKeyEvent(e) && (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown)) {
       e.preventDefault();
       e.stopPropagation();
-      sendSeq('\x1b[13;2u');
+      sendShiftEnter();
       return false;
     }
 
@@ -208,32 +439,50 @@ export function createTerminal(
     const selection = terminal.getSelection();
     if (selection) {
       e.preventDefault();
-      const lines = selection.split('\n').map((line: string) => line.trimEnd());
-      // Join lines that are likely wrapped (previous line is full-width
-      // or doesn't end with a natural break, next line doesn't start with space)
-      const joined: string[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const prevLine = joined.length > 0 ? joined[joined.length - 1] : '';
-        // Join with previous line if:
-        // - previous line exists and is close to terminal width (wrapped)
-        // - OR previous line doesn't end with a natural sentence/command break
-        // - AND current line doesn't start with whitespace (indented = new line)
-        if (joined.length > 0 && line.length > 0 && !line.startsWith(' ') && !line.startsWith('\t')) {
-          const prevLen = prevLine.length;
-          const nearFullWidth = prevLen >= terminal.cols - 2;
-          const endsWithContinuation = /[^.\s:;,)}\]>]$/.test(prevLine);
-          if (nearFullWidth || (endsWithContinuation && prevLen > 20)) {
-            joined[joined.length - 1] = prevLine + line;
-            continue;
-          }
-        }
-        joined.push(line);
-      }
-      e.clipboardData?.setData('text/plain', joined.join('\n'));
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const text = clipboardTextFromSelection(selection, terminal.cols);
+      e.clipboardData?.setData('text/plain', text);
+      copyTerminalText(text);
     }
   };
-  container.addEventListener('copy', copyHandler);
+  container.addEventListener('copy', copyHandler, { capture: true });
+
+  const pasteHandler = (e: ClipboardEvent) => {
+    if (!isTerminalActive(e.target)) return;
+    if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
+      return;
+    }
+    if (Date.now() < pasteSuppressedUntil || Date.now() - lastPasteHandledAt < 100) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return;
+    }
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!text) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    lastPasteHandledAt = Date.now();
+    pasteText(text);
+  };
+  container.addEventListener('paste', pasteHandler, { capture: true });
+
+  const documentKeyCaptureHandler = (e: KeyboardEvent) => {
+    keyCaptureHandler(e);
+  };
+  const documentKeyReleaseHandler = (e: KeyboardEvent) => {
+    keyReleaseHandler(e);
+  };
+  const documentPasteHandler = (e: ClipboardEvent) => {
+    if (e.target instanceof Node && container.contains(e.target)) return;
+    pasteHandler(e);
+  };
+  container.ownerDocument.addEventListener('keydown', documentKeyCaptureHandler, { capture: true });
+  container.ownerDocument.addEventListener('keypress', documentKeyCaptureHandler, { capture: true });
+  container.ownerDocument.addEventListener('keyup', documentKeyReleaseHandler, { capture: true });
+  container.ownerDocument.addEventListener('paste', documentPasteHandler, { capture: true });
 
   // Mouse scroll handling — sends SGR mouse sequences so tmux can scroll
   // in both alternate screen (TUI apps) and normal buffer (server logs).
@@ -317,6 +566,14 @@ export function createTerminal(
 
   // Wire up input: terminal -> Go backend
   const onDataDispose = terminal.onData((data) => {
+    if (data === '\r' && Date.now() - lastShiftEnterSentAt < 150) {
+      return;
+    }
+    if (data === '\r' && shiftKeyDown) {
+      sendShiftEnter();
+      return;
+    }
+
     const bytes = new TextEncoder().encode(data);
     const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
     const encoded = btoa(binary);
@@ -355,7 +612,15 @@ export function createTerminal(
     if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
-    container.removeEventListener('copy', copyHandler);
+    container.removeEventListener('keypress', keyCaptureHandler, { capture: true } as any);
+    container.removeEventListener('keyup', keyReleaseHandler, { capture: true } as any);
+    container.removeEventListener('copy', copyHandler, { capture: true } as any);
+    container.removeEventListener('paste', pasteHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('keydown', documentKeyCaptureHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('keypress', documentKeyCaptureHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('keyup', documentKeyReleaseHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('paste', documentPasteHandler, { capture: true } as any);
+    window.removeEventListener('blur', blurHandler);
     onDataDispose.dispose();
     onResizeDispose.dispose();
     cancelOutput();

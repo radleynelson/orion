@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +12,7 @@ import (
 
 	"orion/internal/config"
 	"orion/internal/notify"
+	"orion/internal/tmuxutil"
 )
 
 // Workspace represents a git worktree.
@@ -50,6 +53,9 @@ func (m *Manager) GetProjectInfo(path string) (*ProjectInfo, error) {
 	root, err := getRepoRoot(path)
 	if err != nil {
 		return nil, err
+	}
+	if _, err := config.EnsureDefaultFile(root); err != nil {
+		return nil, fmt.Errorf("create default %s: %w", config.FileName, err)
 	}
 	return &ProjectInfo{
 		Name:       filepath.Base(root),
@@ -126,8 +132,16 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 
 // CreateWorkspace creates a new worktree and copies credential files.
 func (m *Manager) CreateWorkspace(repoRoot, name string) (*Workspace, error) {
+	return m.CreateWorkspaceFrom(repoRoot, name, "")
+}
+
+// CreateWorkspaceFrom creates a new worktree from a caller-selected base ref.
+func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*Workspace, error) {
 	repoName := filepath.Base(repoRoot)
-	baseBranch := getMainBranch(repoRoot)
+	baseBranch := strings.TrimSpace(baseRef)
+	if baseBranch == "" {
+		baseBranch = getMainBranch(repoRoot)
+	}
 
 	mainPath := getMainWorktreePath(repoRoot)
 
@@ -230,39 +244,61 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 
 	// Determine command from config or defaults
 	var agentCmd string
+	var agentProvider string
+	var agentLabel string
+	var agentIcon string
 	if agentCfg, ok := cfg.Agents[agentType]; ok {
 		agentCmd = agentCfg.Command
+		agentProvider = agentCfg.Provider
+		agentLabel = agentCfg.Label
+		agentIcon = agentCfg.Icon
 	} else {
 		switch agentType {
 		case "claude":
-			agentCmd = "claude --dangerously-skip-permissions --effort xhigh --chrome"
+			agentCmd = "claude --dangerously-skip-permissions"
+			agentProvider = "claude"
+			agentLabel = "Claude"
 		case "codex":
 			agentCmd = "codex --dangerously-bypass-approvals-and-sandbox"
+			agentProvider = "codex"
+			agentLabel = "Codex"
 		}
 	}
 
-	sessionType := normalizeSessionType(agentType)
+	sessionType := normalizeSessionType(agentProvider)
+	if sessionType == "" {
+		sessionType = normalizeSessionType(agentType)
+	}
 	if sessionType == "" {
 		sessionType = sessionTypeForCommand(agentCmd)
 	}
+	if sessionType == "claude" && !strings.Contains(agentCmd, "--resume") && !strings.Contains(agentCmd, "--session-id") {
+		if sessionID := randomUUID(); sessionID != "" {
+			agentCmd = strings.TrimSpace(agentCmd + " --session-id " + shellQuote(sessionID))
+		}
+	}
 
 	// Install notification hooks for Claude so Orion sees Stop/Notification events.
-	if agentType == "claude" {
+	if sessionType == "claude" {
 		if scriptPath, err := notify.InstallHookScript(); err == nil {
 			notify.InstallWorkspaceHooks(workspacePath, scriptPath)
 		}
 	}
 
-	return m.launchCommand(repoRoot, workspacePath, agentCmd, sessionType, labelForType(sessionType))
+	label := strings.TrimSpace(agentLabel)
+	if label == "" {
+		label = labelForType(sessionType)
+	}
+	return m.launchCommand(repoRoot, workspacePath, agentCmd, sessionType, label, agentIcon)
 }
 
 // LaunchCommand creates a tmux session and sends a specific command.
 func (m *Manager) LaunchCommand(repoRoot string, workspacePath string, command string) (string, error) {
 	sessionType := sessionTypeForCommand(command)
-	return m.launchCommand(repoRoot, workspacePath, command, sessionType, labelForType(sessionType))
+	return m.launchCommand(repoRoot, workspacePath, command, sessionType, labelForType(sessionType), "")
 }
 
-func (m *Manager) launchCommand(repoRoot string, workspacePath string, command string, sessionType string, label string) (string, error) {
+func (m *Manager) launchCommand(repoRoot string, workspacePath string, command string, sessionType string, label string, icon string) (string, error) {
 	repoName := filepath.Base(repoRoot)
 	wsName := filepath.Base(workspacePath)
 
@@ -274,7 +310,7 @@ func (m *Manager) launchCommand(repoRoot string, workspacePath string, command s
 			return "", err
 		}
 	}
-	markTmuxSession(tmuxName, sessionType, label, workspacePath, command)
+	markTmuxSession(tmuxName, sessionType, label, workspacePath, command, icon)
 
 	// Source .orion/env.sh first so the agent has port awareness
 	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
@@ -304,7 +340,7 @@ func (m *Manager) LaunchShell(repoRoot string, workspacePath string) (string, er
 			return "", err
 		}
 	}
-	markTmuxSession(tmuxName, "shell", "Shell", workspacePath, "")
+	markTmuxSession(tmuxName, "shell", "Shell", workspacePath, "", "")
 
 	return tmuxName, nil
 }
@@ -366,6 +402,7 @@ func hasSession(name string) bool {
 }
 
 func createTmuxSession(name, workDir string) error {
+	tmuxutil.ConfigureExtendedKeys()
 	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", workDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
@@ -374,6 +411,7 @@ func createTmuxSession(name, workDir string) error {
 	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()
 	exec.Command("tmux", "set-option", "-t", name, "status", "off").Run()
 	exec.Command("tmux", "set-option", "-t", name, "set-clipboard", "on").Run()
+	tmuxutil.ConfigureSessionExtendedKeys(name)
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	return nil
@@ -382,7 +420,7 @@ func createTmuxSession(name, workDir string) error {
 // createTmuxSessionForAgent creates a tmux session with mouse OFF so that
 // TUI apps like Claude Code and Codex handle their own mouse/scroll events.
 
-func markTmuxSession(name string, sessionType string, label string, workspacePath string, command string) {
+func markTmuxSession(name string, sessionType string, label string, workspacePath string, command string, icon string) {
 	sessionType = normalizeSessionType(sessionType)
 	if sessionType == "" {
 		sessionType = "shell"
@@ -392,6 +430,7 @@ func markTmuxSession(name string, sessionType string, label string, workspacePat
 	}
 	setTmuxOption(name, "@orion_type", sessionType)
 	setTmuxOption(name, "@orion_label", label)
+	setTmuxOption(name, "@orion_icon", strings.TrimSpace(icon))
 	setTmuxOption(name, "@orion_workspace", workspacePath)
 	if command != "" {
 		setTmuxOption(name, "@orion_command", command)
@@ -438,6 +477,27 @@ func labelForType(sessionType string) string {
 	default:
 		return "Shell"
 	}
+}
+
+func randomUUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	hexValue := hex.EncodeToString(b[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hexValue[:8], hexValue[8:12], hexValue[12:16], hexValue[16:20], hexValue[20:32])
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n'\"\\$`!*?[]{}()<>|&;") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func sendKeys(name, keys string) error {

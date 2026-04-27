@@ -23,8 +23,30 @@ export namespace chatattachments {
 
 }
 
-export namespace claudechat {
+export namespace claudesdk {
 
+	export class HistoryThread {
+	    threadId: string;
+	    workspacePath?: string;
+	    model?: string;
+	    updatedAt: string;
+	    messageCount: number;
+	    preview?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new HistoryThread(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.threadId = source["threadId"];
+	        this.workspacePath = source["workspacePath"];
+	        this.model = source["model"];
+	        this.updatedAt = source["updatedAt"];
+	        this.messageCount = source["messageCount"];
+	        this.preview = source["preview"];
+	    }
+	}
 	export class Message {
 	    id: string;
 	    sessionId: string;
@@ -88,6 +110,15 @@ export namespace claudechat {
 	    workspacePath: string;
 	    status: string;
 	    threadId?: string;
+	    provider?: string;
+	    icon?: string;
+	    viewMode?: string;
+	    runtimeSessionId?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    permissionMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -101,6 +132,15 @@ export namespace claudechat {
 	        this.workspacePath = source["workspacePath"];
 	        this.status = source["status"];
 	        this.threadId = source["threadId"];
+	        this.provider = source["provider"];
+	        this.icon = source["icon"];
+	        this.viewMode = source["viewMode"];
+	        this.runtimeSessionId = source["runtimeSessionId"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
 	    }
 	}
 
@@ -108,6 +148,28 @@ export namespace claudechat {
 
 export namespace codexchat {
 
+	export class HistoryThread {
+	    threadId: string;
+	    workspacePath?: string;
+	    model?: string;
+	    updatedAt: string;
+	    messageCount: number;
+	    preview?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new HistoryThread(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.threadId = source["threadId"];
+	        this.workspacePath = source["workspacePath"];
+	        this.model = source["model"];
+	        this.updatedAt = source["updatedAt"];
+	        this.messageCount = source["messageCount"];
+	        this.preview = source["preview"];
+	    }
+	}
 	export class Message {
 	    id: string;
 	    sessionId: string;
@@ -170,6 +232,7 @@ export namespace codexchat {
 	    status: string;
 	    threadId?: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    model?: string;
@@ -191,6 +254,7 @@ export namespace codexchat {
 	        this.status = source["status"];
 	        this.threadId = source["threadId"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.model = source["model"];
@@ -206,7 +270,16 @@ export namespace codexchat {
 export namespace config {
 
 	export class AgentConfig {
+	    Label: string;
+	    Provider: string;
+	    Icon: string;
 	    Command: string;
+	    Model: string;
+	    ReasoningEffort: string;
+	    ApprovalPolicy: string;
+	    SandboxMode: string;
+	    PermissionMode: string;
+	    CollaborationMode: string;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentConfig(source);
@@ -214,7 +287,16 @@ export namespace config {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Label = source["Label"];
+	        this.Provider = source["Provider"];
+	        this.Icon = source["Icon"];
 	        this.Command = source["Command"];
+	        this.Model = source["Model"];
+	        this.ReasoningEffort = source["ReasoningEffort"];
+	        this.ApprovalPolicy = source["ApprovalPolicy"];
+	        this.SandboxMode = source["SandboxMode"];
+	        this.PermissionMode = source["PermissionMode"];
+	        this.CollaborationMode = source["CollaborationMode"];
 	    }
 	}
 	export class CredentialsConfig {
@@ -291,7 +373,7 @@ export namespace config {
 }
 
 export namespace diag {
-	
+
 	export class GoStats {
 	    heapAllocMB: number;
 	    heapSysMB: number;
@@ -299,11 +381,11 @@ export namespace diag {
 	    sysMB: number;
 	    numGC: number;
 	    numGoroutine: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GoStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.heapAllocMB = source["heapAllocMB"];
@@ -320,11 +402,11 @@ export namespace diag {
 	    helpersMB: number;
 	    sessionsMB: number;
 	    grandMB: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Totals(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.orionMB = source["orionMB"];
@@ -340,11 +422,11 @@ export namespace diag {
 	    panePID: number;
 	    processes: ProcessStats[];
 	    totalRSSMB: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SessionMem(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sessionName = source["sessionName"];
@@ -353,7 +435,7 @@ export namespace diag {
 	        this.processes = this.convertValues(source["processes"], ProcessStats);
 	        this.totalRSSMB = source["totalRSSMB"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -378,11 +460,11 @@ export namespace diag {
 	    name: string;
 	    rssMB: number;
 	    cpuPct: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ProcessStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pid = source["pid"];
@@ -400,11 +482,11 @@ export namespace diag {
 	    sessions: SessionMem[];
 	    totals: Totals;
 	    timestamp: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new MemorySnapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.go = this.convertValues(source["go"], GoStats);
@@ -415,7 +497,7 @@ export namespace diag {
 	        this.totals = this.convertValues(source["totals"], Totals);
 	        this.timestamp = source["timestamp"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -434,8 +516,8 @@ export namespace diag {
 		    return a;
 		}
 	}
-	
-	
+
+
 
 }
 
@@ -557,6 +639,15 @@ export namespace main {
 	    name: string;
 	    command: string;
 	    label: string;
+	    provider?: string;
+	    icon?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    permissionMode?: string;
+	    collaborationMode?: string;
+	    chatCapable: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentTypeInfo(source);
@@ -567,6 +658,15 @@ export namespace main {
 	        this.name = source["name"];
 	        this.command = source["command"];
 	        this.label = source["label"];
+	        this.provider = source["provider"];
+	        this.icon = source["icon"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
+	        this.collaborationMode = source["collaborationMode"];
+	        this.chatCapable = source["chatCapable"];
 	    }
 	}
 
@@ -603,6 +703,7 @@ export namespace state {
 	    tmuxSession: string;
 	    workspacePath: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
@@ -610,6 +711,8 @@ export namespace state {
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
 	    sandboxMode?: string;
+	    permissionMode?: string;
+	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SavedTab(source);
@@ -622,6 +725,7 @@ export namespace state {
 	        this.tmuxSession = source["tmuxSession"];
 	        this.workspacePath = source["workspacePath"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
@@ -629,6 +733,8 @@ export namespace state {
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
 	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
+	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}
 	export class SessionInfo {
@@ -637,6 +743,7 @@ export namespace state {
 	    label: string;
 	    workspacePath: string;
 	    provider?: string;
+	    icon?: string;
 	    viewMode?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
@@ -644,6 +751,8 @@ export namespace state {
 	    reasoningEffort?: string;
 	    approvalPolicy?: string;
 	    sandboxMode?: string;
+	    permissionMode?: string;
+	    collaborationMode?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -656,6 +765,7 @@ export namespace state {
 	        this.label = source["label"];
 	        this.workspacePath = source["workspacePath"];
 	        this.provider = source["provider"];
+	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
@@ -663,6 +773,8 @@ export namespace state {
 	        this.reasoningEffort = source["reasoningEffort"];
 	        this.approvalPolicy = source["approvalPolicy"];
 	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
+	        this.collaborationMode = source["collaborationMode"];
 	    }
 	}
 
@@ -673,6 +785,15 @@ export namespace web {
 	export class AgentType {
 	    name: string;
 	    label: string;
+	    provider?: string;
+	    icon?: string;
+	    model?: string;
+	    reasoningEffort?: string;
+	    approvalPolicy?: string;
+	    sandboxMode?: string;
+	    permissionMode?: string;
+	    collaborationMode?: string;
+	    chatCapable: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new AgentType(source);
@@ -682,6 +803,15 @@ export namespace web {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.label = source["label"];
+	        this.provider = source["provider"];
+	        this.icon = source["icon"];
+	        this.model = source["model"];
+	        this.reasoningEffort = source["reasoningEffort"];
+	        this.approvalPolicy = source["approvalPolicy"];
+	        this.sandboxMode = source["sandboxMode"];
+	        this.permissionMode = source["permissionMode"];
+	        this.collaborationMode = source["collaborationMode"];
+	        this.chatCapable = source["chatCapable"];
 	    }
 	}
 

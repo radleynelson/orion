@@ -18,13 +18,21 @@ actor OrionClient {
     func getProjects() async throws -> [String] { try await get("/api/projects") }
     func getProjectInfo(root: String) async throws -> ProjectInfo { try await get("/api/projects/info", query: ["root": root]) }
     func getWorkspaces(root: String) async throws -> [Workspace] { try await get("/api/workspaces", query: ["root": root]) }
+    func createWorkspace(root: String, name: String, baseRef: String) async throws -> Workspace {
+        try await post("/api/workspaces", body: ["root": root, "name": name, "baseRef": baseRef])
+    }
     func getSessions(repo: String, workspacePaths: [String]) async throws -> [SessionInfo] {
         try await get("/api/sessions", query: ["repo": repo, "workspaces": workspacePaths.joined(separator: ",")])
     }
     func createTerminal(tmuxSession: String) async throws -> CreateTerminalResponse { try await post("/api/terminal", body: ["tmuxSession": tmuxSession]) }
     func launchShell(repoRoot: String, workspacePath: String) async throws -> LaunchShellResponse { try await post("/api/shell", body: ["repoRoot": repoRoot, "workspacePath": workspacePath]) }
-    func convertChatToTerminal(repoRoot: String, workspacePath: String, sessionId: String, chatKind: String) async throws -> LaunchAgentResponse {
-        try await post("/api/convert-chat-to-terminal", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "sessionId": sessionId, "chatKind": chatKind])
+    func convertChatToTerminal(repoRoot: String, workspacePath: String, sessionId: String, chatKind: String, model: String? = nil, reasoningEffort: String? = nil, permissionMode: String? = nil, collaborationMode: String? = nil) async throws -> LaunchAgentResponse {
+        var body = ["repoRoot": repoRoot, "workspacePath": workspacePath, "sessionId": sessionId, "chatKind": chatKind]
+        if let model, !model.isEmpty { body["model"] = model }
+        if let reasoningEffort, !reasoningEffort.isEmpty { body["reasoningEffort"] = reasoningEffort }
+        if let permissionMode, !permissionMode.isEmpty { body["permissionMode"] = permissionMode }
+        if let collaborationMode, !collaborationMode.isEmpty { body["collaborationMode"] = collaborationMode }
+        return try await post("/api/convert-chat-to-terminal", body: body)
     }
 
     // Agents
@@ -33,15 +41,53 @@ actor OrionClient {
         try await post("/api/agent", body: ["repoRoot": repoRoot, "workspacePath": workspacePath, "agentType": agentType])
     }
 
-    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil) async throws -> LaunchCodexChatResponse {
+    func launchCodexChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: CodexLaunchOptions? = CodexLaunchOptions(), icon: String? = nil) async throws -> LaunchCodexChatResponse {
         var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
         if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
         if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        if let icon, !icon.isEmpty { body["icon"] = icon }
+        if let options {
+            if !options.model.isEmpty { body["model"] = options.model }
+            body["reasoningEffort"] = options.reasoningEffort
+            body["approvalPolicy"] = options.approvalPolicy
+            body["sandboxMode"] = options.sandboxMode
+            body["collaborationMode"] = options.collaborationMode
+        }
         return try await post("/api/codex-chat", body: body)
     }
 
-    func launchClaudeChat(repoRoot: String, workspacePath: String) async throws -> LaunchClaudeChatResponse {
-        try await post("/api/claude-chat", body: ["repoRoot": repoRoot, "workspacePath": workspacePath])
+    func getCodexHistory(workspacePath: String, limit: Int = 20) async throws -> [CodexHistoryThread] {
+        try await get("/api/codex-chat/history", query: ["workspace": workspacePath, "limit": String(limit)])
+    }
+
+    func launchClaudeChat(repoRoot: String, workspacePath: String, threadId: String? = nil, tmuxSession: String? = nil, options: ClaudeLaunchOptions? = nil, icon: String? = nil) async throws -> LaunchClaudeChatResponse {
+        var body = ["repoRoot": repoRoot, "workspacePath": workspacePath]
+        if let threadId, !threadId.isEmpty { body["threadId"] = threadId }
+        if let tmuxSession, !tmuxSession.isEmpty { body["tmuxSession"] = tmuxSession }
+        if let icon, !icon.isEmpty { body["icon"] = icon }
+        if let model = options?.model, !model.isEmpty { body["model"] = model }
+        if let reasoningEffort = options?.reasoningEffort, !reasoningEffort.isEmpty { body["reasoningEffort"] = reasoningEffort }
+        if let approvalPolicy = options?.approvalPolicy, !approvalPolicy.isEmpty { body["approvalPolicy"] = approvalPolicy }
+        if let sandboxMode = options?.sandboxMode, !sandboxMode.isEmpty { body["sandboxMode"] = sandboxMode }
+        if let permissionMode = options?.permissionMode, !permissionMode.isEmpty { body["permissionMode"] = permissionMode }
+        return try await post("/api/claude-chat", body: body)
+    }
+
+    func sendCodexChatMessage(sessionId: String, text: String) async throws {
+        let _: [String: String] = try await post("/api/codex-chat/message", body: ["sessionId": sessionId, "text": text])
+    }
+
+    func sendClaudeChatMessage(sessionId: String, text: String) async throws {
+        let _: [String: String] = try await post("/api/claude-chat/message", body: ["sessionId": sessionId, "text": text])
+    }
+
+    func getChangedFiles(workspacePath: String, base: String = "") async throws -> [GitChangedFile] {
+        try await get("/api/git/changes", query: ["workspace": workspacePath, "base": base])
+    }
+
+    func getUnifiedDiff(workspacePath: String, base: String = "", filePath: String) async throws -> String {
+        let response: GitDiffResponse = try await get("/api/git/diff", query: ["workspace": workspacePath, "base": base, "file": filePath])
+        return response.diff
     }
 
     // Server management

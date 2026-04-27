@@ -18,6 +18,10 @@ export function ApproveClaudePlan(arg1) {
   return window['go']['main']['App']['ApproveClaudePlan'](arg1);
 }
 
+export function ApproveCodexPlan(arg1) {
+  return window['go']['main']['App']['ApproveCodexPlan'](arg1);
+}
+
 export function AttachClaudeChat(arg1, arg2) {
   return window['go']['main']['App']['AttachClaudeChat'](arg1, arg2);
 }
@@ -30,8 +34,24 @@ export function ConvertChatToTerminal(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ConvertChatToTerminal'](arg1, arg2, arg3, arg4);
 }
 
+export function ConvertChatToTerminalWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ConvertChatToTerminalWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
+export function ConvertTerminalToClaudeChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ConvertTerminalToClaudeChat'](arg1, arg2, arg3);
+}
+
+export function ConvertTerminalToClaudeChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ConvertTerminalToClaudeChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
 export function ConvertTerminalToCodexChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ConvertTerminalToCodexChat'](arg1, arg2, arg3);
+}
+
+export function ConvertTerminalToCodexChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ConvertTerminalToCodexChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function CreateAttachedTerminal(arg1, arg2) {
@@ -48,6 +68,10 @@ export function CreateTerminalInDir(arg1, arg2) {
 
 export function CreateWorkspace(arg1, arg2) {
   return window['go']['main']['App']['CreateWorkspace'](arg1, arg2);
+}
+
+export function CreateWorkspaceFrom(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateWorkspaceFrom'](arg1, arg2, arg3);
 }
 
 export function DeleteWorkspace(arg1, arg2) {
@@ -72,6 +96,10 @@ export function EmitSessionCreated(arg1, arg2, arg3, arg4) {
 
 export function EmitSessionCreatedInfo(arg1) {
   return window['go']['main']['App']['EmitSessionCreatedInfo'](arg1);
+}
+
+export function EmitSessionKilled(arg1) {
+  return window['go']['main']['App']['EmitSessionKilled'](arg1);
 }
 
 export function GetAgentNames(arg1) {
@@ -170,16 +198,32 @@ export function LaunchClaudeChat(arg1, arg2) {
   return window['go']['main']['App']['LaunchClaudeChat'](arg1, arg2);
 }
 
+export function LaunchClaudeChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['LaunchClaudeChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function LaunchCodexChat(arg1, arg2) {
   return window['go']['main']['App']['LaunchCodexChat'](arg1, arg2);
+}
+
+export function LaunchCodexChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['LaunchCodexChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function LaunchShell(arg1, arg2) {
   return window['go']['main']['App']['LaunchShell'](arg1, arg2);
 }
 
+export function ListClaudeChatHistory(arg1, arg2) {
+  return window['go']['main']['App']['ListClaudeChatHistory'](arg1, arg2);
+}
+
 export function ListClaudeChatSessions(arg1) {
   return window['go']['main']['App']['ListClaudeChatSessions'](arg1);
+}
+
+export function ListCodexChatHistory(arg1, arg2) {
+  return window['go']['main']['App']['ListCodexChatHistory'](arg1, arg2);
 }
 
 export function ListCodexChatSessions(arg1) {
@@ -226,8 +270,20 @@ export function RecoverSessions(arg1, arg2) {
   return window['go']['main']['App']['RecoverSessions'](arg1, arg2);
 }
 
+export function ResumeClaudeChat(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResumeClaudeChat'](arg1, arg2, arg3);
+}
+
+export function ResumeClaudeChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ResumeClaudeChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+}
+
 export function ResumeCodexChat(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResumeCodexChat'](arg1, arg2, arg3);
+}
+
+export function ResumeCodexChatWithOptions(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['ResumeCodexChatWithOptions'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function RevealInFinder(arg1) {

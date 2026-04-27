@@ -23,7 +23,6 @@ const (
 	Provider               = "codex"
 	ViewModeChat           = "chat"
 	ViewModeTerminal       = "terminal"
-	defaultModel           = "gpt-5.4"
 	defaultReasoningEffort = "xhigh"
 	defaultApprovalPolicy  = "never"
 	defaultSandboxMode     = "danger-full-access"
@@ -38,6 +37,7 @@ type SessionInfo struct {
 	Status            string `json:"status"`
 	ThreadID          string `json:"threadId,omitempty"`
 	Provider          string `json:"provider,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	Model             string `json:"model,omitempty"`
@@ -68,6 +68,7 @@ type Listener func(sessionID string, message Message)
 type StartOptions struct {
 	WorkspacePath     string
 	Label             string
+	Icon              string
 	ThreadID          string
 	Model             string
 	ReasoningEffort   string
@@ -117,10 +118,8 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 	if label == "" {
 		label = "Codex Chat"
 	}
+	icon := strings.TrimSpace(options.Icon)
 	model := strings.TrimSpace(options.Model)
-	if model == "" {
-		model = defaultModel
-	}
 	reasoningEffort := strings.TrimSpace(options.ReasoningEffort)
 	if reasoningEffort == "" {
 		reasoningEffort = defaultReasoningEffort
@@ -136,6 +135,10 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 	collaborationMode := strings.TrimSpace(options.CollaborationMode)
 	if collaborationMode == "" {
 		collaborationMode = defaultCollabMode
+	}
+	threadID := strings.TrimSpace(options.ThreadID)
+	if threadID != "" && !ValidThreadForWorkspace(threadID, workspacePath) {
+		return nil, fmt.Errorf("Codex thread not found for workspace: %s", threadID)
 	}
 
 	id := "codex-chat-" + shortID()
@@ -165,8 +168,9 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		cancel:            cancel,
 		id:                id,
 		label:             label,
+		icon:              icon,
 		workspacePath:     workspacePath,
-		threadID:          strings.TrimSpace(options.ThreadID),
+		threadID:          threadID,
 		status:            "starting",
 		cmd:               cmd,
 		stdin:             stdin,
@@ -181,12 +185,19 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		collaborationMode: collaborationMode,
 	}
 	if session.threadID != "" {
-		session.messages = LoadHistory(session.threadID, workspacePath)
+		session.messages = MergeRestoredMessages(
+			LoadCachedMessages(session.threadID, workspacePath),
+			LoadHistory(session.threadID, workspacePath),
+		)
 		for i := range session.messages {
 			session.messages[i].SessionID = session.id
 			if session.messages[i].ThreadID == "" {
 				session.messages[i].ThreadID = session.threadID
 			}
+		}
+		if session.hasOpenPlan() {
+			session.collaborationMode = "plan"
+			session.status = "waiting_input"
 		}
 	}
 
@@ -219,6 +230,22 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	defer m.mu.RUnlock()
 	session, ok := m.sessions[id]
 	return session, ok
+}
+
+func (m *Manager) SetIcon(id string, icon string) {
+	icon = strings.TrimSpace(icon)
+	if icon == "" {
+		return
+	}
+	m.mu.RLock()
+	session, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	session.messagesMu.Lock()
+	session.icon = icon
+	session.messagesMu.Unlock()
 }
 
 func (m *Manager) List(workspacePaths []string) []SessionInfo {
@@ -272,6 +299,7 @@ type Session struct {
 
 	id                string
 	label             string
+	icon              string
 	workspacePath     string
 	threadID          string
 	status            string
@@ -305,9 +333,11 @@ type Session struct {
 }
 
 type pendingInput struct {
-	requestID   string
-	toolUseID   string
-	questionIDs []string
+	requestID      string
+	requestIDValue any
+	toolUseID      string
+	questionIDs    []string
+	submitted      bool
 }
 
 type rpcResponse struct {
@@ -326,6 +356,7 @@ func (s *Session) Info() SessionInfo {
 		Status:            s.status,
 		ThreadID:          s.threadID,
 		Provider:          Provider,
+		Icon:              s.icon,
 		ViewMode:          ViewModeChat,
 		RuntimeSessionID:  s.id,
 		Model:             s.model,
@@ -361,9 +392,26 @@ func (s *Session) Subscribe() (<-chan Message, func()) {
 }
 
 func (s *Session) Send(text string, attachments []chatattachments.Attachment) error {
+	return s.send(text, attachments, s.collaborationMode)
+}
+
+func (s *Session) ApprovePlan() error {
+	if err := s.send("Approved. Continue with the approved plan and implement it now.", nil, defaultCollabMode); err != nil {
+		return err
+	}
+	s.setCollaborationMode(defaultCollabMode, "Codex plan approved")
+	s.emit(Message{Type: "plan_resolved", Text: "Plan approved"})
+	return nil
+}
+
+func (s *Session) send(text string, attachments []chatattachments.Attachment, collaborationMode string) error {
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachments) == 0 {
 		return nil
+	}
+	collaborationMode = strings.TrimSpace(collaborationMode)
+	if collaborationMode == "" {
+		collaborationMode = s.collaborationMode
 	}
 
 	s.sendMu.Lock()
@@ -401,18 +449,22 @@ func (s *Session) Send(text string, attachments []chatattachments.Attachment) er
 		})
 	}
 
+	settings := map[string]any{
+		"reasoning_effort":       s.reasoningEffort,
+		"developer_instructions": nil,
+	}
+	if s.model != "" {
+		settings["model"] = s.model
+	}
+
 	params := map[string]any{
 		"threadId":       s.threadID,
 		"input":          input,
 		"approvalPolicy": s.approvalPolicy,
 		"effort":         s.reasoningEffort,
 		"collaborationMode": map[string]any{
-			"mode": s.collaborationMode,
-			"settings": map[string]any{
-				"model":                  s.model,
-				"reasoning_effort":       s.reasoningEffort,
-				"developer_instructions": nil,
-			},
+			"mode":     collaborationMode,
+			"settings": settings,
 		},
 	}
 
@@ -432,12 +484,14 @@ func (s *Session) Answer(toolUseID string, result string) error {
 
 	s.pendingInputsMu.Lock()
 	pending, ok := s.pendingInputs[toolUseID]
-	if ok {
-		delete(s.pendingInputs, toolUseID)
-	}
 	s.pendingInputsMu.Unlock()
 	if !ok {
-		return fmt.Errorf("pending user input not found: %s", toolUseID)
+		result = strings.TrimSpace(result)
+		if result == "" || s.threadID == "" {
+			return fmt.Errorf("pending user input not found: %s", toolUseID)
+		}
+		s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: result})
+		return s.Send("Answer to the pending AskUserQuestion: "+result, nil)
 	}
 
 	answers := make(map[string]any)
@@ -448,10 +502,20 @@ func (s *Session) Answer(toolUseID string, result string) error {
 		answers["answer"] = map[string]any{"answers": []string{result}}
 	}
 
-	if err := s.respond(pending.requestID, map[string]any{"answers": answers}); err != nil {
+	s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: result})
+	requestID := pending.requestIDValue
+	if requestID == nil {
+		requestID = pending.requestID
+	}
+	if err := s.respond(requestID, map[string]any{"answers": answers}); err != nil {
 		return err
 	}
-	s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answered"})
+	s.pendingInputsMu.Lock()
+	if current, ok := s.pendingInputs[toolUseID]; ok {
+		current.submitted = true
+		s.pendingInputs[toolUseID] = current
+	}
+	s.pendingInputsMu.Unlock()
 	s.setStatus("running")
 	return nil
 }
@@ -490,10 +554,12 @@ func (s *Session) bootstrap() error {
 		"cwd":                    s.workspacePath,
 		"approvalPolicy":         s.approvalPolicy,
 		"sandbox":                s.sandboxMode,
-		"model":                  s.model,
 		"effort":                 s.reasoningEffort,
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": true,
+	}
+	if s.model != "" {
+		params["model"] = s.model
 	}
 	if s.threadID != "" {
 		method = "thread/resume"
@@ -519,23 +585,12 @@ func (s *Session) bootstrap() error {
 		return fmt.Errorf("%s returned no thread id", method)
 	}
 
-	s.emit(Message{
-		Type:     "system",
-		Text:     "Codex chat ready",
-		ThreadID: s.threadID,
-		Details: compactAny(map[string]any{
-			"provider":          Provider,
-			"viewMode":          ViewModeChat,
-			"runtimeSessionId":  s.id,
-			"threadId":          s.threadID,
-			"model":             s.model,
-			"reasoningEffort":   s.reasoningEffort,
-			"approvalPolicy":    s.approvalPolicy,
-			"sandboxMode":       s.sandboxMode,
-			"collaborationMode": s.collaborationMode,
-		}),
-	})
-	s.setStatus("idle")
+	s.emitSessionMetadata("Codex chat ready")
+	if s.hasOpenPlan() {
+		s.setStatus("waiting_input")
+	} else {
+		s.setStatus("idle")
+	}
 	return nil
 }
 
@@ -578,7 +633,7 @@ func (s *Session) notify(method string, params map[string]any) error {
 	return s.writeEnvelope(map[string]any{"method": method, "params": params})
 }
 
-func (s *Session) respond(id string, result map[string]any) error {
+func (s *Session) respond(id any, result map[string]any) error {
 	return s.writeEnvelope(map[string]any{"id": id, "result": result})
 }
 
@@ -647,9 +702,10 @@ func (s *Session) handleLine(line []byte) {
 
 	if hasID && hasMethod {
 		id := rawID(idRaw)
+		idValue := rawIDValue(idRaw)
 		method := rawString(methodRaw)
 		params := rawParams(envelope["params"])
-		s.handleServerRequest(id, method, params)
+		s.handleServerRequest(id, idValue, method, params)
 		return
 	}
 
@@ -684,7 +740,7 @@ func (s *Session) handleResponse(id string, resultRaw json.RawMessage, errorRaw 
 	ch <- rpcResponse{result: result}
 }
 
-func (s *Session) handleServerRequest(id string, method string, params map[string]any) {
+func (s *Session) handleServerRequest(id string, idValue any, method string, params map[string]any) {
 	switch method {
 	case "item/tool/requestUserInput":
 		toolUseID := stringFrom(params, "itemId", "approvalId")
@@ -694,9 +750,10 @@ func (s *Session) handleServerRequest(id string, method string, params map[strin
 		questionIDs, details := summarizeQuestions(params["questions"])
 		s.pendingInputsMu.Lock()
 		s.pendingInputs[toolUseID] = pendingInput{
-			requestID:   id,
-			toolUseID:   toolUseID,
-			questionIDs: questionIDs,
+			requestID:      id,
+			requestIDValue: idValue,
+			toolUseID:      toolUseID,
+			questionIDs:    questionIDs,
 		}
 		s.pendingInputsMu.Unlock()
 		s.emit(Message{
@@ -709,21 +766,21 @@ func (s *Session) handleServerRequest(id string, method string, params map[strin
 		s.setStatus("waiting_input")
 	case "item/permissions/requestApproval":
 		permissions, _ := params["permissions"].(map[string]any)
-		_ = s.respond(id, map[string]any{
+		_ = s.respond(idValue, map[string]any{
 			"scope":       "session",
 			"permissions": permissions,
 		})
 		s.emit(Message{Type: "tool_result", ToolUseID: id, ToolName: "Permissions", Text: "Approved automatically"})
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		_ = s.respond(id, map[string]any{"decision": "accept"})
+		_ = s.respond(idValue, map[string]any{"decision": "accept"})
 		s.emit(Message{Type: "tool_result", ToolUseID: id, ToolName: "Approval", Text: "Approved automatically"})
 	default:
 		if strings.Contains(method, "requestApproval") {
-			_ = s.respond(id, map[string]any{"decision": "accept"})
+			_ = s.respond(idValue, map[string]any{"decision": "accept"})
 			s.emit(Message{Type: "tool_result", ToolUseID: id, ToolName: "Approval", Text: "Approved automatically"})
 			return
 		}
-		_ = s.respond(id, map[string]any{})
+		_ = s.respond(idValue, map[string]any{})
 	}
 }
 
@@ -755,8 +812,10 @@ func (s *Session) handleNotification(method string, params map[string]any) {
 			s.emit(Message{Type: "thinking_delta", Text: delta})
 		}
 	case "turn/plan/updated":
-		if text := compactAny(params); text != "" {
-			s.emit(Message{Type: "plan", Role: "assistant", Text: "Plan updated", Details: text})
+		if details := formatPlanDetails(params); details != "" {
+			s.setCollaborationMode("plan", "Codex entered plan mode")
+			s.emit(Message{Type: "plan", Role: "assistant", Text: "Plan ready", Details: details, Status: "waiting_approval"})
+			s.setStatus("waiting_input")
 		}
 	case "item/started":
 		if item, ok := params["item"].(map[string]any); ok {
@@ -767,11 +826,31 @@ func (s *Session) handleNotification(method string, params map[string]any) {
 			s.processItemCompleted(item)
 		}
 	case "serverRequest/resolved":
-		toolUseID := stringFrom(params, "itemId", "approvalId", "requestId")
+		toolUseID := s.resolvePendingInput(stringFrom(params, "requestId", "itemId", "approvalId"))
 		if toolUseID != "" {
-			s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, Text: "Resolved"})
+			s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answered"})
 		}
 	}
+}
+
+func (s *Session) resolvePendingInput(requestIDOrToolUseID string) string {
+	requestIDOrToolUseID = strings.TrimSpace(requestIDOrToolUseID)
+	if requestIDOrToolUseID == "" {
+		return ""
+	}
+	s.pendingInputsMu.Lock()
+	defer s.pendingInputsMu.Unlock()
+	if pending, ok := s.pendingInputs[requestIDOrToolUseID]; ok {
+		delete(s.pendingInputs, requestIDOrToolUseID)
+		return pending.toolUseID
+	}
+	for toolUseID, pending := range s.pendingInputs {
+		if pending.requestID == requestIDOrToolUseID || pending.toolUseID == requestIDOrToolUseID {
+			delete(s.pendingInputs, toolUseID)
+			return pending.toolUseID
+		}
+	}
+	return requestIDOrToolUseID
 }
 
 func (s *Session) handleTurnCompleted(params map[string]any) {
@@ -793,9 +872,17 @@ func (s *Session) handleTurnCompleted(params map[string]any) {
 	s.emit(Message{Type: "result", Subtype: status, Text: status})
 
 	s.pendingInputsMu.Lock()
-	hasPendingInput := len(s.pendingInputs) > 0
+	hasPendingInput := false
+	for _, pending := range s.pendingInputs {
+		if !pending.submitted {
+			hasPendingInput = true
+			break
+		}
+	}
 	s.pendingInputsMu.Unlock()
 	if hasPendingInput {
+		s.setStatus("waiting_input")
+	} else if s.hasOpenPlan() {
 		s.setStatus("waiting_input")
 	} else {
 		s.setStatus("idle")
@@ -855,11 +942,16 @@ func (s *Session) processItemCompleted(item map[string]any) {
 			s.emit(Message{Type: "thinking_delta", Text: text})
 		}
 	case "plan":
-		text := extractText(item)
-		if text == "" {
-			text = compactAny(item)
+		details := formatPlanDetails(extractText(item))
+		if details == "" {
+			details = formatPlanDetails(item)
 		}
-		s.emit(Message{Type: "plan", Role: "assistant", Text: text})
+		if details == "" {
+			details = "Plan ready"
+		}
+		s.setCollaborationMode("plan", "Codex entered plan mode")
+		s.emit(Message{Type: "plan", Role: "assistant", Text: "Plan ready", Details: details, Status: "waiting_approval"})
+		s.setStatus("waiting_input")
 	case "commandexecution":
 		output := stringFrom(item, "aggregatedOutput", "output")
 		if output == "" {
@@ -908,6 +1000,63 @@ func (s *Session) setStatus(status string) {
 	}
 }
 
+func (s *Session) hasOpenPlan() bool {
+	s.messagesMu.Lock()
+	defer s.messagesMu.Unlock()
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		switch s.messages[i].Type {
+		case "plan_resolved":
+			return false
+		case "plan":
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Session) setCollaborationMode(mode string, text string) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return
+	}
+	s.messagesMu.Lock()
+	changed := s.collaborationMode != mode
+	if changed {
+		s.collaborationMode = mode
+	}
+	s.messagesMu.Unlock()
+	if changed {
+		s.emitSessionMetadata(text)
+	}
+}
+
+func (s *Session) emitSessionMetadata(text string) {
+	s.messagesMu.Lock()
+	threadID := s.threadID
+	model := s.model
+	reasoningEffort := s.reasoningEffort
+	approvalPolicy := s.approvalPolicy
+	sandboxMode := s.sandboxMode
+	collaborationMode := s.collaborationMode
+	s.messagesMu.Unlock()
+	s.emit(Message{
+		Type:     "system",
+		Text:     text,
+		ThreadID: threadID,
+		Details: compactAny(map[string]any{
+			"provider":          Provider,
+			"viewMode":          ViewModeChat,
+			"runtimeSessionId":  s.id,
+			"threadId":          threadID,
+			"model":             model,
+			"reasoningEffort":   reasoningEffort,
+			"approvalPolicy":    approvalPolicy,
+			"sandboxMode":       sandboxMode,
+			"collaborationMode": collaborationMode,
+		}),
+	})
+}
+
 func (s *Session) emit(msg Message) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if msg.ID == "" {
@@ -928,6 +1077,7 @@ func (s *Session) emit(msg Message) {
 		s.messages = s.messages[len(s.messages)-1000:]
 	}
 	s.messagesMu.Unlock()
+	AppendCachedMessage(msg)
 
 	s.subscribersMu.Lock()
 	for ch := range s.subscribers {
@@ -951,6 +1101,29 @@ func rawID(raw json.RawMessage) string {
 		return fmt.Sprintf("%d", n)
 	}
 	return strings.Trim(string(raw), `"`)
+}
+
+func rawIDValue(raw json.RawMessage) any {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var value any
+	if decoder.Decode(&value) == nil {
+		if n, ok := value.(json.Number); ok {
+			if i, err := n.Int64(); err == nil {
+				return i
+			}
+			if f, err := n.Float64(); err == nil {
+				return f
+			}
+		}
+	}
+
+	return rawID(raw)
 }
 
 func rawString(raw json.RawMessage) string {
@@ -1076,6 +1249,62 @@ func extractText(item map[string]any) string {
 		}
 	}
 	return strings.Join(parts, "")
+}
+
+func formatPlanDetails(value any) string {
+	switch raw := value.(type) {
+	case nil:
+		return ""
+	case string:
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return ""
+		}
+		var parsed map[string]any
+		if json.Unmarshal([]byte(trimmed), &parsed) == nil && len(parsed) > 0 {
+			return formatPlanMap(parsed)
+		}
+		return trimmed
+	case map[string]any:
+		return formatPlanMap(raw)
+	default:
+		return compactAny(raw)
+	}
+}
+
+func formatPlanMap(plan map[string]any) string {
+	var sections []string
+	if explanation := strings.TrimSpace(fmt.Sprint(plan["explanation"])); explanation != "" && explanation != "<nil>" {
+		sections = append(sections, "### Summary\n"+explanation)
+	}
+	if steps, ok := plan["plan"].([]any); ok && len(steps) > 0 {
+		var lines []string
+		for i, rawStep := range steps {
+			stepText := ""
+			status := ""
+			if step, ok := rawStep.(map[string]any); ok {
+				stepText = strings.TrimSpace(fmt.Sprint(step["step"]))
+				status = strings.TrimSpace(fmt.Sprint(step["status"]))
+			} else {
+				stepText = strings.TrimSpace(fmt.Sprint(rawStep))
+			}
+			if stepText == "" || stepText == "<nil>" {
+				continue
+			}
+			if status != "" && status != "<nil>" {
+				lines = append(lines, fmt.Sprintf("%d. [%s] %s", i+1, status, stepText))
+			} else {
+				lines = append(lines, fmt.Sprintf("%d. %s", i+1, stepText))
+			}
+		}
+		if len(lines) > 0 {
+			sections = append(sections, "### Steps\n"+strings.Join(lines, "\n"))
+		}
+	}
+	if len(sections) > 0 {
+		return strings.Join(sections, "\n\n")
+	}
+	return compactAny(plan)
 }
 
 func compactAny(value any) string {
