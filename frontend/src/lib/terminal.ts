@@ -294,6 +294,7 @@ export function createTerminal(
   let pasteSuppressedUntil = 0;
   let pasteRequestToken = 0;
   let shiftKeyDown = false;
+  let lastShiftEnterSentAt = 0;
   const pasteFromSystemClipboard = async () => {
     const token = ++pasteRequestToken;
     pasteSuppressedUntil = Date.now() + 250;
@@ -305,6 +306,11 @@ export function createTerminal(
     } catch (error) {
       console.warn('Clipboard paste failed:', error);
     }
+  };
+
+  const sendShiftEnter = () => {
+    lastShiftEnterSentAt = Date.now();
+    sendSeq('\x1b[13;2u');
   };
 
   const keyCaptureHandler = (e: KeyboardEvent) => {
@@ -354,7 +360,7 @@ export function createTerminal(
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      sendSeq('\x1b[13;2u');
+      sendShiftEnter();
     }
   };
   container.addEventListener('keydown', keyCaptureHandler, { capture: true });
@@ -400,7 +406,7 @@ export function createTerminal(
     if (e.key === 'Enter' && (e.shiftKey || e.getModifierState('Shift') || shiftKeyDown)) {
       e.preventDefault();
       e.stopPropagation();
-      sendSeq('\x1b[13;2u');
+      sendShiftEnter();
       return false;
     }
 
@@ -547,6 +553,14 @@ export function createTerminal(
 
   // Wire up input: terminal -> Go backend
   const onDataDispose = terminal.onData((data) => {
+    if (data === '\r' && Date.now() - lastShiftEnterSentAt < 150) {
+      return;
+    }
+    if (data === '\r' && shiftKeyDown) {
+      sendShiftEnter();
+      return;
+    }
+
     const bytes = new TextEncoder().encode(data);
     const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
     const encoded = btoa(binary);
