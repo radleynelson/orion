@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -443,7 +444,75 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		upsertSession(sess)
 	}
 
+	sortSessionsBySavedTabs(sessions, savedTabs)
 	writeJSON(w, sessions)
+}
+
+func sortSessionsBySavedTabs(sessions []state.SessionInfo, savedTabs []state.SavedTab) {
+	if len(sessions) < 2 || len(savedTabs) == 0 {
+		return
+	}
+	order := make(map[string]int, len(savedTabs)*3)
+	for i, tab := range savedTabs {
+		for _, key := range savedTabOrderKeys(tab) {
+			if key == "" {
+				continue
+			}
+			if _, exists := order[key]; !exists {
+				order[key] = i
+			}
+		}
+	}
+	if len(order) == 0 {
+		return
+	}
+	original := make(map[string]int, len(sessions))
+	for i, sess := range sessions {
+		if key := firstNonEmpty(sessionOrderKeys(sess)...); key != "" {
+			original[key] = i
+		}
+	}
+	sort.SliceStable(sessions, func(i, j int) bool {
+		leftOrder, leftFound := lookupSessionOrder(sessions[i], order)
+		rightOrder, rightFound := lookupSessionOrder(sessions[j], order)
+		if leftFound && rightFound {
+			return leftOrder < rightOrder
+		}
+		if leftFound != rightFound {
+			return leftFound
+		}
+		leftOriginal := original[firstNonEmpty(sessionOrderKeys(sessions[i])...)]
+		rightOriginal := original[firstNonEmpty(sessionOrderKeys(sessions[j])...)]
+		return leftOriginal < rightOriginal
+	})
+}
+
+func savedTabOrderKeys(tab state.SavedTab) []string {
+	return []string{
+		strings.TrimSpace(tab.TmuxSession),
+		strings.TrimSpace(tab.RuntimeSessionID),
+		strings.TrimSpace(tab.ThreadID),
+	}
+}
+
+func sessionOrderKeys(sess state.SessionInfo) []string {
+	return []string{
+		strings.TrimSpace(sess.TmuxName),
+		strings.TrimSpace(sess.RuntimeSessionID),
+		strings.TrimSpace(sess.ThreadID),
+	}
+}
+
+func lookupSessionOrder(sess state.SessionInfo, order map[string]int) (int, bool) {
+	for _, key := range sessionOrderKeys(sess) {
+		if key == "" {
+			continue
+		}
+		if index, ok := order[key]; ok {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {

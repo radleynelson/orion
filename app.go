@@ -751,7 +751,7 @@ func (a *App) GetSavedTabs() []state.SavedTab {
 	}
 	var alive []state.SavedTab
 	for _, tab := range saved {
-		if tab.TabType == codexchat.SessionType && strings.TrimSpace(tab.ThreadID) != "" {
+		if (tab.TabType == codexchat.SessionType || tab.TabType == claudechat.SessionType) && strings.TrimSpace(tab.ThreadID) != "" {
 			alive = append(alive, tab)
 			continue
 		}
