@@ -11,6 +11,7 @@ import (
 
 	"orion/internal/config"
 	"orion/internal/port"
+	"orion/internal/tmuxutil"
 )
 
 // ServerStatus represents the state of a server for a workspace.
@@ -343,6 +344,7 @@ func hasSession(name string) bool {
 }
 
 func createTmuxSession(name, workDir string) error {
+	tmuxutil.ConfigureExtendedKeys()
 	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", workDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
@@ -351,6 +353,7 @@ func createTmuxSession(name, workDir string) error {
 	exec.Command("tmux", "set-option", "-t", name, "mouse", "on").Run()
 	exec.Command("tmux", "set-option", "-t", name, "status", "off").Run()
 	exec.Command("tmux", "set-option", "-t", name, "set-clipboard", "on").Run()
+	tmuxutil.ConfigureSessionExtendedKeys(name)
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	return nil

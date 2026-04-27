@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	"orion/internal/tmuxutil"
+
 	"github.com/creack/pty"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -37,6 +39,7 @@ type Manager struct {
 
 // NewManager creates a new terminal manager.
 func NewManager() *Manager {
+	tmuxutil.ConfigureExtendedKeys()
 	return &Manager{
 		terminals: make(map[string]*Terminal),
 	}
@@ -94,6 +97,7 @@ func (m *Manager) Create(id string) error {
 func (m *Manager) CreateInDir(id string, dir string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	tmuxutil.ConfigureExtendedKeys()
 
 	if _, exists := m.terminals[id]; exists {
 		return fmt.Errorf("terminal %s already exists", id)
@@ -110,6 +114,7 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 	exec.Command("tmux", "set-option", "-t", tmuxName, "mouse", "on").Run()
 	exec.Command("tmux", "set-option", "-t", tmuxName, "status", "off").Run()
 	exec.Command("tmux", "set-option", "-t", tmuxName, "set-clipboard", "on").Run()
+	tmuxutil.ConfigureSessionExtendedKeys(tmuxName)
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	setTmuxMetadata(tmuxName, "shell", "Shell", dir)
@@ -154,6 +159,7 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 func (m *Manager) CreateAttached(id, tmuxSession string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	tmuxutil.ConfigureSessionExtendedKeys(tmuxSession)
 
 	if _, exists := m.terminals[id]; exists {
 		return fmt.Errorf("terminal %s already exists", id)
@@ -201,6 +207,7 @@ func setTmuxMetadata(session string, sessionType string, label string, workspace
 func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]byte)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	tmuxutil.ConfigureSessionExtendedKeys(tmuxSession)
 
 	if _, exists := m.terminals[id]; exists {
 		return fmt.Errorf("terminal %s already exists", id)
@@ -220,6 +227,7 @@ func (m *Manager) CreateGroupedAttached(id, tmuxSession string, onOutput func([]
 	exec.Command("tmux", "set-option", "-t", groupedName, "aggressive-resize", "off").Run()
 	exec.Command("tmux", "set-option", "-t", groupedName, "status", "off").Run()
 	exec.Command("tmux", "set-option", "-t", groupedName, "mouse", "off").Run()
+	tmuxutil.ConfigureSessionExtendedKeys(groupedName)
 	// Disable terminal features that SwiftTerm may not handle gracefully.
 	// These are the sequences most likely to show up as garbage on the iOS client.
 	exec.Command("tmux", "set-option", "-t", groupedName, "focus-events", "off").Run()
