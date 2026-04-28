@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect } from 'react';
 import { useStore, generateId, PaneLeaf, sortWorkspaces } from '../store';
 import { server, main } from '../../wailsjs/go/models';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import {
   ListWorkspaces,
   CreateWorkspaceFrom,
@@ -263,6 +264,27 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       console.error('Failed to list workspaces:', err);
     }
   }, [project, setWorkspaces]);
+
+  useEffect(() => {
+    if (!project) return;
+    let refreshTimer: number | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        refreshWorkspaces();
+      }, 200);
+    };
+    const cancel = EventsOn('git:files-changed', scheduleRefresh);
+    return () => {
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      cancel();
+    };
+  }, [project, refreshWorkspaces]);
 
   const openNewWorkspace = useCallback(() => {
     const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
