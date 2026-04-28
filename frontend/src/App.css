@@ -3079,6 +3079,18 @@ button.workspace-min-row:hover em {
   color: var(--text-primary);
   font-weight: 500;
 }
+.cr-workspace {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
 .cr-base-select {
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -4175,4 +4187,74 @@ button.workspace-min-row:hover em {
   color: var(--text-dim);
   font-style: italic;
   text-align: center;
+}
+
+.diag-fd-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.diag-fd-bar .diag-bar { height: 8px; }
+.diag-fd-pct {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  min-width: 56px;
+  text-align: right;
+}
+.diag-fd-dirs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  margin-top: 4px;
+}
+.diag-fd-dir-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 8px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.diag-fd-dir-row:hover { background: var(--bg-hover); }
+.diag-fd-dir-count {
+  color: var(--accent-orange, #e8a547);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.diag-fd-dir-path {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diag-fd-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.diag-fd-row {
+  display: grid;
+  grid-template-columns: 48px 60px 1fr;
+  gap: 8px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.diag-fd-row:last-child { border-bottom: none; }
+.diag-fd-fd {
+  color: var(--text-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.diag-fd-type { color: var(--accent-blue); }
+.diag-fd-name {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

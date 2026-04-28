@@ -242,6 +242,14 @@ export function ListWorkspaces(arg1) {
   return window['go']['main']['App']['ListWorkspaces'](arg1);
 }
 
+export function LogClient(arg1, arg2) {
+  return window['go']['main']['App']['LogClient'](arg1, arg2);
+}
+
+export function LogPath() {
+  return window['go']['main']['App']['LogPath']();
+}
+
 export function NewWindow() {
   return window['go']['main']['App']['NewWindow']();
 }

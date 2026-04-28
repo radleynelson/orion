@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"orion/internal/applog"
 	"orion/internal/chatattachments"
 	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
@@ -1004,6 +1005,17 @@ func (a *App) ReadFileContents(path string) (string, error) {
 // RevealInFinder opens Finder with the file selected.
 func (a *App) RevealInFinder(path string) error {
 	return exec.Command("open", "-R", path).Run()
+}
+
+// LogClient persists a frontend log message to ~/.orion/orion.log so we can
+// debug production builds where stdout/stderr are detached from any terminal.
+func (a *App) LogClient(level string, message string) {
+	applog.FromClient(level, message)
+}
+
+// LogPath returns the absolute path of the current log file.
+func (a *App) LogPath() string {
+	return applog.Path()
 }
 
 // WatchWorkspace starts watching a workspace directory for file changes.

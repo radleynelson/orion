@@ -348,6 +348,9 @@ export default function DiagnosticsPage({ visible }: { visible: boolean }) {
         </div>
       </Section>
 
+      {/* File descriptors */}
+      {snap!.fds && <FDSection fds={snap!.fds} />}
+
       {/* Go runtime */}
       <Section title="Go runtime">
         <div className="diag-kv diag-kv-wide">
@@ -360,6 +363,69 @@ export default function DiagnosticsPage({ visible }: { visible: boolean }) {
         </div>
       </Section>
     </div>
+  );
+}
+
+function FDSection({ fds }: { fds: diag.FDStats }) {
+  const [showAll, setShowAll] = useState(false);
+  const pct = fds.usagePct || 0;
+  const barColor = pct > 80 ? 'var(--accent-red, #e26d6d)' : pct > 50 ? 'var(--accent-orange, #e8a547)' : 'var(--accent-green, #6bcf7f)';
+  return (
+    <Section
+      title={`File descriptors (${fds.count.toLocaleString()} / ${fds.softLimit.toLocaleString()})`}
+      hint={fds.error ? `lsof error: ${fds.error}` : `${pct.toFixed(2)}% of soft limit`}
+    >
+      <div className="diag-fd-bar">
+        <div className="diag-bar" style={{ flex: 1 }}>
+          <div className="diag-bar-fill" style={{ width: `${Math.min(100, pct)}%`, background: barColor }} />
+        </div>
+        <span className="diag-fd-pct">{pct.toFixed(2)}%</span>
+      </div>
+      {fds.byType && fds.byType.length > 0 && (
+        <div className="diag-kv diag-kv-wide" style={{ marginTop: 10 }}>
+          {fds.byType.map((t) => (
+            <span key={t.type} style={{ display: 'contents' }}>
+              <span title="lsof type code">{t.type}</span>
+              <b>{t.count.toLocaleString()}</b>
+            </span>
+          ))}
+        </div>
+      )}
+      {fds.groupedDirs && fds.groupedDirs.length > 0 && (
+        <>
+          <div className="diag-subhead">Top directories (regular files / dirs)</div>
+          <div className="diag-fd-dirs">
+            {fds.groupedDirs.map((d) => (
+              <div key={d.dir} className="diag-fd-dir-row">
+                <span className="diag-fd-dir-count">{d.count}</span>
+                <span className="diag-fd-dir-path" title={d.dir}>{d.dir}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <button
+        className="diag-btn diag-btn-ghost"
+        style={{ marginTop: 10 }}
+        onClick={() => setShowAll((v) => !v)}
+      >
+        {showAll ? '▾ Hide full list' : `▸ Show full list (${fds.topEntries?.length || 0}${fds.truncated ? '+' : ''})`}
+      </button>
+      {showAll && fds.topEntries && (
+        <div className="diag-fd-list">
+          {fds.topEntries.map((e, i) => (
+            <div key={`${e.fd}-${i}`} className="diag-fd-row">
+              <span className="diag-fd-fd">{e.fd}</span>
+              <span className="diag-fd-type">{e.type}</span>
+              <span className="diag-fd-name" title={e.name}>{e.name}</span>
+            </div>
+          ))}
+          {fds.truncated && (
+            <div className="diag-truncate">List truncated; showing first {fds.topEntries.length} of {fds.count} entries.</div>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }
 

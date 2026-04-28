@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
+	"orion/internal/applog"
 	"orion/internal/config"
 	"orion/internal/port"
 	"orion/internal/tmuxutil"
@@ -234,6 +237,7 @@ func (m *Manager) GetServerStatuses(repoRoot string, workspacePath string) []Ser
 	}
 	sort.Strings(names)
 
+	sessions := cachedSessions()
 	var statuses []ServerStatus
 	for _, name := range names {
 		tmuxName := fmt.Sprintf("orion-srv-%s-%s", wsID, name)
@@ -244,7 +248,7 @@ func (m *Manager) GetServerStatuses(repoRoot string, workspacePath string) []Ser
 		statuses = append(statuses, ServerStatus{
 			Name:        name,
 			Port:        assignedPort,
-			Running:     hasSession(tmuxName),
+			Running:     sessions[tmuxName],
 			TmuxSession: tmuxName,
 		})
 	}
@@ -341,6 +345,60 @@ func cleanStaleLocks(workspacePath, serverDir string) {
 func hasSession(name string) bool {
 	cmd := exec.Command("tmux", "has-session", "-t", name)
 	return cmd.Run() == nil
+}
+
+// sessionSet caches the result of `tmux list-sessions` for a short window so
+// per-poll status checks can answer N session queries with one tmux call. If
+// tmux returns an error (e.g., transient lock contention), we keep serving the
+// previous snapshot rather than reporting every workspace as down.
+var (
+	sessionMu     sync.Mutex
+	sessionCache  map[string]bool
+	sessionCached time.Time
+	sessionTTL    = 1 * time.Second
+)
+
+func listTmuxSessions() (map[string]bool, error) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	if err != nil {
+		// Exit code 1 with empty stderr just means "no sessions" — treat as success.
+		text := strings.TrimSpace(string(out))
+		if text == "" || strings.Contains(text, "no server running") {
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("tmux list-sessions: %s", text)
+	}
+	set := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			set[line] = true
+		}
+	}
+	return set, nil
+}
+
+// cachedSessions returns the set of current tmux sessions, refreshing at most
+// once per sessionTTL. On tmux error, the previous snapshot is reused so a
+// single failed call doesn't make every workspace look inactive.
+func cachedSessions() map[string]bool {
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	if sessionCache != nil && time.Since(sessionCached) < sessionTTL {
+		return sessionCache
+	}
+	set, err := listTmuxSessions()
+	if err != nil {
+		applog.Warnf("tmux list-sessions failed, reusing cached set (cache_age=%s): %v",
+			time.Since(sessionCached), err)
+		if sessionCache != nil {
+			return sessionCache
+		}
+		return map[string]bool{}
+	}
+	sessionCache = set
+	sessionCached = time.Now()
+	return set
 }
 
 func createTmuxSession(name, workDir string) error {

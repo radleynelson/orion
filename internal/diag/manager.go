@@ -30,6 +30,7 @@ type MemorySnapshot struct {
 	Webview   []ProcessStats `json:"webview"`     // WebKit/helper processes spawned by Orion
 	Helpers   []ProcessStats `json:"helpers"`     // other Orion descendants (ripgrep, tmux clients, etc.)
 	Sessions  []SessionMem   `json:"sessions"`    // orion-* tmux sessions
+	FDs       *FDStats       `json:"fds"`         // open file descriptors for Orion main
 	Totals    Totals         `json:"totals"`
 	Timestamp int64          `json:"timestamp"`
 }
@@ -88,6 +89,8 @@ func (m *Manager) Snapshot() (*MemorySnapshot, error) {
 	} else {
 		snap.Orion = ProcessStats{PID: orionPID, Name: "Orion"}
 	}
+
+	snap.FDs = SnapshotFDs(orionPID)
 
 	// Pane PIDs for orion-* tmux sessions — we need these to avoid double-counting
 	// descendants that are technically children of tmux (they aren't, since tmux

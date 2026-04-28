@@ -133,6 +133,10 @@ export function ListTerminals():Promise<Array<string>>;
 
 export function ListWorkspaces(arg1:string):Promise<Array<workspace.Workspace>>;
 
+export function LogClient(arg1:string,arg2:string):Promise<void>;
+
+export function LogPath():Promise<string>;
+
 export function NewWindow():Promise<void>;
 
 export function NewWindowWithProject(arg1:string):Promise<void>;

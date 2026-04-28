@@ -29,19 +29,17 @@ func (m *Manager) SetContext(ctx context.Context) {
 	m.ctx = ctx
 }
 
-// ignoredDir returns true for directories that should never be watched.
-func ignoredDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", "vendor", "dist", "build", "tmp",
-		".next", ".turbo", "__pycache__", ".cache", ".orion":
-		return true
-	}
-	return false
-}
-
 // Watch starts watching the given workspace path. Any previous watch is
 // stopped first. File change events are debounced and emitted as
 // "git:files-changed" Wails events.
+//
+// We deliberately avoid recursing into the working tree. fsnotify on macOS
+// opens a separate file descriptor for every file inside every watched
+// directory (kqueue requirement), which exhausts RLIMIT_NOFILE on large
+// repos. Instead we watch just .git — index/HEAD updates fire on commits,
+// stages, and branch switches, which is what Orion actually cares about for
+// "code review" refreshes. Working-tree edits are picked up by the 7s
+// `refreshDiffStats` poll in App.tsx.
 func (m *Manager) Watch(workspacePath string) error {
 	m.Stop()
 
@@ -55,28 +53,22 @@ func (m *Manager) Watch(workspacePath string) error {
 	m.done = make(chan struct{})
 	m.mu.Unlock()
 
-	// Walk the directory tree and add watchable dirs.
-	_ = filepath.WalkDir(workspacePath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip unreadable dirs
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") && name != "." && path != workspacePath {
-				// Skip hidden dirs except .git (we want to watch .git/index)
-				if name == ".git" {
-					// Only watch the .git dir itself (for index changes), not subdirs
-					_ = w.Add(path)
+	gitDir := filepath.Join(workspacePath, ".git")
+	if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+		_ = w.Add(gitDir)
+	} else if err == nil && !info.IsDir() {
+		// Worktrees use a .git file pointing to the real gitdir.
+		if data, rerr := os.ReadFile(gitDir); rerr == nil {
+			line := strings.TrimSpace(string(data))
+			if strings.HasPrefix(line, "gitdir:") {
+				realDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+				if !filepath.IsAbs(realDir) {
+					realDir = filepath.Join(workspacePath, realDir)
 				}
-				return filepath.SkipDir
+				_ = w.Add(realDir)
 			}
-			if ignoredDir(name) {
-				return filepath.SkipDir
-			}
-			_ = w.Add(path)
 		}
-		return nil
-	})
+	}
 
 	done := m.done
 
@@ -100,15 +92,6 @@ func (m *Manager) Watch(workspacePath string) error {
 				// Ignore chmod-only events
 				if event.Op == fsnotify.Chmod {
 					continue
-				}
-				// If a new directory was created, start watching it too
-				if event.Op&fsnotify.Create != 0 {
-					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-						name := filepath.Base(event.Name)
-						if !ignoredDir(name) && !strings.HasPrefix(name, ".") {
-							_ = w.Add(event.Name)
-						}
-					}
 				}
 				// Debounce: wait 500ms after the last event before firing
 				if debounce != nil {

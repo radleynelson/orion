@@ -323,7 +323,10 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   }, [project, tabs, refreshWorkspaces]);
 
   const handleLaunchAgent = useCallback(async (wsPath: string, agentName: string) => {
-    if (!project) return;
+    if (!project) {
+      console.error('LaunchAgent skipped: project is null', { wsPath, agentName });
+      return;
+    }
     try {
       const tmuxSession = await LaunchAgent(project.root, wsPath, agentName);
       const termId = generateId('term');
@@ -354,7 +357,10 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   }, [project, agentTypes, addTab]);
 
   const handleLaunchCodexChat = useCallback(async (wsPath: string, options?: CodexLaunchOptions) => {
-    if (!project) return;
+    if (!project) {
+      console.error('LaunchCodexChat skipped: project is null', { wsPath });
+      return;
+    }
     const selected = options || codexOptionsForAgent(agentTypes.find((agent) => agentProvider(agent) === 'codex'));
     try {
       const session = await LaunchCodexChatWithOptions(
@@ -391,7 +397,10 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   }, [project, agentTypes, addTab]);
 
   const handleLaunchClaudeChat = useCallback(async (wsPath: string) => {
-    if (!project) return;
+    if (!project) {
+      console.error('LaunchClaudeChat skipped: project is null', { wsPath });
+      return;
+    }
     try {
       const session = await LaunchClaudeChat(project.root, wsPath);
       addTab({
@@ -419,7 +428,10 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   }, [project, addTab]);
 
   const handleLaunchShell = useCallback(async (wsPath: string) => {
-    if (!project) return;
+    if (!project) {
+      console.error('LaunchShell skipped: project is null', { wsPath });
+      return;
+    }
     try {
       const termId = generateId('term');
       await CreateTerminalInDir(termId, wsPath);

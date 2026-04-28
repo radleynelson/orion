@@ -5,7 +5,6 @@ import {
   GetUnifiedDiff,
   DiscardFileChanges,
   DiscardAllChanges,
-  WatchWorkspace,
 } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { git } from '../../wailsjs/go/models';
@@ -107,12 +106,21 @@ function renderHighlighted(text: string, query: string): ReactNode {
 export default function CodeReviewPane() {
   const {
     activeWorkspacePath,
+    workspaces,
     project,
     codeReviewBase,
     setCodeReviewBase,
     setCodeReviewVisible,
     openFile,
   } = useStore();
+  const activeWorkspace = workspaces.find((w) => w.path === activeWorkspacePath);
+  const activeWorkspaceLabel = activeWorkspace
+    ? activeWorkspace.isMain
+      ? 'main'
+      : project
+        ? activeWorkspace.name.replace(project.name + '-', '')
+        : activeWorkspace.name
+    : '(no workspace)';
 
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -155,6 +163,8 @@ export default function CodeReviewPane() {
   const refresh = useCallback(async (clear?: boolean) => {
     if (!activeWorkspacePath) {
       setEntries([]);
+      setLoading(true);
+      setTimeout(() => setLoading(false), 150);
       return;
     }
     const myReq = ++reqId.current;
@@ -170,7 +180,8 @@ export default function CodeReviewPane() {
           try {
             const raw = await GetUnifiedDiff(activeWorkspacePath, baseArg, f.path);
             return { raw: raw || '', parsed: parseUnifiedDiff(raw || '') };
-          } catch {
+          } catch (err) {
+            console.error('GetUnifiedDiff failed', { path: f.path, baseArg, err });
             return { raw: '', parsed: parseUnifiedDiff('') };
           }
         })
@@ -194,7 +205,8 @@ export default function CodeReviewPane() {
           return { file: f, diff: parsed, rawDiff: raw, collapsed, viewed };
         });
       });
-    } catch {
+    } catch (err) {
+      console.error('GetChangedFilesAgainst failed', { activeWorkspacePath, baseArg, err });
       if (myReq === reqId.current) setEntries([]);
     } finally {
       if (myReq === reqId.current) setLoading(false);
@@ -213,10 +225,12 @@ export default function CodeReviewPane() {
     refresh(changed);
   }, [refresh, activeWorkspacePath, baseArg]);
 
-  // Watch workspace for file changes and auto-refresh
+  // Listen for file-change events emitted by the watcher (started by App.tsx).
+  // We deliberately don't call WatchWorkspace here — duplicating the call from
+  // multiple components produced overlapping Stop/Watch cycles and orphaned
+  // fsnotify file descriptors.
   useEffect(() => {
     if (!activeWorkspacePath) return;
-    WatchWorkspace(activeWorkspacePath).catch(() => {});
     const cancel = EventsOn('git:files-changed', () => {
       refresh();
     });
@@ -483,6 +497,9 @@ export default function CodeReviewPane() {
           ◧
         </button>
         <span className="cr-title">Code Review</span>
+        <span className="cr-workspace" title={activeWorkspacePath || 'no active workspace'}>
+          {activeWorkspaceLabel}
+        </span>
         <select
           className="cr-base-select"
           value={codeReviewBase}

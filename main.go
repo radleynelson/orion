@@ -6,11 +6,14 @@ import (
 	"os"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/logger"
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"orion/internal/applog"
 )
 
 //go:embed all:frontend/dist
@@ -23,6 +26,8 @@ func main() {
 	flag.StringVar(&projectFlag, "project", "", "Project directory to open")
 	flag.BoolVar(&newWindowFlag, "new", false, "Open to project picker (don't auto-load last project)")
 	flag.Parse()
+
+	applog.Init()
 
 	if projectFlag == "" && flag.NArg() > 0 {
 		projectFlag = flag.Arg(0)
@@ -112,6 +117,8 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
+		Logger:           applog.WailsLogger{},
+		LogLevel:         logger.INFO,
 		BackgroundColour: &options.RGBA{R: 37, G: 37, B: 37, A: 255},
 		OnStartup:        app.startup,
 		OnDomReady:       app.domReady,
