@@ -97,6 +97,7 @@ function codexOptionsForAgent(agent?: main.AgentTypeInfo) {
 }
 
 function App() {
+  const [tabsHydrated, setTabsHydrated] = useState(false);
   const {
     project,
     setProject,
@@ -164,6 +165,7 @@ function App() {
   // Load a project: set state, restore saved tabs, fall back to tmux scan.
   // Closes any currently-open tabs from a prior project first.
   const loadProject = useCallback(async (info: { name: string; root: string; mainBranch: string }) => {
+    setTabsHydrated(false);
     try {
       // Close existing tabs (release their PTYs but leave tmux alive)
       const currentTabs = useStore.getState().tabs;
@@ -327,7 +329,10 @@ function App() {
           workspacePath: mainWs.path,
         });
       }
-    } catch {}
+    } catch {
+    } finally {
+      setTabsHydrated(true);
+    }
   }, [addTab, setProject, setWorkspaces, setActiveWorkspace]);
 
   // Expose loadProject globally so Sidebar can trigger it after picking a project
@@ -732,16 +737,6 @@ function App() {
     }
   }, [activeWorkspacePath, focusedPaneId, splitPane]);
 
-  const handleClosePane = useCallback(async () => {
-    if (!focusedPaneId) return;
-    const terminalId = closePane(focusedPaneId);
-    if (terminalId) {
-      try {
-        await CloseTerminal(terminalId);
-      } catch {}
-    }
-  }, [focusedPaneId, closePane]);
-
   const getChatSessions = useCallback((pane: Pane, fallbackKind: 'codex' | 'claude' = 'codex'): { id: string; kind: 'codex' | 'claude'; threadId?: string }[] => {
     if (pane.type === 'chat' && pane.chatSessionId) {
       return [{ id: pane.chatSessionId, kind: pane.chatKind || fallbackKind, threadId: pane.chatThreadId }];
@@ -749,6 +744,30 @@ function App() {
     if (!('children' in pane)) return [];
     return pane.children.flatMap((child) => getChatSessions(child, fallbackKind));
   }, []);
+
+  const handleClosePane = useCallback(async () => {
+    if (!focusedPaneId) return;
+    const state = useStore.getState();
+    const tab = state.tabs.find((candidate) => candidate.id === state.activeTabId);
+    const pane = tab ? findPaneById(tab.rootPane, focusedPaneId) : null;
+    const fallbackKind = tab?.tabType === 'claude-chat' ? 'claude' : 'codex';
+    const chatSessions = pane ? getChatSessions(pane, fallbackKind) : [];
+    const terminalId = closePane(focusedPaneId);
+    if (terminalId) {
+      try {
+        await CloseTerminal(terminalId);
+      } catch {}
+    }
+    for (const session of chatSessions) {
+      try {
+        if (session.kind === 'claude') {
+          await StopClaudeChat(session.id);
+        } else {
+          await StopCodexChat(session.id);
+        }
+      } catch {}
+    }
+  }, [focusedPaneId, closePane, getChatSessions]);
 
   const sessionKeys = useCallback((session: Partial<state.SessionInfo> | any) => {
     return [
@@ -804,7 +823,7 @@ function App() {
   }, [addTab]);
 
   const handleCloseTab = useCallback(async (tabId: string) => {
-    const tab = tabs.find((t) => t.id === tabId);
+    const tab = useStore.getState().tabs.find((t) => t.id === tabId);
     if (!tab) return;
     const termIds = getAllTerminalIds(tab);
     for (const termId of termIds) {
@@ -823,7 +842,7 @@ function App() {
       } catch {}
     }
     removeTab(tabId);
-  }, [tabs, removeTab, getAllTerminalIds, getChatSessions]);
+  }, [removeTab, getAllTerminalIds, getChatSessions]);
 
   const replaceTerminalWithChat = useCallback(async (
     tab: Tab,
@@ -1025,7 +1044,7 @@ function App() {
 
   // Persist tabs to disk whenever they change (for recovery on restart)
   useEffect(() => {
-    if (tabs.length === 0) return;
+    if (!project || !tabsHydrated) return;
     (async () => {
       const savedTabs = [];
       for (const tab of tabs) {
@@ -1101,11 +1120,9 @@ function App() {
           }
         }
       }
-      if (savedTabs.length > 0) {
-        await SaveTabs(savedTabs);
-      }
+      await SaveTabs(savedTabs);
     })();
-  }, [tabs, getAllTerminalIds, getChatSessions]);
+  }, [project, tabsHydrated, tabs, getAllTerminalIds, getChatSessions]);
 
   const syncLiveChatTabs = useCallback(async () => {
     if (!project || workspaces.length === 0) return;
@@ -2332,6 +2349,20 @@ function parseChatMetadata(msg: any): { threadId?: string; model?: string; reaso
   } catch {
     return {};
   }
+}
+
+function findPaneById(pane: Pane, paneId: string): Pane | null {
+  if (pane.id === paneId) {
+    return pane;
+  }
+  if (!('children' in pane)) {
+    return null;
+  }
+  for (const child of pane.children) {
+    const found = findPaneById(child, paneId);
+    if (found) return found;
+  }
+  return null;
 }
 
 function chatPaneHasSession(pane: Pane, sessionId: string): boolean {
