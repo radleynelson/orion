@@ -296,6 +296,12 @@ func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) 
 
 func (a *App) DeleteWorkspace(repoRoot string, path string) error {
 	wsID := filepath.Base(path)
+	// Kill server tmux sessions (rails s, vite dev, etc.) before removing the
+	// worktree — otherwise they keep running, hold ports, and write to a path
+	// that no longer exists.
+	if err := a.srvMgr.StopServers(path); err != nil {
+		applog.Warnf("StopServers during DeleteWorkspace failed: %v", err)
+	}
 	a.portReg.ReleaseWorkspace(wsID)
 	a.portReg.ReleaseRedisDB(wsID)
 	return a.wsMgr.DeleteWorkspace(repoRoot, path)

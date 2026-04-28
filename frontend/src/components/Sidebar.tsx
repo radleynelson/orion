@@ -325,14 +325,22 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     setDeletingPath(path);
     setDeleteError(null);
     try {
-      const wsTabs = tabs.filter((t) => t.workspacePath === path);
-      for (const tab of wsTabs) {
-        const termIds = useStore.getState().getAllTerminalIds(tab);
+      const state = useStore.getState();
+      const wsTabs = state.tabs.filter((t) => t.workspacePath === path);
+      const wsServerTabs = state.serverTabs.filter((t) => t.workspacePath === path);
+      for (const tab of [...wsTabs, ...wsServerTabs]) {
+        const termIds = state.getAllTerminalIds(tab);
         for (const termId of termIds) {
-          await CloseTerminal(termId);
+          try { await CloseTerminal(termId); } catch (e) { console.error('CloseTerminal failed during delete', { termId, e }); }
         }
       }
+      // DeleteWorkspace also runs StopServers backend-side, but call it here
+      // so the UI stops polling immediately and any per-server cleanup runs.
+      try { await StopServers(path); } catch (e) { console.error('StopServers failed during delete', { path, e }); }
       await DeleteWorkspace(project.root, path);
+      // Drop the zustand entries pointing at the now-deleted workspace.
+      for (const tab of wsTabs) state.removeTab(tab.id);
+      for (const tab of wsServerTabs) state.removeServerTab(tab.id);
       setConfirmDelete(null);
       await refreshWorkspaces();
     } catch (err) {
@@ -342,7 +350,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     } finally {
       setDeletingPath(null);
     }
-  }, [project, tabs, refreshWorkspaces]);
+  }, [project, refreshWorkspaces]);
 
   const handleLaunchAgent = useCallback(async (wsPath: string, agentName: string) => {
     if (!project) {
