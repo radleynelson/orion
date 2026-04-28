@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"orion/internal/config"
 	"orion/internal/notify"
@@ -450,6 +451,7 @@ func markTmuxSession(name string, sessionType string, label string, workspacePat
 	setTmuxOption(name, "@orion_label", label)
 	setTmuxOption(name, "@orion_icon", strings.TrimSpace(icon))
 	setTmuxOption(name, "@orion_workspace", workspacePath)
+	setTmuxOption(name, "@orion_started_at_unix_nano", fmt.Sprintf("%d", time.Now().UnixNano()))
 	if command != "" {
 		setTmuxOption(name, "@orion_command", command)
 	}

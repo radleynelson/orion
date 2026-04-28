@@ -272,17 +272,30 @@ func ThreadOptions(threadID string) codexSessionMeta {
 // tmux-backed terminal. It only returns IDs that can be validated against the
 // requested workspace, or a single unambiguous workspace history candidate.
 func ResolveThreadIDForTmux(tmuxSession string, workspacePath string) (string, error) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return "", fmt.Errorf("workspacePath required")
+	}
 	var processThreadIDs []string
 	for _, command := range descendantProcessCommands(tmuxPanePID(tmuxSession)) {
 		for _, id := range ParseResumeIDs(command) {
 			processThreadIDs = append(processThreadIDs, id)
 		}
 	}
-	return resolveThreadIDForWorkspace(
-		workspacePath,
-		tmuxOption(tmuxSession, "@orion_thread_id"),
-		processThreadIDs,
-	)
+	if id := strings.TrimSpace(tmuxOption(tmuxSession, "@orion_thread_id")); id != "" {
+		if ValidThreadForWorkspace(id, workspacePath) {
+			return id, nil
+		}
+	}
+	for _, id := range uniqueStrings(processThreadIDs) {
+		if ValidThreadForWorkspace(id, workspacePath) {
+			return id, nil
+		}
+	}
+	if threadID := threadIDForTmuxHistoryWindow(tmuxSession, workspacePath); threadID != "" {
+		return threadID, nil
+	}
+	return uniqueHistoryThreadIDForWorkspace(workspacePath)
 }
 
 // ThreadIDForTmux preserves the old string-returning API for callers that only
@@ -347,6 +360,72 @@ func uniqueHistoryThreadIDForWorkspace(workspacePath string) (string, error) {
 	default:
 		return "", fmt.Errorf("multiple Codex transcripts found for workspace %s; choose a session from history instead of converting this terminal automatically", workspacePath)
 	}
+}
+
+func threadIDForTmuxHistoryWindow(tmuxSession string, workspacePath string) string {
+	start, end := codexHistoryWindowForTmux(tmuxSession, workspacePath)
+	threadID, ok := historyThreadIDForWorkspaceWindow(workspacePath, start, end)
+	if !ok {
+		return ""
+	}
+	setTmuxOption(tmuxSession, "@orion_thread_id", threadID)
+	return threadID
+}
+
+func codexHistoryWindowForTmux(tmuxSession string, workspacePath string) (time.Time, time.Time) {
+	start := tmuxSessionStartTime(tmuxSession)
+	if start.IsZero() {
+		return time.Time{}, time.Time{}
+	}
+	var end time.Time
+	for _, session := range tmuxSessionNames() {
+		if session == tmuxSession {
+			continue
+		}
+		if tmuxOption(session, "@orion_type") != "codex" {
+			continue
+		}
+		if !samePath(tmuxOption(session, "@orion_workspace"), workspacePath) {
+			continue
+		}
+		otherStart := tmuxSessionStartTime(session)
+		if otherStart.IsZero() || !otherStart.After(start) {
+			continue
+		}
+		if end.IsZero() || otherStart.Before(end) {
+			end = otherStart
+		}
+	}
+	return start, end
+}
+
+func historyThreadIDForWorkspaceWindow(workspacePath string, start time.Time, end time.Time) (string, bool) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" || start.IsZero() {
+		return "", false
+	}
+	var candidates []string
+	for _, file := range codexSessionFiles() {
+		meta, startedAt, ok := readSessionMetaWithTimestamp(file.path, file.modTime)
+		if !ok || strings.TrimSpace(meta.ID) == "" || !samePath(meta.CWD, workspacePath) {
+			continue
+		}
+		if startedAt.IsZero() || startedAt.Before(start) {
+			continue
+		}
+		if !end.IsZero() && !startedAt.Before(end) {
+			continue
+		}
+		if len(loadHistoryFromFile(file.path, meta.ID, meta.CWD)) == 0 {
+			continue
+		}
+		candidates = append(candidates, meta.ID)
+	}
+	candidates = uniqueStrings(candidates)
+	if len(candidates) != 1 {
+		return "", false
+	}
+	return candidates[0], true
 }
 
 func ValidThreadForWorkspace(threadID string, workspacePath string) bool {
@@ -511,15 +590,21 @@ func loadHistoryFromFile(path string, threadID string, workspacePath string) []M
 }
 
 func readSessionMeta(path string) (codexSessionMeta, bool) {
+	meta, _, ok := readSessionMetaWithTimestamp(path, time.Time{})
+	return meta, ok
+}
+
+func readSessionMetaWithTimestamp(path string, fallback time.Time) (codexSessionMeta, time.Time, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return codexSessionMeta{}, false
+		return codexSessionMeta{}, time.Time{}, false
 	}
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 16*1024), 1024*1024)
 	var meta codexSessionMeta
+	var startedAt time.Time
 	for i := 0; i < 80 && scanner.Scan(); i++ {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -536,11 +621,14 @@ func readSessionMeta(path string) (codexSessionMeta, bool) {
 		case "session_meta":
 			var sessionMeta codexSessionMeta
 			if err := json.Unmarshal(entry.Payload, &sessionMeta); err != nil {
-				return codexSessionMeta{}, false
+				return codexSessionMeta{}, time.Time{}, false
 			}
 			meta.ID = firstNonEmptyString(meta.ID, sessionMeta.ID)
 			meta.CWD = firstNonEmptyString(meta.CWD, sessionMeta.CWD)
 			meta.Model = firstNonEmptyString(meta.Model, sessionMeta.Model)
+			if startedAt.IsZero() {
+				startedAt = parseCodexTimestamp(entry.Timestamp)
+			}
 		case "turn_context":
 			var turn codexTurnContextPayload
 			if err := json.Unmarshal(entry.Payload, &turn); err != nil {
@@ -554,7 +642,10 @@ func readSessionMeta(path string) (codexSessionMeta, bool) {
 			break
 		}
 	}
-	return meta, meta.ID != ""
+	if startedAt.IsZero() {
+		startedAt = fallback
+	}
+	return meta, startedAt, meta.ID != ""
 }
 
 func codexSessionFiles() []sessionFile {
@@ -656,6 +747,57 @@ func tmuxOption(name string, option string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func setTmuxOption(name string, option string, value string) {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(option) == "" {
+		return
+	}
+	_ = exec.Command("tmux", "set-option", "-t", name, option, value).Run()
+}
+
+func tmuxSessionNames() []string {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func tmuxSessionStartTime(name string) time.Time {
+	if value := tmuxOption(name, "@orion_started_at_unix_nano"); value != "" {
+		if nanos, err := strconv.ParseInt(value, 10, 64); err == nil && nanos > 0 {
+			return time.Unix(0, nanos)
+		}
+	}
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", name, "#{session_created}").Output()
+	if err != nil {
+		return time.Time{}
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
+}
+
+func parseCodexTimestamp(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 func samePath(a string, b string) bool {

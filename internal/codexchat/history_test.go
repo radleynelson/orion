@@ -192,6 +192,46 @@ func TestResolveThreadIDUsesValidCodexProcessIDBeforeHistory(t *testing.T) {
 	}
 }
 
+func TestHistoryThreadIDForWorkspaceWindowUsesSingleTranscriptInWindow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "notetaker")
+	start := time.Date(2026, 4, 27, 22, 46, 42, 0, time.UTC)
+	end := start.Add(30 * time.Second)
+
+	writeCodexHistoryAt(t, home, workspace, "before-thread", "Before window.", start.Add(-25*time.Second))
+	writeCodexHistoryAt(t, home, workspace, "target-thread", "Inside window.", start.Add(1*time.Second))
+	writeCodexHistoryAt(t, home, workspace, "after-thread", "After window.", end.Add(1*time.Second))
+
+	got, ok := historyThreadIDForWorkspaceWindow(workspace, start, end)
+	if !ok {
+		t.Fatalf("expected a single history candidate")
+	}
+	if got != "target-thread" {
+		t.Fatalf("got %q, want target-thread", got)
+	}
+}
+
+func TestHistoryThreadIDForWorkspaceWindowRejectsAmbiguousWindow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "notetaker")
+	start := time.Date(2026, 4, 27, 22, 46, 42, 0, time.UTC)
+
+	writeCodexHistoryAt(t, home, workspace, "first-thread", "First in window.", start.Add(1*time.Second))
+	writeCodexHistoryAt(t, home, workspace, "second-thread", "Second in window.", start.Add(2*time.Second))
+
+	got, ok := historyThreadIDForWorkspaceWindow(workspace, start, time.Time{})
+	if ok {
+		t.Fatalf("expected ambiguous window to be rejected, got %q", got)
+	}
+	if got != "" {
+		t.Fatalf("got %q, want empty thread on ambiguity", got)
+	}
+}
+
 func TestThreadOptionsReadsTurnContextModelAndEffort(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -223,12 +263,19 @@ func TestThreadOptionsReadsTurnContextModelAndEffort(t *testing.T) {
 
 func writeCodexHistory(t *testing.T, home string, workspace string, threadID string, text string) {
 	t.Helper()
+	writeCodexHistoryAt(t, home, workspace, threadID, text, time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC))
+}
+
+func writeCodexHistoryAt(t *testing.T, home string, workspace string, threadID string, text string, timestamp time.Time) {
+	t.Helper()
 	sessionDir := filepath.Join(home, "sessions", "2026", "04", "20")
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	raw := `{"type":"session_meta","timestamp":"2026-04-20T10:00:00Z","payload":{"id":"` + threadID + `","cwd":"` + workspace + `","model":"gpt-5.4"}}
-{"type":"event_msg","timestamp":"2026-04-20T10:00:01Z","payload":{"type":"user_message","message":"` + text + `","images":[],"local_images":[]}}
+	startedAt := timestamp.UTC().Format(time.RFC3339Nano)
+	messageAt := timestamp.Add(time.Second).UTC().Format(time.RFC3339Nano)
+	raw := `{"type":"session_meta","timestamp":"` + startedAt + `","payload":{"id":"` + threadID + `","cwd":"` + workspace + `","model":"gpt-5.4"}}
+{"type":"event_msg","timestamp":"` + messageAt + `","payload":{"type":"user_message","message":"` + text + `","images":[],"local_images":[]}}
 `
 	if err := os.WriteFile(filepath.Join(sessionDir, threadID+".jsonl"), []byte(raw), 0644); err != nil {
 		t.Fatal(err)
