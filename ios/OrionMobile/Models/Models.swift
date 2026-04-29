@@ -129,6 +129,20 @@ struct SavedConnection: Codable, Identifiable {
     let host: String
     let token: String
     let name: String?
+
+    var displayName: String {
+        guard let value = name?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return host
+        }
+        return value
+    }
+
+    var hasCustomName: Bool {
+        guard let value = name?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+        return !value.isEmpty
+    }
 }
 
 struct DiscoveredHost: Identifiable {

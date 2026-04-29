@@ -29,12 +29,7 @@ struct SettingsView: View {
                     LabeledContent("Status", value: state.isConnected ? "Connected" : "Disconnected")
                     if let info = state.projectInfo { LabeledContent("Project", value: info.name) }
                     Button("Disconnect", role: .destructive) {
-                        state.showSettings = false
-                        // Defer disconnect slightly so the sheet dismissal finishes first
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(200))
-                            state.disconnect()
-                        }
+                        state.disconnect()
                     }
                 }
                 Section("Terminal") {

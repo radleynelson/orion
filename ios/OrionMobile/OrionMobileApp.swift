@@ -65,6 +65,7 @@ final class AppState {
     var showSettings = false
     var showDiffReview = false
     var connectionError: String?
+    var suppressNextAutoConnect = false
     /// Transient error message shown as a toast at the top of the main view.
     /// Cleared automatically after 4 seconds.
     var transientError: String?
@@ -109,13 +110,17 @@ final class AppState {
         return false
     }
 
-    func connect(host: String, token: String) async throws {
+    func connect(host: String, token: String, name: String? = nil) async throws {
         let client = OrionClient(host: host, token: token)
         let projects = try await client.getProjects()
         self.client = client; self.host = host; self.token = token; self.projects = projects; self.isConnected = true; self.connectionError = nil
+        suppressNextAutoConnect = false
         KeychainService.saveToken(token, for: host)
-        var saved = KeychainService.loadConnections(); saved.removeAll { $0.host == host }
-        saved.insert(SavedConnection(host: host, token: token, name: nil), at: 0)
+        var saved = KeychainService.loadConnections()
+        let existingName = saved.first(where: { $0.host == host })?.name
+        saved.removeAll { $0.host == host }
+        let savedName = normalizedConnectionName(name) ?? normalizedConnectionName(existingName)
+        saved.insert(SavedConnection(host: host, token: token, name: savedName), at: 0)
         if saved.count > 5 { saved = Array(saved.prefix(5)) }; KeychainService.saveConnections(saved)
         // Connect voice WebSocket and fetch config
         connectVoice()
@@ -139,6 +144,7 @@ final class AppState {
     }
 
     func disconnect() {
+        suppressNextAutoConnect = true
         voiceConnection.disconnect()
         disconnectActiveTerminal()
         client = nil
@@ -149,6 +155,9 @@ final class AppState {
         sessions = []
         phoneLaunchedSessions = [:]
         showHome = false
+        showWorkspaces = false
+        showSettings = false
+        showDiffReview = false
         activeWorkspacePath = nil
         activeTabId = nil
         selectedSessionByWorkspace = [:]
@@ -840,4 +849,11 @@ final class AppState {
             await ensureWorkspaceSelectionAttached()
         }
     }
+}
+
+private func normalizedConnectionName(_ name: String?) -> String? {
+    guard let value = name?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+        return nil
+    }
+    return value
 }

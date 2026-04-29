@@ -1786,6 +1786,14 @@ button.workspace-min-row:hover em {
   max-width: min(720px, 88%);
 }
 
+.codex-chat-message-tool {
+  width: min(720px, 88%);
+}
+
+.codex-chat-message-tool .codex-chat-message-stack {
+  width: min(640px, calc(100% - 34px));
+}
+
 .codex-plan-card {
   width: min(640px, 100%);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 24%, var(--border));
@@ -2032,6 +2040,119 @@ button.workspace-min-row:hover em {
   font-size: 14px;
 }
 
+.codex-chat-markdown {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: normal;
+}
+
+.codex-chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.codex-chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.codex-chat-markdown p,
+.codex-chat-markdown ul,
+.codex-chat-markdown ol,
+.codex-chat-markdown blockquote,
+.codex-chat-markdown pre,
+.codex-chat-markdown table {
+  margin: 0 0 10px;
+}
+
+.codex-chat-markdown ul,
+.codex-chat-markdown ol {
+  padding-left: 20px;
+}
+
+.codex-chat-markdown li + li {
+  margin-top: 4px;
+}
+
+.codex-chat-markdown a {
+  color: var(--accent-blue);
+}
+
+.codex-chat-message-user .codex-chat-markdown a {
+  color: #062d6f;
+  font-weight: 700;
+}
+
+.codex-chat-markdown code {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.codex-chat-code-shell {
+  position: relative;
+  margin: 0 0 10px;
+}
+
+.codex-chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-dim);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  padding: 10px 58px 10px 10px;
+}
+
+.codex-chat-code-shell pre {
+  margin: 0;
+}
+
+.codex-chat-markdown pre code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  white-space: pre;
+}
+
+.codex-chat-markdown blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--accent-blue) 65%, var(--border));
+  padding-left: 10px;
+  color: var(--text-secondary);
+}
+
+.codex-chat-markdown h1,
+.codex-chat-markdown h2,
+.codex-chat-markdown h3,
+.codex-chat-markdown h4 {
+  margin: 2px 0 8px;
+  color: var(--text-primary);
+  font-size: 1em;
+  line-height: 1.3;
+}
+
+.codex-chat-markdown table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.codex-chat-markdown th,
+.codex-chat-markdown td {
+  border: 1px solid var(--border-dim);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.codex-chat-markdown th {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+  font-weight: 700;
+}
+
 .codex-chat-activity {
   align-self: center;
   max-width: min(720px, 100%);
@@ -2096,6 +2217,7 @@ button.workspace-min-row:hover em {
 }
 
 .codex-tool-card {
+  width: 100%;
   border-color: color-mix(in srgb, var(--accent-green) 24%, var(--border-dim));
 }
 
@@ -2106,6 +2228,21 @@ button.workspace-min-row:hover em {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.codex-tool-card > .codex-tool-card-header {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border-bottom: 0;
+}
+
+.codex-tool-card > .codex-tool-card-header::-webkit-details-marker {
+  display: none;
+}
+
+.codex-tool-card[open] > .codex-tool-card-header {
   border-bottom: 1px solid var(--border-dim);
 }
 
@@ -2183,9 +2320,51 @@ button.workspace-min-row:hover em {
   background: color-mix(in srgb, var(--accent-green) 8%, transparent);
 }
 
-.codex-tool-command,
-.codex-tool-text,
-.codex-tool-output pre {
+.codex-tool-chevron {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  transition: transform 120ms ease;
+}
+
+.codex-tool-card[open] .codex-tool-chevron {
+  transform: rotate(90deg);
+}
+
+.codex-tool-card-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.codex-tool-section {
+  border-top: 1px solid var(--border-dim);
+  padding: 10px 14px 12px;
+}
+
+.codex-tool-card-body > .codex-tool-section:first-child {
+  border-top: 0;
+}
+
+.codex-tool-section.shaded {
+  background: color-mix(in srgb, var(--bg-terminal) 70%, var(--bg-surface));
+}
+
+.codex-tool-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.codex-tool-section-label {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.codex-tool-section pre {
   margin: 0;
   max-height: 240px;
   overflow: auto;
@@ -2197,27 +2376,42 @@ button.workspace-min-row:hover em {
   overflow-wrap: anywhere;
 }
 
-.codex-tool-command,
-.codex-tool-text {
-  padding: 12px 14px;
-  background: color-mix(in srgb, var(--bg-terminal) 70%, var(--bg-surface));
-}
-
-.codex-tool-output {
-  border-top: 1px solid var(--border-dim);
-  padding: 9px 14px 12px;
-}
-
-.codex-tool-output summary {
-  cursor: pointer;
+.codex-copy-button {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-active) 88%, transparent);
   color: var(--text-dim);
+  cursor: pointer;
   font-family: var(--font-mono);
-  font-size: 11px;
-  user-select: none;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 6px;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease, opacity 120ms ease;
 }
 
-.codex-tool-output pre {
-  margin-top: 8px;
+.codex-copy-button:hover,
+.codex-copy-button:focus-visible {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent-blue) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-active));
+}
+
+.codex-copy-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.codex-chat-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0.74;
+}
+
+.codex-chat-code-shell:hover .codex-chat-code-copy,
+.codex-chat-code-copy:focus-visible {
+  opacity: 1;
 }
 
 .codex-reasoning-card {
@@ -2570,21 +2764,6 @@ button.workspace-min-row:hover em {
   flex-direction: column;
   gap: 10px;
   padding: 12px 18px;
-}
-
-.codex-chat-working-indicator {
-  width: fit-content;
-  max-width: min(420px, 100%);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--accent-green) 9%, var(--bg-active));
-  border: 1px solid color-mix(in srgb, var(--accent-green) 22%, var(--border-dim));
-  border-radius: 999px;
-  padding: 7px 10px;
-  font-size: 12px;
-  line-height: 1.2;
 }
 
 .codex-chat-input-row {

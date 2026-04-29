@@ -11,7 +11,7 @@
 		0964C3CA7EE6A359D4E79F8C /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */; };
 		152C7A3D8DBCB4251FBA099F /* OrionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */; };
 		473D7058EFC3BA1D5EC8451F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0364A1C00D6796B0BA597E20 /* SettingsView.swift */; };
-		490C11D894018FDE86E78AA0 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 58E31209EBFB34F093F8A4FB /* SwiftTerm */; };
+		490C11D894018FDE86E78AA0 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 253A81C4E8A0A79F15D0326E /* MarkdownUI */; };
 		579411367BB4C417DD1B1073 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E97D2259AFF585FE690720B3 /* ContentView.swift */; };
 		598D0A56763BC63C7B7A7F48 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80981DC85E613EA43D4066F8 /* ConnectionView.swift */; };
 		8075BC99F844BA839F5328FF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7E7C4F32A2A00E9DB11B4E06 /* Assets.xcassets */; };
@@ -21,6 +21,7 @@
 		CC33B76187E0490736BDCA8E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31AE562E83C275EEDFEA5BB /* Models.swift */; };
 		CD8CDA4B9576ED470E7C502A /* OrionTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9368DF7C524A5E17889C7431 /* OrionTheme.swift */; };
 		D9EDD58BEE70D34C70574844 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2155A4F7BB9FE1CC4B9D48BF /* KeychainService.swift */; };
+		DC7741B3F762348CEE91100E /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 58E31209EBFB34F093F8A4FB /* SwiftTerm */; };
 		E03DB0D4FB786233AF2481F9 /* VoiceConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EE7499ED7C3529C6E48804 /* VoiceConnection.swift */; };
 		E4617AFB806910B52E99E07B /* OrionMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2487ED338576B04F9B132B5 /* OrionMobileApp.swift */; };
 /* End PBXBuildFile section */
@@ -39,7 +40,7 @@
 		AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionClient.swift; sourceTree = "<group>"; };
 		BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalContainerView.swift; sourceTree = "<group>"; };
 		C0EE7499ED7C3529C6E48804 /* VoiceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceConnection.swift; sourceTree = "<group>"; };
-		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3FC0DF96360A36DED8150A9 /* SpeechService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechService.swift; sourceTree = "<group>"; };
 		C6F028C8077632CBF28D5615 /* TerminalConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalConnection.swift; sourceTree = "<group>"; };
 		E31AE562E83C275EEDFEA5BB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -52,7 +53,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				490C11D894018FDE86E78AA0 /* SwiftTerm in Frameworks */,
+				490C11D894018FDE86E78AA0 /* MarkdownUI in Frameworks */,
+				DC7741B3F762348CEE91100E /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,6 +159,7 @@
 			);
 			name = OrionMobile;
 			packageProductDependencies = (
+				253A81C4E8A0A79F15D0326E /* MarkdownUI */,
 				58E31209EBFB34F093F8A4FB /* SwiftTerm */,
 			);
 			productName = OrionMobile;
@@ -187,6 +190,7 @@
 			mainGroup = AC45B5684BA626348E22CB97;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				CA60E044D773AC0F29B22949 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				9320EB5E7E01271362BE12B3 /* XCLocalSwiftPackageReference "Vendor/SwiftTerm" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -432,7 +436,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		CA60E044D773AC0F29B22949 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		253A81C4E8A0A79F15D0326E /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA60E044D773AC0F29B22949 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
+			productName = MarkdownUI;
+		};
 		58E31209EBFB34F093F8A4FB /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
