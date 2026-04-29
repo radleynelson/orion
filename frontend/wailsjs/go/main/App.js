@@ -186,6 +186,10 @@ export function GetWorkspaceEnv(arg1) {
   return window['go']['main']['App']['GetWorkspaceEnv'](arg1);
 }
 
+export function IsTerminalBusy(arg1) {
+  return window['go']['main']['App']['IsTerminalBusy'](arg1);
+}
+
 export function KillSession(arg1) {
   return window['go']['main']['App']['KillSession'](arg1);
 }

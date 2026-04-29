@@ -440,6 +440,34 @@ func (m *Manager) GetTmuxSession(id string) string {
 	return ""
 }
 
+// IsBusy reports whether the terminal's tmux pane is running something other
+// than an idle shell. Returns false for terminals not attached to tmux or when
+// the lookup fails (so callers err on the side of letting Cmd+W proceed).
+func (m *Manager) IsBusy(id string) bool {
+	m.mu.RLock()
+	session := ""
+	if t, ok := m.terminals[id]; ok {
+		session = t.tmuxSession
+	}
+	m.mu.RUnlock()
+	if session == "" {
+		return false
+	}
+	out, err := exec.Command("tmux", "display-message", "-t", session, "-p", "#{pane_current_command}").Output()
+	if err != nil {
+		return false
+	}
+	cmd := strings.TrimSpace(string(out))
+	if cmd == "" {
+		return false
+	}
+	switch strings.ToLower(cmd) {
+	case "zsh", "bash", "sh", "fish", "dash", "tmux", "login", "-zsh", "-bash":
+		return false
+	}
+	return true
+}
+
 // List returns IDs of all active terminals.
 func (m *Manager) List() []string {
 	m.mu.RLock()

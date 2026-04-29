@@ -3806,6 +3806,107 @@ button.workspace-min-row:hover em {
   font-weight: 650;
 }
 
+.workspace-chip.workspace-chip-start {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.workspace-chip.workspace-chip-start:hover {
+  color: var(--accent-green);
+  border-color: color-mix(in srgb, var(--accent-green) 50%, var(--border-dim));
+}
+
+.workspace-chip.workspace-chip-start:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.close-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 12, 0.55);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.close-confirm-modal {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-bright);
+  border-radius: 12px;
+  padding: 18px 18px 14px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.close-confirm-title {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: var(--font-size);
+}
+
+.close-confirm-detail {
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+}
+
+.close-confirm-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.close-confirm-skip input {
+  accent-color: var(--accent-green);
+}
+
+.close-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.close-confirm-cancel,
+.close-confirm-confirm {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.close-confirm-cancel:hover {
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+}
+
+.close-confirm-confirm {
+  background: color-mix(in srgb, var(--accent-red) 20%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent-red) 50%, var(--border-dim));
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.close-confirm-confirm:hover,
+.close-confirm-confirm:focus-visible {
+  background: color-mix(in srgb, var(--accent-red) 32%, var(--bg-surface));
+  outline: none;
+}
+
 .workspace-icon-button {
   width: 26px;
   height: 26px;
@@ -4009,7 +4110,7 @@ button.workspace-min-row:hover em {
 
 /* xterm overrides for seamless look */
 .xterm {
-  padding: 8px 4px 4px 8px;
+  padding: 8px 4px 0 8px;
 }
 
 .xterm-viewport::-webkit-scrollbar {

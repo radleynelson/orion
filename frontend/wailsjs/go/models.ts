@@ -274,6 +274,7 @@ export namespace config {
 	    Provider: string;
 	    Icon: string;
 	    Command: string;
+	    InitialPrompt: string;
 	    Model: string;
 	    ReasoningEffort: string;
 	    ApprovalPolicy: string;
@@ -291,6 +292,7 @@ export namespace config {
 	        this.Provider = source["Provider"];
 	        this.Icon = source["Icon"];
 	        this.Command = source["Command"];
+	        this.InitialPrompt = source["InitialPrompt"];
 	        this.Model = source["Model"];
 	        this.ReasoningEffort = source["ReasoningEffort"];
 	        this.ApprovalPolicy = source["ApprovalPolicy"];

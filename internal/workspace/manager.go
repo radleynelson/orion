@@ -266,11 +266,13 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 	var agentProvider string
 	var agentLabel string
 	var agentIcon string
+	var agentInitialPrompt string
 	if agentCfg, ok := cfg.Agents[agentType]; ok {
 		agentCmd = agentCfg.Command
 		agentProvider = agentCfg.Provider
 		agentLabel = agentCfg.Label
 		agentIcon = agentCfg.Icon
+		agentInitialPrompt = strings.TrimSpace(agentCfg.InitialPrompt)
 	} else {
 		switch agentType {
 		case "claude":
@@ -295,6 +297,10 @@ func (m *Manager) LaunchAgent(repoRoot string, workspacePath string, agentType s
 		if sessionID := randomUUID(); sessionID != "" {
 			agentCmd = strings.TrimSpace(agentCmd + " --session-id " + shellQuote(sessionID))
 		}
+	}
+
+	if agentInitialPrompt != "" {
+		agentCmd = strings.TrimSpace(agentCmd + " " + shellQuote(agentInitialPrompt))
 	}
 
 	// Install notification hooks for Claude so Orion sees Stop/Notification events.

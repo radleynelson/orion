@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo, useState, DragEvent } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState, DragEvent } from 'react';
 import './App.css';
 import SplitPane from './components/SplitPane';
 import Sidebar from './components/Sidebar';
@@ -25,6 +25,7 @@ import {
   CreateTerminalInDir,
   CreateAttachedTerminal,
   CloseTerminal,
+  DetachTerminal,
   ResumeCodexChatWithOptions,
   ConvertTerminalToClaudeChatWithOptions,
   ConvertTerminalToCodexChatWithOptions,
@@ -42,6 +43,7 @@ import {
   GetAgentTypes,
   GetSavedTabs,
   GetTmuxSession,
+  IsTerminalBusy,
   RecoverSessions,
   RevealInFinder,
   StopClaudeChat,
@@ -167,11 +169,11 @@ function App() {
   const loadProject = useCallback(async (info: { name: string; root: string; mainBranch: string }) => {
     setTabsHydrated(false);
     try {
-      // Close existing tabs (release their PTYs but leave tmux alive)
+      // Detach existing tabs (release their PTYs but leave tmux alive)
       const currentTabs = useStore.getState().tabs;
       for (const t of currentTabs) {
         for (const termId of useStore.getState().getAllTerminalIds(t)) {
-          try { await CloseTerminal(termId); } catch {}
+          try { await DetachTerminal(termId); } catch {}
         }
         useStore.getState().removeTab(t.id);
       }
@@ -377,6 +379,7 @@ function App() {
   const [conversionNotice, setConversionNotice] = useState<string | null>(null);
   const [toolbarPopover, setToolbarPopover] = useState<'servers' | 'env' | null>(null);
   const [toolbarBusy, setToolbarBusy] = useState<'servers' | null>(null);
+  const [closeConfirm, setCloseConfirm] = useState<{ label: string; detail: string; onConfirm: () => void } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = parseInt(localStorage.getItem('orion.sidebarWidth') || '', 10);
     return isNaN(v) ? 250 : v;
@@ -438,10 +441,14 @@ function App() {
 
   const refreshDiffStats = useCallback(async () => {
     if (!activeWorkspacePath) {
-      setDiffStats({ files: 0, added: 0, removed: 0, loading: false });
+      setDiffStats((current) => (
+        current.files === 0 && current.added === 0 && current.removed === 0 && !current.loading
+          ? current
+          : { files: 0, added: 0, removed: 0, loading: false }
+      ));
       return;
     }
-    setDiffStats((current) => ({ ...current, loading: true }));
+    setDiffStats((current) => (current.loading ? current : { ...current, loading: true }));
     try {
       const files = (await GetChangedFilesAgainst(activeWorkspacePath, '')) || [];
       const diffs = await Promise.all(
@@ -461,9 +468,17 @@ function App() {
         }),
         { added: 0, removed: 0 },
       );
-      setDiffStats({ files: files.length, added: totals.added, removed: totals.removed, loading: false });
+      setDiffStats((current) => (
+        current.files === files.length && current.added === totals.added && current.removed === totals.removed && !current.loading
+          ? current
+          : { files: files.length, added: totals.added, removed: totals.removed, loading: false }
+      ));
     } catch {
-      setDiffStats({ files: 0, added: 0, removed: 0, loading: false });
+      setDiffStats((current) => (
+        current.files === 0 && current.added === 0 && current.removed === 0 && !current.loading
+          ? current
+          : { files: 0, added: 0, removed: 0, loading: false }
+      ));
     }
   }, [activeWorkspacePath]);
 
@@ -745,29 +760,73 @@ function App() {
     return pane.children.flatMap((child) => getChatSessions(child, fallbackKind));
   }, []);
 
+  const collectTerminalIdsInPane = useCallback((pane: Pane): string[] => {
+    if (pane.type === 'terminal') return pane.terminalId ? [pane.terminalId] : [];
+    if (!('children' in pane)) return [];
+    return pane.children.flatMap(collectTerminalIdsInPane);
+  }, []);
+
+  const detectRunningProcesses = useCallback(async (
+    terminalIds: string[],
+    chatCount: number,
+  ): Promise<{ busy: boolean; label: string }> => {
+    if (chatCount > 0) return { busy: true, label: chatCount === 1 ? 'an active agent chat' : `${chatCount} active agent chats` };
+    for (const id of terminalIds) {
+      try {
+        if (await IsTerminalBusy(id)) return { busy: true, label: 'a running process' };
+      } catch {}
+    }
+    return { busy: false, label: '' };
+  }, []);
+
+  const confirmIfBusy = useCallback(async (
+    target: 'tab' | 'pane',
+    terminalIds: string[],
+    chatCount: number,
+    onConfirm: () => void,
+  ) => {
+    if (localStorage.getItem('orion.skipCloseConfirm') === '1') {
+      onConfirm();
+      return;
+    }
+    const { busy, label } = await detectRunningProcesses(terminalIds, chatCount);
+    if (!busy) {
+      onConfirm();
+      return;
+    }
+    setCloseConfirm({
+      label: target === 'tab' ? 'Close this tab?' : 'Close this pane?',
+      detail: `It has ${label}.`,
+      onConfirm,
+    });
+  }, [detectRunningProcesses]);
+
   const handleClosePane = useCallback(async () => {
     if (!focusedPaneId) return;
+    const paneId = focusedPaneId;
     const state = useStore.getState();
     const tab = state.tabs.find((candidate) => candidate.id === state.activeTabId);
-    const pane = tab ? findPaneById(tab.rootPane, focusedPaneId) : null;
+    const pane = tab ? findPaneById(tab.rootPane, paneId) : null;
+    if (!pane) return;
     const fallbackKind = tab?.tabType === 'claude-chat' ? 'claude' : 'codex';
-    const chatSessions = pane ? getChatSessions(pane, fallbackKind) : [];
-    const terminalId = closePane(focusedPaneId);
-    if (terminalId) {
-      try {
-        await CloseTerminal(terminalId);
-      } catch {}
-    }
-    for (const session of chatSessions) {
-      try {
-        if (session.kind === 'claude') {
-          await StopClaudeChat(session.id);
-        } else {
-          await StopCodexChat(session.id);
-        }
-      } catch {}
-    }
-  }, [focusedPaneId, closePane, getChatSessions]);
+    const chatSessions = getChatSessions(pane, fallbackKind);
+    const terminalIds = collectTerminalIdsInPane(pane);
+
+    const performClose = async () => {
+      const closedTerminalId = closePane(paneId);
+      if (closedTerminalId) {
+        try { await CloseTerminal(closedTerminalId); } catch {}
+      }
+      for (const session of chatSessions) {
+        try {
+          if (session.kind === 'claude') await StopClaudeChat(session.id);
+          else await StopCodexChat(session.id);
+        } catch {}
+      }
+    };
+
+    confirmIfBusy('pane', terminalIds, chatSessions.length, () => { void performClose(); });
+  }, [focusedPaneId, closePane, getChatSessions, collectTerminalIdsInPane, confirmIfBusy]);
 
   const sessionKeys = useCallback((session: Partial<state.SessionInfo> | any) => {
     return [
@@ -826,23 +885,24 @@ function App() {
     const tab = useStore.getState().tabs.find((t) => t.id === tabId);
     if (!tab) return;
     const termIds = getAllTerminalIds(tab);
-    for (const termId of termIds) {
-      try {
-        await CloseTerminal(termId);
-      } catch {}
-    }
     const fallbackKind = tab.tabType === 'claude-chat' ? 'claude' : 'codex';
-    for (const session of getChatSessions(tab.rootPane, fallbackKind)) {
-      try {
-        if (session.kind === 'claude') {
-          await StopClaudeChat(session.id);
-        } else {
-          await StopCodexChat(session.id);
-        }
-      } catch {}
-    }
-    removeTab(tabId);
-  }, [removeTab, getAllTerminalIds, getChatSessions]);
+    const chatSessions = getChatSessions(tab.rootPane, fallbackKind);
+
+    const performClose = async () => {
+      for (const termId of termIds) {
+        try { await CloseTerminal(termId); } catch {}
+      }
+      for (const session of chatSessions) {
+        try {
+          if (session.kind === 'claude') await StopClaudeChat(session.id);
+          else await StopCodexChat(session.id);
+        } catch {}
+      }
+      removeTab(tabId);
+    };
+
+    confirmIfBusy('tab', termIds, chatSessions.length, () => { void performClose(); });
+  }, [removeTab, getAllTerminalIds, getChatSessions, confirmIfBusy]);
 
   const replaceTerminalWithChat = useCallback(async (
     tab: Tab,
@@ -2103,6 +2163,20 @@ function App() {
         </div>
       )}
 
+      {closeConfirm && (
+        <CloseConfirmDialog
+          label={closeConfirm.label}
+          detail={closeConfirm.detail}
+          onCancel={() => setCloseConfirm(null)}
+          onConfirm={(skipNext) => {
+            if (skipNext) localStorage.setItem('orion.skipCloseConfirm', '1');
+            const action = closeConfirm.onConfirm;
+            setCloseConfirm(null);
+            action();
+          }}
+        />
+      )}
+
       {/* Context menu */}
       {contextMenu && (
         <div
@@ -2159,6 +2233,60 @@ function App() {
   );
 }
 
+function CloseConfirmDialog({
+  label,
+  detail,
+  onCancel,
+  onConfirm,
+}: {
+  label: string;
+  detail: string;
+  onCancel: () => void;
+  onConfirm: (skipNext: boolean) => void;
+}) {
+  const [skipNext, setSkipNext] = useState(false);
+  const skipNextRef = useRef(skipNext);
+  useEffect(() => { skipNextRef.current = skipNext; }, [skipNext]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onConfirm(skipNextRef.current);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [onCancel, onConfirm]);
+
+  return (
+    <div className="close-confirm-overlay" onMouseDown={onCancel}>
+      <div className="close-confirm-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="close-confirm-title">{label}</div>
+        <div className="close-confirm-detail">{detail}</div>
+        <label className="close-confirm-skip">
+          <input type="checkbox" checked={skipNext} onChange={(e) => setSkipNext(e.target.checked)} />
+          <span>Don't ask again</span>
+        </label>
+        <div className="close-confirm-actions">
+          <button type="button" className="close-confirm-cancel" onClick={onCancel}>Cancel</button>
+          <button
+            type="button"
+            className="close-confirm-confirm"
+            autoFocus
+            onClick={() => onConfirm(skipNext)}
+          >
+            Close (↵)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceToolbar({
   serverStatuses,
   envVars,
@@ -2196,6 +2324,17 @@ function WorkspaceToolbar({
           <span className={`chip-dot ${runningServers.length > 0 ? 'running' : ''}`} />
           <span>servers</span>
           <b>{runningServers.length}/{serverStatuses.length}</b>
+        </button>
+      )}
+      {serverStatuses.length > 0 && runningServers.length === 0 && (
+        <button
+          type="button"
+          className="workspace-chip workspace-chip-start"
+          onClick={onStartServers}
+          disabled={busy}
+          title="Start servers"
+        >
+          {busy ? '...' : 'start'}
         </button>
       )}
       {browserURL && (

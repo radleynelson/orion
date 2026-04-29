@@ -105,6 +105,8 @@ export function GetUnifiedDiff(arg1:string,arg2:string,arg3:string):Promise<stri
 
 export function GetWorkspaceEnv(arg1:string):Promise<Record<string, string>>;
 
+export function IsTerminalBusy(arg1:string):Promise<boolean>;
+
 export function KillSession(arg1:string):Promise<void>;
 
 export function LaunchAgent(arg1:string,arg2:string,arg3:string):Promise<string>;
