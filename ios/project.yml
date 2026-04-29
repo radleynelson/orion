@@ -7,6 +7,9 @@ options:
   generateEmptyDirectories: true
 
 packages:
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: 2.4.1
   SwiftTerm:
     path: Vendor/SwiftTerm
 
@@ -29,5 +32,7 @@ targets:
         CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"
         CODE_SIGN_STYLE: Automatic
     dependencies:
+      - package: MarkdownUI
+        product: MarkdownUI
       - package: SwiftTerm
         product: SwiftTerm

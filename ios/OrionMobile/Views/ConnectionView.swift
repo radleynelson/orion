@@ -2,10 +2,14 @@ import SwiftUI
 
 struct ConnectionView: View {
     @Environment(AppState.self) private var state
+    @State private var connectionName = ""
     @State private var host = ""
     @State private var token = ""
     @State private var isConnecting = false
     @State private var didAutoConnect = false
+    @State private var savedConnections: [SavedConnection] = []
+    @State private var renameHost: String?
+    @State private var renameDraft = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,8 +24,11 @@ struct ConnectionView: View {
                     Label("Discovered on Network", systemImage: "wifi").font(.system(size: 11, weight: .medium)).foregroundStyle(OrionTheme.textDim).textCase(.uppercase)
                     ForEach(state.bonjour.discoveredHosts) { discovered in
                         Button {
-                            host = discovered.address
-                            if let saved = KeychainService.getToken(for: discovered.address) { token = saved }
+                            selectConnection(
+                                host: discovered.address,
+                                token: KeychainService.getToken(for: discovered.address) ?? token,
+                                name: savedName(for: discovered.address) ?? discovered.name
+                            )
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -35,6 +42,7 @@ struct ConnectionView: View {
             }
 
             VStack(spacing: 12) {
+                TextField("Name (e.g. Mac Studio, Work laptop)", text: $connectionName).textFieldStyle(OrionTextFieldStyle()).textInputAutocapitalization(.words).autocorrectionDisabled()
                 TextField("Host (e.g. 192.168.1.100:9867)", text: $host).textFieldStyle(OrionTextFieldStyle()).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                 TextField("Auth token", text: $token).textFieldStyle(OrionTextFieldStyle()).textInputAutocapitalization(.never).autocorrectionDisabled()
                 if let error = state.connectionError { Text(error).font(.system(size: 13)).foregroundStyle(OrionTheme.accentRed) }
@@ -42,32 +50,74 @@ struct ConnectionView: View {
                     if isConnecting { ProgressView().tint(.black).frame(maxWidth: .infinity).frame(height: 48) }
                     else { Text("Connect").font(.system(size: 16, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 48) }
                 }.background(OrionTheme.accentBlue).foregroundStyle(.black).clipShape(RoundedRectangle(cornerRadius: 8))
-                .disabled(host.isEmpty || token.isEmpty || isConnecting).opacity(host.isEmpty || token.isEmpty ? 0.4 : 1)
+                .disabled(!canConnect)
+                .opacity(trimmedHost.isEmpty || trimmedToken.isEmpty ? 0.4 : 1)
             }.padding(.horizontal, 24)
 
-            let saved = KeychainService.loadConnections()
-            if !saved.isEmpty {
+            if !savedConnections.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Saved Connections").font(.system(size: 11, weight: .medium)).foregroundStyle(OrionTheme.textDim).textCase(.uppercase)
-                    ForEach(saved) { conn in
-                        Button { host = conn.host; token = conn.token; Task { await connectTapped() } } label: {
-                            HStack { Text(conn.host).font(.system(size: 14, design: .monospaced)).foregroundStyle(OrionTheme.textSecondary); Spacer() }
-                            .padding(12).background(OrionTheme.bgSurface).clipShape(RoundedRectangle(cornerRadius: 8))
+                    ForEach(savedConnections) { conn in
+                        HStack(spacing: 8) {
+                            Button { connectSaved(conn) } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(conn.displayName)
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundStyle(OrionTheme.textPrimary)
+                                            .lineLimit(1)
+                                        if conn.hasCustomName {
+                                            Text(conn.host)
+                                                .font(.system(size: 12, design: .monospaced))
+                                                .foregroundStyle(OrionTheme.textDim)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                            }
+                            .buttonStyle(.plain)
+
+                            Button { beginRenaming(conn) } label: {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(OrionTheme.accentBlue)
+                                    .frame(width: 34, height: 34)
+                                    .background(OrionTheme.accentBlue.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
                         }
+                        .padding(12)
+                        .background(OrionTheme.bgSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }.padding(.horizontal, 24).padding(.top, 24)
             }
             Spacer()
         }.background(OrionTheme.bgPrimary)
+        .alert("Rename Connection", isPresented: Binding(
+            get: { renameHost != nil },
+            set: { if !$0 { renameHost = nil } }
+        )) {
+            TextField("Name", text: $renameDraft)
+            Button("Save") { saveRename() }
+            Button("Cancel", role: .cancel) { renameHost = nil }
+        } message: {
+            if let renameHost {
+                Text(renameHost)
+            }
+        }
         .onAppear {
             state.bonjour.startBrowsing()
+            savedConnections = KeychainService.loadConnections()
+            let shouldAutoConnect = !state.suppressNextAutoConnect
 
             let env = ProcessInfo.processInfo.environment
             if let envHost = env["ORION_MOBILE_HOST"], !envHost.isEmpty,
                let envToken = env["ORION_MOBILE_TOKEN"], !envToken.isEmpty {
-                host = envHost
-                token = envToken
-                if !didAutoConnect {
+                selectConnection(host: envHost, token: envToken, name: savedName(for: envHost))
+                if shouldAutoConnect && !didAutoConnect {
                     didAutoConnect = true
                     Task { await connectTapped() }
                 }
@@ -78,29 +128,88 @@ struct ConnectionView: View {
             let defaults = UserDefaults.standard
             if let savedHost = defaults.string(forKey: "lastHost"), !savedHost.isEmpty,
                let savedToken = KeychainService.getToken(for: savedHost), !savedToken.isEmpty {
-                host = savedHost
-                token = savedToken
-                if !didAutoConnect {
+                selectConnection(host: savedHost, token: savedToken, name: savedName(for: savedHost))
+                if shouldAutoConnect && !didAutoConnect {
                     didAutoConnect = true
                     Task { await connectTapped() }
                 }
-            } else if let first = KeychainService.loadConnections().first {
-                host = first.host
-                token = first.token
+            } else if let first = savedConnections.first {
+                selectConnection(host: first.host, token: first.token, name: first.name)
             }
         }
     }
 
+    private var trimmedHost: String {
+        host.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedToken: String {
+        token.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canConnect: Bool {
+        !trimmedHost.isEmpty && !trimmedToken.isEmpty && !isConnecting
+    }
+
     private func connectTapped() async {
+        let selectedHost = trimmedHost
+        let selectedToken = trimmedToken
+        guard !selectedHost.isEmpty, !selectedToken.isEmpty else { return }
         isConnecting = true; state.connectionError = nil
         do {
-            try await state.connect(host: host, token: token)
+            try await state.connect(host: selectedHost, token: selectedToken, name: connectionName)
+            host = selectedHost
+            token = selectedToken
             // Persist host only; token is stored in Keychain by state.connect()
-            UserDefaults.standard.set(host, forKey: "lastHost")
+            UserDefaults.standard.set(selectedHost, forKey: "lastHost")
+            savedConnections = KeychainService.loadConnections()
+            connectionName = savedName(for: selectedHost) ?? connectionName.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             state.connectionError = error.localizedDescription
         }
         isConnecting = false
+    }
+
+    private func connectSaved(_ connection: SavedConnection) {
+        selectConnection(host: connection.host, token: connection.token, name: connection.name)
+        Task { await connectTapped() }
+    }
+
+    private func selectConnection(host selectedHost: String, token selectedToken: String, name selectedName: String?) {
+        host = selectedHost
+        token = selectedToken
+        connectionName = selectedName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func savedName(for host: String) -> String? {
+        savedConnections.first(where: { $0.host == host })?.name
+    }
+
+    private func beginRenaming(_ connection: SavedConnection) {
+        renameHost = connection.host
+        renameDraft = connection.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func saveRename() {
+        guard let renameHost else { return }
+        var connections = KeychainService.loadConnections()
+        guard let index = connections.firstIndex(where: { $0.host == renameHost }) else {
+            self.renameHost = nil
+            return
+        }
+        let connection = connections[index]
+        let name = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        connections[index] = SavedConnection(
+            host: connection.host,
+            token: connection.token,
+            name: name.isEmpty ? nil : name
+        )
+        KeychainService.saveConnections(connections)
+        savedConnections = connections
+        if host == renameHost {
+            connectionName = name
+        }
+        self.renameHost = nil
     }
 }
 

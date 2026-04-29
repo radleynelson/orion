@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, KeyboardEvent, SetStateAction } from "react";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import type {
+  Dispatch,
+  HTMLAttributes,
+  KeyboardEvent,
+  MouseEvent,
+  ReactNode,
+  SetStateAction,
+} from "react";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { ClipboardSetText, EventsOn } from "../../wailsjs/runtime/runtime";
 import {
   AnswerClaudeChatRequest,
   AnswerCodexChatRequest,
@@ -14,6 +24,10 @@ import {
 } from "../../wailsjs/go/main/App";
 import { useStore } from "../store";
 import AgentSigil from "./AgentSigil";
+
+const markdownComponents: Components = {
+  pre: MarkdownPre,
+};
 
 type ChatAttachment = {
   id?: string;
@@ -215,7 +229,6 @@ export default function CodexChat({
     .reverse()
     .find((m) => m.type === "status");
   const lastStatus = lastStatusMessage?.status || "idle";
-  const isRunning = lastStatus === "running";
   const liveActivity = useMemo(
     () =>
       liveActivityItems(
@@ -432,11 +445,6 @@ export default function CodexChat({
       )}
 
       <div className="codex-chat-input">
-        {isRunning && (
-          <WorkingIndicator
-            text={lastStatusMessage?.text || `${config.displayName} is working`}
-          />
-        )}
         {attachments.length > 0 && (
           <div className="codex-chat-attachment-tray">
             {attachments.map((attachment, index) => (
@@ -945,7 +953,16 @@ function renderRow(
               ))}
             </div>
           ) : null}
-          {msg.text && <div className="codex-chat-text">{msg.text}</div>}
+          {msg.text && (
+            <div className="codex-chat-text codex-chat-markdown">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+              >
+                {msg.text}
+              </ReactMarkdown>
+            </div>
+          )}
           {msg.details && detailsBlock(msg.details)}
         </div>
       </div>
@@ -1070,19 +1087,6 @@ function attachmentName(attachment: ChatAttachment): string {
   return "Image";
 }
 
-function WorkingIndicator({ text }: { text: string }) {
-  return (
-    <div className="codex-chat-working-indicator">
-      <span className="codex-chat-typing-dots" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
-      <span>{text}</span>
-    </div>
-  );
-}
-
 function LoadingRow({
   msg,
   assistantName,
@@ -1119,6 +1123,7 @@ function ToolActivityCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
   const complete = msg.toolStatus === "complete";
   const output = msg.resultText || msg.resultDetails || "";
   const commandLike = toolLooksLikeCommand(msg.toolName);
+  const hasBody = Boolean(msg.text || msg.details || output);
 
   return (
     <div className="codex-chat-message codex-chat-message-assistant codex-chat-message-tool">
@@ -1127,8 +1132,8 @@ function ToolActivityCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
         <div className="codex-chat-message-meta">
           {complete ? "Tool finished" : "Tool running"}
         </div>
-        <div className="codex-tool-card">
-          <div className="codex-tool-card-header">
+        <details className="codex-tool-card">
+          <summary className="codex-tool-card-header">
             <div className="codex-tool-title">
               <span className="codex-tool-icon">{toolIcon(msg.toolName)}</span>
               <div>
@@ -1143,25 +1148,116 @@ function ToolActivityCard({ msg, agentId }: { msg: ChatRow; agentId: string }) {
             >
               {complete ? "complete" : "running"}
             </span>
-          </div>
-          {msg.text && (
-            <pre
-              className={commandLike ? "codex-tool-command" : "codex-tool-text"}
-            >
-              {msg.text}
-            </pre>
+            <span className="codex-tool-chevron" aria-hidden="true">
+              ▸
+            </span>
+          </summary>
+          {hasBody && (
+            <div className="codex-tool-card-body">
+              {msg.text && (
+                <ToolContentSection
+                  label={commandLike ? "Command" : msg.toolName || "Tool"}
+                  text={msg.text}
+                  shaded
+                />
+              )}
+              {msg.details && (
+                <ToolContentSection
+                  label={commandLike ? "Input" : "Details"}
+                  text={formatDetails(msg.details)}
+                />
+              )}
+              {output && (
+                <ToolContentSection
+                  label={commandLike ? "Output" : "Result"}
+                  text={formatDetails(output)}
+                />
+              )}
+            </div>
           )}
-          {msg.details &&
-            detailsBlock(msg.details, commandLike ? "Input" : "Details")}
-          {output && (
-            <details className="codex-tool-output" open={!commandLike}>
-              <summary>{commandLike ? "Output" : "Result"}</summary>
-              <pre>{formatDetails(output)}</pre>
-            </details>
-          )}
-        </div>
+        </details>
       </div>
     </div>
+  );
+}
+
+function ToolContentSection({
+  label,
+  text,
+  shaded = false,
+}: {
+  label: string;
+  text: string;
+  shaded?: boolean;
+}) {
+  return (
+    <section className={`codex-tool-section ${shaded ? "shaded" : ""}`}>
+      <div className="codex-tool-section-header">
+        <div className="codex-tool-section-label">{label}</div>
+        <CopyBlockButton text={text} />
+      </div>
+      <pre>{text}</pre>
+    </section>
+  );
+}
+
+function MarkdownPre({
+  children,
+  ...props
+}: HTMLAttributes<HTMLPreElement>) {
+  const text = trimTrailingCodeNewline(extractNodeText(children));
+
+  return (
+    <div className="codex-chat-code-shell">
+      <CopyBlockButton text={text} className="codex-chat-code-copy" />
+      <pre {...props}>{children}</pre>
+    </div>
+  );
+}
+
+function CopyBlockButton({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    await writeChatClipboardText(text);
+    setCopied(true);
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = window.setTimeout(() => {
+      setCopied(false);
+      timeoutRef.current = null;
+    }, 1400);
+  };
+
+  return (
+    <button
+      type="button"
+      className={`codex-copy-button ${className}`}
+      onClick={handleCopy}
+      disabled={!text}
+      title={copied ? "Copied" : "Copy"}
+      aria-label={copied ? "Copied" : "Copy block"}
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
@@ -1538,6 +1634,54 @@ function detailsBlock(details: string, label = "Details") {
       <pre className="codex-chat-details">{formatDetails(details)}</pre>
     </details>
   );
+}
+
+async function writeChatClipboardText(text: string): Promise<void> {
+  try {
+    const ok = await ClipboardSetText(text);
+    if (ok) return;
+  } catch {}
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {}
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+function extractNodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return "";
+  }
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(extractNodeText).join("");
+  }
+  if (typeof node === "object" && "props" in node) {
+    return extractNodeText(
+      (node as { props?: { children?: ReactNode } }).props?.children,
+    );
+  }
+  return "";
+}
+
+function trimTrailingCodeNewline(text: string): string {
+  return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
 function shouldHideMessage(msg: ChatMessage): boolean {

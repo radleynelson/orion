@@ -1,5 +1,7 @@
 import PhotosUI
 import SwiftUI
+import MarkdownUI
+import UIKit
 
 struct ContentView: View {
     @Environment(AppState.self) private var state
@@ -2728,6 +2730,361 @@ private struct CompactChatChip: View {
     }
 }
 
+private struct MarkdownChatText: View {
+    let text: String
+    let type: String
+
+    private var foreground: Color {
+        if type == "user" {
+            return Color(hex: 0x0B1B3D)
+        }
+        if type == "error" {
+            return OrionTheme.accentRed
+        }
+        return OrionTheme.textPrimary
+    }
+
+    var body: some View {
+        Markdown(text)
+            .markdownTheme(
+                .orionChat(
+                    textColor: foreground,
+                    weight: type == "user" ? .medium : .regular
+                )
+            )
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct MobileCopyButton: View {
+    let text: String
+
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+            Task {
+                try? await Task.sleep(for: .milliseconds(1400))
+                await MainActor.run {
+                    copied = false
+                }
+            }
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .labelStyle(.titleAndIcon)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(copied ? OrionTheme.accentGreen : OrionTheme.textDim)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(OrionTheme.bgActive.opacity(0.8))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke((copied ? OrionTheme.accentGreen : OrionTheme.border).opacity(0.75), lineWidth: 0.5)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(text.isEmpty)
+        .opacity(text.isEmpty ? 0.45 : 1)
+        .accessibilityLabel(copied ? "Copied" : "Copy")
+    }
+}
+
+private struct MobileToolActivityRow: View {
+    let row: CodexChatRow
+    let sessionIcon: String
+
+    @State private var expanded = false
+
+    private var complete: Bool {
+        row.toolStatus == "complete"
+    }
+
+    private var output: String {
+        row.resultText ?? row.resultDetails ?? ""
+    }
+
+    private var commandLike: Bool {
+        toolLooksLikeCommand(row.label)
+    }
+
+    private var hasBody: Bool {
+        !row.text.isEmpty || !(row.details ?? "").isEmpty || !output.isEmpty
+    }
+
+    private var cardWidth: CGFloat {
+        min(340, max(248, UIScreen.main.bounds.width - 76))
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            AgentSigilView(sessionIcon, size: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(complete ? "Tool finished" : "Tool running")
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.14)) {
+                            expanded.toggle()
+                        }
+                    } label: {
+                        toolHeader
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(row.label.isEmpty ? "Tool" : row.label)
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+
+                    if expanded {
+                        toolBody
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: cardWidth, alignment: .leading)
+                .background(OrionTheme.bgSurface)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentGreen.opacity(0.24), lineWidth: 0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            Spacer(minLength: 22)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var toolHeader: some View {
+        HStack(spacing: 10) {
+            Text(toolIcon(row.label))
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundStyle(OrionTheme.accentGreen)
+                .frame(width: 28, height: 28)
+                .background(OrionTheme.accentGreen.opacity(0.13))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentGreen.opacity(0.28), lineWidth: 0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.label.isEmpty ? "Tool" : row.label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(1)
+                if let toolUseId = row.toolUseId {
+                    Text(shortID(toolUseId))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(complete ? "complete" : "running")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(complete ? OrionTheme.accentGreen : OrionTheme.accentBlue)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .overlay(Capsule().stroke((complete ? OrionTheme.accentGreen : OrionTheme.accentBlue).opacity(0.42), lineWidth: 0.5))
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(OrionTheme.textDim)
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+        }
+        .contentShape(Rectangle())
+        .padding(12)
+    }
+
+    @ViewBuilder
+    private var toolBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !row.text.isEmpty {
+                toolSection(
+                    title: commandLike ? "Command" : (row.label.isEmpty ? "Tool" : row.label),
+                    text: row.text,
+                    shaded: true
+                )
+            }
+
+            if let details = row.details, !details.isEmpty {
+                toolSection(
+                    title: commandLike ? "Input" : "Details",
+                    text: prettyDetails(details)
+                )
+            }
+
+            if !output.isEmpty {
+                toolSection(
+                    title: commandLike ? "Output" : "Result",
+                    text: prettyDetails(output)
+                )
+            }
+
+            if !hasBody {
+                Text("No details")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .top) { OrionTheme.borderDim.frame(height: 0.5) }
+            }
+        }
+    }
+
+    private func toolSection(title: String, text: String, shaded: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                Spacer(minLength: 8)
+                MobileCopyButton(text: text)
+            }
+            Text(text)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(OrionTheme.textSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(shaded ? OrionTheme.bgTerminal.opacity(0.72) : Color.clear)
+        .overlay(alignment: .top) { OrionTheme.borderDim.frame(height: 0.5) }
+    }
+}
+
+private extension Theme {
+    static func orionChat(textColor: Color, weight: Font.Weight) -> Theme {
+        Theme()
+            .text {
+                FontSize(15)
+                FontWeight(weight)
+                ForegroundColor(textColor)
+            }
+            .code {
+                FontFamilyVariant(.monospaced)
+                FontSize(13)
+                ForegroundColor(textColor)
+                BackgroundColor(OrionTheme.bgPrimary.opacity(0.65))
+            }
+            .link {
+                ForegroundColor(OrionTheme.accentBlue)
+            }
+            .heading1 { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        FontWeight(.semibold)
+                        FontSize(20)
+                    }
+                    .markdownMargin(top: .zero, bottom: .em(0.45))
+            }
+            .heading2 { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        FontWeight(.semibold)
+                        FontSize(18)
+                    }
+                    .markdownMargin(top: .em(0.85), bottom: .em(0.35))
+            }
+            .heading3 { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        FontWeight(.semibold)
+                        FontSize(16)
+                    }
+                    .markdownMargin(top: .em(0.75), bottom: .em(0.3))
+            }
+            .paragraph { configuration in
+                configuration.label
+                    .fixedSize(horizontal: false, vertical: true)
+                    .relativeLineSpacing(.em(0.12))
+                    .markdownMargin(top: .zero, bottom: .em(0.55))
+            }
+            .blockquote { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        ForegroundColor(OrionTheme.textSecondary)
+                    }
+                    .relativePadding(.leading, length: .em(0.85))
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(OrionTheme.border)
+                            .frame(width: 3)
+                    }
+                    .markdownMargin(top: .em(0.25), bottom: .em(0.65))
+            }
+            .codeBlock { configuration in
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        if let language = configuration.language, !language.isEmpty {
+                            Text(language.lowercased())
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(OrionTheme.textDim)
+                        }
+                        Spacer(minLength: 8)
+                        MobileCopyButton(text: configuration.content)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 7)
+                    .padding(.bottom, 2)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        configuration.label
+                            .fixedSize(horizontal: false, vertical: true)
+                            .relativeLineSpacing(.em(0.16))
+                            .relativePadding(.horizontal, length: .em(0.8))
+                            .relativePadding(.vertical, length: .em(0.7))
+                            .markdownTextStyle {
+                                FontFamilyVariant(.monospaced)
+                                FontSize(13)
+                                ForegroundColor(textColor)
+                            }
+                    }
+                }
+                .background(OrionTheme.bgPrimary.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(OrionTheme.borderDim, lineWidth: 0.7)
+                }
+                .markdownMargin(top: .em(0.25), bottom: .em(0.75))
+            }
+            .listItem { configuration in
+                configuration.label
+                    .markdownMargin(top: .em(0.12))
+            }
+            .table { configuration in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    configuration.label
+                        .fixedSize(horizontal: false, vertical: true)
+                        .markdownTableBorderStyle(
+                            TableBorderStyle(.allBorders, color: OrionTheme.border, width: 0.5)
+                        )
+                        .markdownTableBackgroundStyle(
+                            .alternatingRows(
+                                OrionTheme.bgPrimary.opacity(0.28),
+                                Color.clear,
+                                header: OrionTheme.bgPrimary.opacity(0.5)
+                            )
+                        )
+                }
+                .markdownMargin(top: .em(0.35), bottom: .em(0.75))
+            }
+            .tableCell { configuration in
+                configuration.label
+                    .markdownTextStyle {
+                        if configuration.row == 0 {
+                            FontWeight(.semibold)
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .relativeLineSpacing(.em(0.12))
+                    .relativePadding(.horizontal, length: .em(0.7))
+                    .relativePadding(.vertical, length: .em(0.38))
+            }
+    }
+}
+
 struct CodexChatView: View {
     @Environment(AppState.self) private var state
     let connection: CodexChatConnection
@@ -2937,19 +3294,6 @@ struct CodexChatView: View {
         connection.connectionState == .disconnected && connection.queuedMessageCount == 0
             ? OrionTheme.textDim
             : OrionTheme.textSecondary
-    }
-
-    private var isAssistantRunning: Bool {
-        connection.messages.reversed().first(where: { $0.type == "status" })?.status == "running"
-    }
-
-    private var workingLabel: String {
-        if let message = connection.messages.reversed().first(where: { $0.type == "status" && $0.status == "running" }),
-           let text = message.text,
-           !text.isEmpty {
-            return text
-        }
-        return "\(assistantName) is working"
     }
 
     private var chatRows: [CodexChatRow] {
@@ -3205,87 +3549,7 @@ struct CodexChatView: View {
     }
 
     private func toolRow(_ row: CodexChatRow) -> some View {
-        let complete = row.toolStatus == "complete"
-        let output = row.resultText ?? row.resultDetails ?? ""
-        return HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(connection.sessionIcon, size: 24)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(complete ? "Tool finished" : "Tool running")
-                    .font(.system(size: 11))
-                    .foregroundStyle(OrionTheme.textDim)
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 10) {
-                        Text(toolIcon(row.label))
-                            .font(.system(size: 13, weight: .bold, design: .monospaced))
-                            .foregroundStyle(OrionTheme.accentGreen)
-                            .frame(width: 28, height: 28)
-                            .background(OrionTheme.accentGreen.opacity(0.13))
-                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentGreen.opacity(0.28), lineWidth: 0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 9))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.label.isEmpty ? "Tool" : row.label)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(OrionTheme.textPrimary)
-                            if let toolUseId = row.toolUseId {
-                                Text(shortID(toolUseId))
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(OrionTheme.textDim)
-                            }
-                        }
-                        Spacer()
-                        Text(complete ? "complete" : "running")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(complete ? OrionTheme.accentGreen : OrionTheme.accentBlue)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .overlay(Capsule().stroke((complete ? OrionTheme.accentGreen : OrionTheme.accentBlue).opacity(0.42), lineWidth: 0.5))
-                    }
-                    .padding(12)
-
-                    if !row.text.isEmpty {
-                        Text(row.text)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(OrionTheme.textSecondary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(OrionTheme.bgTerminal.opacity(0.72))
-                    }
-
-                    if let details = row.details, !details.isEmpty {
-                        detailsView(details)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                    }
-
-                    if !output.isEmpty {
-                        DisclosureGroup {
-                            Text(prettyDetails(output))
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(OrionTheme.textSecondary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.top, 6)
-                        } label: {
-                            Text(toolLooksLikeCommand(row.label) ? "Output" : "Result")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(OrionTheme.textDim)
-                        }
-                        .tint(OrionTheme.textDim)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .overlay(alignment: .top) { OrionTheme.borderDim.frame(height: 0.5) }
-                    }
-                }
-                .frame(maxWidth: 340, alignment: .leading)
-                .background(OrionTheme.bgSurface)
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentGreen.opacity(0.24), lineWidth: 0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-            Spacer(minLength: 22)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        MobileToolActivityRow(row: row, sessionIcon: connection.sessionIcon)
     }
 
     private func reasoningRow(_ row: CodexChatRow) -> some View {
@@ -3617,11 +3881,6 @@ struct CodexChatView: View {
                 .clipShape(Capsule())
             }
 
-            if isAssistantRunning {
-                workingIndicator
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-
             if !pendingImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -3686,20 +3945,6 @@ struct CodexChatView: View {
         .padding(.bottom, 8)
         .background(OrionTheme.bgPrimary.opacity(0.98))
         .simultaneousGesture(keyboardDismissGesture)
-    }
-
-    private var workingIndicator: some View {
-        HStack(spacing: 8) {
-            TypingDotsView()
-            Text(workingLabel)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(OrionTheme.textSecondary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(assistantColor.opacity(0.08))
-        .clipShape(Capsule())
     }
 
     private var canSend: Bool {
@@ -3910,12 +4155,7 @@ struct CodexChatView: View {
                 attachmentList(row.attachments)
             }
             if !row.text.isEmpty {
-                Text(row.text)
-                    .font(.system(size: 15))
-                    .fontWeight(row.type == "user" ? .medium : .regular)
-                    .foregroundStyle(row.type == "user" ? Color(hex: 0x0B1B3D) : row.type == "error" ? OrionTheme.accentRed : OrionTheme.textPrimary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                MarkdownChatText(text: row.text, type: row.type)
             }
             if let details = row.details, !details.isEmpty {
                 detailsView(details)
