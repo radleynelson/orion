@@ -1053,6 +1053,18 @@ func (a *App) GetUnifiedDiff(workspacePath string, base string, filePath string)
 	return a.gitMgr.GetUnifiedDiff(workspacePath, base, filePath)
 }
 
+func (a *App) GetGitStatus(workspacePath string) (*git.RepositoryStatus, error) {
+	return a.gitMgr.GetStatus(workspacePath)
+}
+
+func (a *App) GitPull(workspacePath string) (*git.ActionResult, error) {
+	return a.gitMgr.Pull(workspacePath)
+}
+
+func (a *App) GitPush(workspacePath string) (*git.ActionResult, error) {
+	return a.gitMgr.Push(workspacePath)
+}
+
 func (a *App) DiscardFileChanges(workspacePath string, filePath string) error {
 	return a.gitMgr.DiscardFileChanges(workspacePath, filePath)
 }
