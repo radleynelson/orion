@@ -58,6 +58,38 @@ function clipboardTextFromSelection(selection: string, cols: number): string {
   return joined.join('\n');
 }
 
+function clipboardTextFromTerminalSelection(terminal: Terminal): string {
+  const selection = terminal.getSelection();
+  const range = terminal.getSelectionPosition();
+  if (!selection || !range) return selection;
+
+  try {
+    const buffer = terminal.buffer.active;
+    const startRow = Math.max(0, range.start.y);
+    const endRow = Math.max(startRow, range.end.y);
+    const parts: string[] = [];
+
+    for (let row = startRow; row <= endRow; row++) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+      const startCol = row === startRow ? Math.max(0, range.start.x) : 0;
+      const endCol = row === endRow ? Math.max(startCol, range.end.x) : terminal.cols;
+      parts.push(line.translateToString(false, startCol, endCol).trimEnd());
+    }
+
+    if (parts.length === 0) return clipboardTextFromSelection(selection, terminal.cols);
+
+    let text = parts[0] ?? '';
+    for (let i = 1; i < parts.length; i++) {
+      const line = buffer.getLine(startRow + i);
+      text += line?.isWrapped ? parts[i] : `\n${parts[i]}`;
+    }
+    return text;
+  } catch {
+    return clipboardTextFromSelection(selection, terminal.cols);
+  }
+}
+
 async function writeClipboardText(text: string): Promise<void> {
   try {
     const ok = await ClipboardSetText(text);
@@ -334,12 +366,11 @@ export function createTerminal(
       if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
         return;
       }
-      const selection = terminal.getSelection();
-      if (selection) {
+      if (terminal.hasSelection()) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
+        copyTerminalText(clipboardTextFromTerminalSelection(terminal));
         return;
       }
     }
@@ -399,11 +430,10 @@ export function createTerminal(
     }
 
     if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c') {
-      const selection = terminal.getSelection();
-      if (selection) {
+      if (terminal.hasSelection()) {
         e.preventDefault();
         e.stopPropagation();
-        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
+        copyTerminalText(clipboardTextFromTerminalSelection(terminal));
         return false;
       }
     }
@@ -436,12 +466,11 @@ export function createTerminal(
   // Prevents random spaces in copied URLs and rejoins text that wraps
   // at the terminal edge.
   const copyHandler = (e: ClipboardEvent) => {
-    const selection = terminal.getSelection();
-    if (selection) {
+    if (terminal.hasSelection()) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      const text = clipboardTextFromSelection(selection, terminal.cols);
+      const text = clipboardTextFromTerminalSelection(terminal);
       e.clipboardData?.setData('text/plain', text);
       copyTerminalText(text);
     }
@@ -483,6 +512,70 @@ export function createTerminal(
   container.ownerDocument.addEventListener('keypress', documentKeyCaptureHandler, { capture: true });
   container.ownerDocument.addEventListener('keyup', documentKeyReleaseHandler, { capture: true });
   container.ownerDocument.addEventListener('paste', documentPasteHandler, { capture: true });
+
+  type BufferPoint = { col: number; row: number };
+  let dragSelectionStart: BufferPoint | null = null;
+  let dragSelectionActive = false;
+  let dragSelectionOrigin: { x: number; y: number } | null = null;
+  const dragSelectionThreshold = 4;
+
+  const bufferPointFromMouseEvent = (e: MouseEvent): BufferPoint => {
+    const rect = container.getBoundingClientRect();
+    const cellWidth = rect.width / terminal.cols;
+    const cellHeight = rect.height / terminal.rows;
+    const viewportCol = Math.min(terminal.cols - 1, Math.max(0, Math.floor((e.clientX - rect.left) / cellWidth)));
+    const viewportRow = Math.min(terminal.rows - 1, Math.max(0, Math.floor((e.clientY - rect.top) / cellHeight)));
+    const buffer = terminal.buffer.active;
+    return {
+      col: viewportCol,
+      row: Math.min(buffer.length - 1, Math.max(0, buffer.viewportY + viewportRow)),
+    };
+  };
+
+  const selectBufferRange = (start: BufferPoint, end: BufferPoint) => {
+    const startOffset = start.row * terminal.cols + start.col;
+    const endOffset = end.row * terminal.cols + end.col;
+    const from = Math.min(startOffset, endOffset);
+    const to = Math.max(startOffset, endOffset) + 1;
+    terminal.select(from % terminal.cols, Math.floor(from / terminal.cols), Math.max(1, to - from));
+  };
+
+  const mouseDownSelectionHandler = (e: MouseEvent) => {
+    if (e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (!isTerminalActive(e.target)) return;
+    dragSelectionStart = bufferPointFromMouseEvent(e);
+    dragSelectionOrigin = { x: e.clientX, y: e.clientY };
+    dragSelectionActive = false;
+  };
+
+  const mouseMoveSelectionHandler = (e: MouseEvent) => {
+    if (!dragSelectionStart || !dragSelectionOrigin) return;
+    const dx = e.clientX - dragSelectionOrigin.x;
+    const dy = e.clientY - dragSelectionOrigin.y;
+    if (!dragSelectionActive && Math.hypot(dx, dy) < dragSelectionThreshold) return;
+
+    dragSelectionActive = true;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    selectBufferRange(dragSelectionStart, bufferPointFromMouseEvent(e));
+  };
+
+  const mouseUpSelectionHandler = (e: MouseEvent) => {
+    if (!dragSelectionStart) return;
+    if (dragSelectionActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      terminal.focus();
+    }
+    dragSelectionStart = null;
+    dragSelectionOrigin = null;
+    dragSelectionActive = false;
+  };
+  container.addEventListener('mousedown', mouseDownSelectionHandler, { capture: true });
+  container.ownerDocument.addEventListener('mousemove', mouseMoveSelectionHandler, { capture: true });
+  container.ownerDocument.addEventListener('mouseup', mouseUpSelectionHandler, { capture: true });
 
   // Mouse scroll handling — sends SGR mouse sequences so tmux can scroll
   // in both alternate screen (TUI apps) and normal buffer (server logs).
@@ -608,10 +701,13 @@ export function createTerminal(
     container.removeEventListener('keyup', keyReleaseHandler, { capture: true } as any);
     container.removeEventListener('copy', copyHandler, { capture: true } as any);
     container.removeEventListener('paste', pasteHandler, { capture: true } as any);
+    container.removeEventListener('mousedown', mouseDownSelectionHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keydown', documentKeyCaptureHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keypress', documentKeyCaptureHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keyup', documentKeyReleaseHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('paste', documentPasteHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('mousemove', mouseMoveSelectionHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('mouseup', mouseUpSelectionHandler, { capture: true } as any);
     window.removeEventListener('blur', blurHandler);
     onDataDispose.dispose();
     onResizeDispose.dispose();
