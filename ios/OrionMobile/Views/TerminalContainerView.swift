@@ -26,8 +26,10 @@ final class OrionTerminalView: TerminalView {
         showsVerticalScrollIndicator = true
         indicatorStyle = .white
         keyboardDismissMode = .none
-        isScrollEnabled = false
-        bounces = false
+        isScrollEnabled = true
+        bounces = true
+        alwaysBounceVertical = false
+        decelerationRate = .normal
         delaysContentTouches = true
         canCancelContentTouches = true
         isDirectionalLockEnabled = true
@@ -215,7 +217,6 @@ struct SwiftTermView: UIViewRepresentable {
         weak var terminalView: OrionTerminalView?
         var connection: TerminalConnection?
         private var lastPanTranslationY: CGFloat = 0
-        private var localScrollRemainder: CGFloat = 0
         private var remoteScrollRemainder: CGFloat = 0
         private let remoteScrollStep: CGFloat = 28
 
@@ -263,7 +264,6 @@ struct SwiftTermView: UIViewRepresentable {
             switch gesture.state {
             case .began:
                 lastPanTranslationY = gesture.translation(in: tv).y
-                localScrollRemainder = 0
                 remoteScrollRemainder = 0
             case .changed:
                 let translationY = gesture.translation(in: tv).y
@@ -272,34 +272,20 @@ struct SwiftTermView: UIViewRepresentable {
                 guard abs(deltaY) > 0 else { return }
 
                 if tv.canScroll {
-                    tv.beginDetachedScroll()
-                    localScrollRemainder += deltaY
-                    let lineStep = max(tv.font.lineHeight, 8)
-                    let lines = Int(abs(localScrollRemainder) / lineStep)
-                    guard lines > 0 else { return }
-
-                    if localScrollRemainder > 0 {
-                        tv.scrollUp(lines: min(lines, 12))
-                    } else {
-                        tv.scrollDown(lines: min(lines, 12))
-                    }
-
-                    let consumed = CGFloat(lines) * lineStep * (localScrollRemainder > 0 ? 1 : -1)
-                    localScrollRemainder -= consumed
                     return
                 }
 
                 remoteScrollRemainder += deltaY
-                let lines = Int(abs(remoteScrollRemainder) / remoteScrollStep)
+                let step = max(tv.font.lineHeight * 1.5, remoteScrollStep)
+                let lines = Int(abs(remoteScrollRemainder) / step)
                 guard lines > 0 else { return }
 
                 let direction = remoteScrollRemainder > 0 ? "up" : "down"
                 connection.sendScroll(direction: direction, lines: min(lines, 8))
-                let consumed = CGFloat(lines) * remoteScrollStep * (remoteScrollRemainder > 0 ? 1 : -1)
+                let consumed = CGFloat(lines) * step * (remoteScrollRemainder > 0 ? 1 : -1)
                 remoteScrollRemainder -= consumed
             case .ended, .cancelled, .failed:
                 lastPanTranslationY = 0
-                localScrollRemainder = 0
                 remoteScrollRemainder = 0
                 tv.noteUserScroll()
             default:
@@ -309,6 +295,11 @@ struct SwiftTermView: UIViewRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
             true
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer is UIPanGestureRecognizer, let tv = terminalView else { return true }
+            return !tv.canScroll
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {

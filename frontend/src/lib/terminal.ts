@@ -490,52 +490,42 @@ export function createTerminal(
 
   let wheelAccumulator = 0;
   let lastWheelTime = 0;
-  let lastScrollEmitTime = 0;
-  let scrollFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollAnimationFrame: number | null = null;
+  let pendingScrollCol = 1;
+  let pendingScrollRow = 1;
+  let pendingScrollThreshold = 16;
   const scrollIdleResetMs = 180;
-  const scrollEmitIntervalMs = 48;
-  const minScrollPixelsPerEvent = 88;
+  const minScrollPixelsPerLine = 12;
+  const maxScrollEventsPerFrame = 24;
 
   const normalizedWheelDelta = (e: WheelEvent, cellHeight: number, viewportHeight: number) => {
-    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * cellHeight;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * Math.max(cellHeight, 1);
     if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * viewportHeight;
     return e.deltaY;
   };
 
-  const emitScrollEvent = (direction: 1 | -1, col: number, row: number) => {
+  const emitScrollEvents = (direction: 1 | -1, col: number, row: number, count: number) => {
     const button = direction < 0 ? 64 : 65;
-    const seq = `\x1b[<${button};${col};${row}M`;
-    const bytes = new TextEncoder().encode(seq);
-    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
-    EventsEmit('terminal:input', terminalId, btoa(binary));
+    sendData(`\x1b[<${button};${col};${row}M`.repeat(count));
   };
 
-  const scheduleScrollFlush = (delay: number, col: number, row: number, threshold: number) => {
-    if (scrollFlushTimer) return;
-    scrollFlushTimer = setTimeout(() => {
-      scrollFlushTimer = null;
-      const magnitude = Math.abs(wheelAccumulator);
-      if (magnitude < threshold) return;
+  const flushWheelAccumulator = () => {
+    scrollAnimationFrame = null;
+    const magnitude = Math.abs(wheelAccumulator);
+    if (magnitude < pendingScrollThreshold) return;
 
-      const now = Date.now();
-      const elapsed = now - lastScrollEmitTime;
-      if (elapsed < scrollEmitIntervalMs) {
-        scheduleScrollFlush(scrollEmitIntervalMs - elapsed, col, row, threshold);
-        return;
-      }
+    const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
+    const count = Math.min(maxScrollEventsPerFrame, Math.floor(magnitude / pendingScrollThreshold));
+    emitScrollEvents(direction, pendingScrollCol, pendingScrollRow, count);
+    wheelAccumulator -= direction * count * pendingScrollThreshold;
 
-      const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
-      emitScrollEvent(direction, col, row);
-      wheelAccumulator -= direction * threshold;
-      lastScrollEmitTime = now;
-
-      if (Math.abs(wheelAccumulator) >= threshold) {
-        scheduleScrollFlush(scrollEmitIntervalMs, col, row, threshold);
-      }
-    }, delay);
+    if (Math.abs(wheelAccumulator) >= pendingScrollThreshold) {
+      scrollAnimationFrame = requestAnimationFrame(flushWheelAccumulator);
+    }
   };
 
   const wheelHandler = (e: WheelEvent) => {
+    if (Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -555,10 +545,12 @@ export function createTerminal(
     }
     lastWheelTime = now;
     wheelAccumulator += delta;
+    pendingScrollCol = col;
+    pendingScrollRow = row;
+    pendingScrollThreshold = Math.max(minScrollPixelsPerLine, cellHeight * 1.15);
 
-    const threshold = Math.max(minScrollPixelsPerEvent, cellHeight * 5);
-    if (Math.abs(wheelAccumulator) >= threshold) {
-      scheduleScrollFlush(0, col, row, threshold);
+    if (Math.abs(wheelAccumulator) >= pendingScrollThreshold && scrollAnimationFrame === null) {
+      scrollAnimationFrame = requestAnimationFrame(flushWheelAccumulator);
     }
   };
   // Use capture phase so we intercept before xterm.js's internal handlers
@@ -609,7 +601,7 @@ export function createTerminal(
   EventsEmit('terminal:resize', terminalId, terminal.cols, terminal.rows);
 
   const dispose = () => {
-    if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
+    if (scrollAnimationFrame !== null) cancelAnimationFrame(scrollAnimationFrame);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
     container.removeEventListener('keypress', keyCaptureHandler, { capture: true } as any);
