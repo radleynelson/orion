@@ -63,6 +63,10 @@ export function EmitSessionCreatedInfo(arg1:state.SessionInfo):Promise<void>;
 
 export function EmitSessionKilled(arg1:string):Promise<void>;
 
+export function EmitWorkspaceCreated(arg1:string,arg2:workspace.Workspace):Promise<void>;
+
+export function EmitWorkspaceDeleted(arg1:string,arg2:string):Promise<void>;
+
 export function GetAgentNames(arg1:string):Promise<Array<web.AgentType>>;
 
 export function GetAgentTypes(arg1:string):Promise<Array<main.AgentTypeInfo>>;
@@ -162,6 +166,8 @@ export function ResumeCodexChatWithOptions(arg1:string,arg2:string,arg3:string,a
 export function RevealInFinder(arg1:string):Promise<void>;
 
 export function SaveTabs(arg1:Array<state.SavedTab>):Promise<void>;
+
+export function SaveWorkspaceOrder(arg1:Array<string>):Promise<void>;
 
 export function SearchContents(arg1:string,arg2:string):Promise<Array<files.GrepResult>>;
 

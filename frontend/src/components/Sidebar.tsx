@@ -24,6 +24,7 @@ import {
   GetTmuxSession,
   GetWorkspaceEnv,
   AllocatePorts,
+  SaveWorkspaceOrder,
 } from '../../wailsjs/go/main/App';
 import OrionMark from './OrionMark';
 import WorkspaceDetailPanel from './WorkspaceDetailPanel';
@@ -129,6 +130,8 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [inspectorEnvVars, setInspectorEnvVars] = useState<Record<string, string>>({});
   const [inspector, setInspector] = useState<{ path: string; top: number; left: number } | null>(null);
+  const [draggedWorkspacePath, setDraggedWorkspacePath] = useState<string | null>(null);
+  const [dragOverWorkspacePath, setDragOverWorkspacePath] = useState<string | null>(null);
 
   // Init is handled by App.tsx (which never unmounts)
 
@@ -585,6 +588,30 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     }
   }, [setProject, setWorkspaces]);
 
+  const handleWorkspaceDrop = useCallback(async (targetPath: string) => {
+    if (!draggedWorkspacePath || draggedWorkspacePath === targetPath) return;
+    const ordered = sortWorkspaces(workspaces, workspaceActive);
+    const source = ordered.find((ws) => ws.path === draggedWorkspacePath);
+    const target = ordered.find((ws) => ws.path === targetPath);
+    if (!source || !target || source.isMain || target.isMain) return;
+
+    const sourceIndex = ordered.findIndex((ws) => ws.path === source.path);
+    const targetIndex = ordered.findIndex((ws) => ws.path === target.path);
+    const withoutSource = ordered.filter((ws) => ws.path !== source.path);
+    const targetIndexAfterRemoval = withoutSource.findIndex((ws) => ws.path === target.path);
+    const insertAt = sourceIndex < targetIndex ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
+    const next = [...withoutSource];
+    next.splice(insertAt, 0, source);
+
+    setWorkspaces(next);
+    try {
+      await SaveWorkspaceOrder(next.map((ws) => ws.path));
+    } catch (err) {
+      console.error('Failed to save workspace order:', err);
+      await refreshWorkspaces();
+    }
+  }, [draggedWorkspacePath, workspaces, workspaceActive, setWorkspaces, refreshWorkspaces]);
+
   if (!sidebarVisible) {
     return null;
   }
@@ -608,6 +635,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const previewPath = normalizedName ? `${project.root}-${normalizedName}` : `${project.root}-new-worktree`;
   const createDisabled = creatingWorkspace || !normalizedName;
   const inspectedWorkspace = inspector ? workspaces.find((ws) => ws.path === inspector.path) : undefined;
+  const orderedWorkspaces = sortWorkspaces(workspaces, workspaceActive);
 
   return (
     <div className="sidebar">
@@ -651,7 +679,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
           </span>
         </div>
 
-        {sortWorkspaces(workspaces, workspaceActive).map((ws) => {
+        {orderedWorkspaces.map((ws) => {
           const wsStatuses = serverStatuses[ws.path] || [];
           const wsHasServers = wsStatuses.some((s) => s.running);
           const wsAgentTabs = tabs.filter((t) =>
@@ -662,9 +690,36 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
           const active = ws.path === activeWorkspacePath;
 
           return (
-            <div key={ws.path} className="sidebar-workspace-row">
+            <div
+              key={ws.path}
+              className={`sidebar-workspace-row ${dragOverWorkspacePath === ws.path ? 'workspace-drop-target' : ''}`}
+              draggable={!ws.isMain}
+              onDragStart={(e) => {
+                if (ws.isMain) return;
+                setDraggedWorkspacePath(ws.path);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', ws.path);
+              }}
+              onDragOver={(e) => {
+                if (!draggedWorkspacePath || ws.isMain || draggedWorkspacePath === ws.path) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                setDragOverWorkspacePath(ws.path);
+              }}
+              onDragLeave={() => setDragOverWorkspacePath((path) => path === ws.path ? null : path)}
+              onDrop={async (e) => {
+                e.preventDefault();
+                await handleWorkspaceDrop(ws.path);
+                setDraggedWorkspacePath(null);
+                setDragOverWorkspacePath(null);
+              }}
+              onDragEnd={() => {
+                setDraggedWorkspacePath(null);
+                setDragOverWorkspacePath(null);
+              }}
+            >
               <div
-                className={`sidebar-item ${active ? 'active' : ''}`}
+                className={`sidebar-item ${active ? 'active' : ''} ${draggedWorkspacePath === ws.path ? 'workspace-dragging' : ''}`}
                 onClick={() => {
                   setActiveWorkspace(ws.path);
                   // Pre-allocate ports so agents/shells know them immediately

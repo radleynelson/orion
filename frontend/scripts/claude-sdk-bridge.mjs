@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import {
@@ -18,7 +20,7 @@ const reasoningEffort = args.effort || '';
 const approvalPolicy = args['approval-policy'] || '';
 const sandboxMode = args['sandbox-mode'] || '';
 const permissionMode = args['permission-mode'] || 'bypassPermissions';
-const claudePath = args['claude-path'] || 'claude';
+let claudePath = args['claude-path'] || 'claude';
 const resumeThreadId = args.resume || '';
 
 let session = null;
@@ -43,6 +45,7 @@ main().catch((error) => {
 });
 
 async function main() {
+  claudePath = await resolveExecutablePath(claudePath);
   session = resumeThreadId
     ? unstable_v2_resumeSession(resumeThreadId, sessionOptions())
     : unstable_v2_createSession(sessionOptions());
@@ -102,6 +105,40 @@ function sessionOptions() {
     options.effort = reasoningEffort;
   }
   return options;
+}
+
+async function resolveExecutablePath(value) {
+  const requested = expandHome(String(value || '').trim());
+  if (!requested) {
+    throw new Error('Claude Code native binary path is empty');
+  }
+  if (requested.includes(path.sep) || path.isAbsolute(requested)) {
+    await assertExecutable(requested, value);
+    return requested;
+  }
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, requested);
+    try {
+      await assertExecutable(candidate, value);
+      return candidate;
+    } catch {}
+  }
+  throw new Error(`Claude Code native binary not found at ${value}. PATH=${process.env.PATH || ''}`);
+}
+
+function expandHome(value) {
+  if (value === '~') return os.homedir();
+  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
+
+async function assertExecutable(candidate, displayValue) {
+  try {
+    await access(candidate, constants.X_OK);
+  } catch {
+    throw new Error(`Claude Code native binary not executable at ${displayValue || candidate}`);
+  }
 }
 
 async function consumeStream() {
@@ -254,6 +291,15 @@ async function sendInput(text, attachments, echoUser) {
   } else {
     ensureTurnStream();
   }
+  running = true;
+  emitStatus('running', 'Claude is thinking');
+  try {
+    await session.send(payload);
+  } catch (error) {
+    running = false;
+    emitStatus('idle');
+    throw error;
+  }
   if (echoUser) {
     emitMessage({
       id: `claude-user-${Date.now()}`,
@@ -263,9 +309,6 @@ async function sendInput(text, attachments, echoUser) {
       attachments,
     });
   }
-  running = true;
-  emitStatus('running', 'Claude is thinking');
-  await session.send(payload);
 }
 
 async function answerRequest(toolUseId, text) {
