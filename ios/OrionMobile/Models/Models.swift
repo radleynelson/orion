@@ -28,6 +28,25 @@ struct GitDiffResponse: Codable {
     let diff: String
 }
 
+struct GitRepositoryStatus: Codable {
+    let branch: String
+    let upstream: String
+    let ahead: Int
+    let behind: Int
+    let hasChanges: Bool
+    let changeCount: Int
+    let detached: Bool
+    let canPull: Bool
+    let canPush: Bool
+}
+
+struct GitActionResult: Codable {
+    let action: String
+    let output: String
+    let status: GitRepositoryStatus?
+    let durationMs: Int
+}
+
 struct SessionInfo: Codable, Identifiable {
     var id: String { runtimeSessionId ?? threadId ?? tmuxName }
     let tmuxName: String
@@ -232,6 +251,10 @@ struct StartServersRequest: Codable {
     let repoRoot: String
     let workspacePath: String
     let isMain: Bool
+}
+
+struct GitActionRequest: Codable {
+    let workspacePath: String
 }
 
 struct AppConfig: Codable {

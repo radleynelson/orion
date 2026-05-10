@@ -4,6 +4,8 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { EventsOn, EventsEmit, BrowserOpenURL, ClipboardGetText, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 
+declare const __ORION_BROWSER_PREVIEW__: boolean;
+
 // Nocturne dark theme for xterm.js
 const THEME = {
   background: '#131316',
@@ -205,15 +207,18 @@ export function createTerminal(
 
   terminal.open(container);
 
-  // Try WebGL renderer for GPU-accelerated rendering
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      webglAddon.dispose();
-    });
-    terminal.loadAddon(webglAddon);
-  } catch (e) {
-    console.warn('WebGL addon failed, falling back to canvas renderer');
+  // Try WebGL renderer for GPU-accelerated rendering. Browser preview mode
+  // intentionally uses xterm's default renderer to keep headless tests quiet.
+  if (!__ORION_BROWSER_PREVIEW__) {
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      terminal.loadAddon(webglAddon);
+    } catch (e) {
+      console.warn('WebGL addon failed, falling back to canvas renderer');
+    }
   }
 
   // Clickable links — Cmd+click opens in default browser.

@@ -27,14 +27,15 @@ type FileDiff struct {
 
 // RepositoryStatus summarizes the current branch state for lightweight UI actions.
 type RepositoryStatus struct {
-	Branch     string `json:"branch"`
-	Upstream   string `json:"upstream"`
-	Ahead      int    `json:"ahead"`
-	Behind     int    `json:"behind"`
-	HasChanges bool   `json:"hasChanges"`
-	Detached   bool   `json:"detached"`
-	CanPull    bool   `json:"canPull"`
-	CanPush    bool   `json:"canPush"`
+	Branch      string `json:"branch"`
+	Upstream    string `json:"upstream"`
+	Ahead       int    `json:"ahead"`
+	Behind      int    `json:"behind"`
+	HasChanges  bool   `json:"hasChanges"`
+	ChangeCount int    `json:"changeCount"`
+	Detached    bool   `json:"detached"`
+	CanPull     bool   `json:"canPull"`
+	CanPush     bool   `json:"canPush"`
 }
 
 // ActionResult captures git command output for display after a click action.
@@ -84,11 +85,17 @@ func (m *Manager) GetStatus(workspacePath string) (*RepositoryStatus, error) {
 			parseAheadBehind(status, strings.TrimPrefix(line, "# branch.ab "))
 		case !strings.HasPrefix(line, "#"):
 			status.HasChanges = true
+			status.ChangeCount++
 		}
 	}
-	status.CanPull = status.Upstream != ""
+	status.CanPull = status.Upstream != "" && !status.HasChanges
 	status.CanPush = status.Branch != "" && !status.Detached
 	return status, nil
+}
+
+// Fetch updates remote refs without changing the working tree.
+func (m *Manager) Fetch(workspacePath string) (*ActionResult, error) {
+	return m.runAction(workspacePath, "fetch", "fetch", "--prune")
 }
 
 // Pull fast-forwards from the configured upstream. It intentionally refuses
@@ -100,6 +107,9 @@ func (m *Manager) Pull(workspacePath string) (*ActionResult, error) {
 	}
 	if status.Upstream == "" {
 		return nil, fmt.Errorf("current branch has no upstream")
+	}
+	if status.HasChanges {
+		return nil, fmt.Errorf("working tree has %d uncommitted change(s); stash or commit before pulling", status.ChangeCount)
 	}
 	return m.runAction(workspacePath, "pull", "pull", "--ff-only")
 }

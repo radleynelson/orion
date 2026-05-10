@@ -107,6 +107,8 @@ export function GetUnifiedDiff(arg1:string,arg2:string,arg3:string):Promise<stri
 
 export function GetWorkspaceEnv(arg1:string):Promise<Record<string, string>>;
 
+export function GitFetch(arg1:string):Promise<git.ActionResult>;
+
 export function GitPull(arg1:string):Promise<git.ActionResult>;
 
 export function GitPush(arg1:string):Promise<git.ActionResult>;

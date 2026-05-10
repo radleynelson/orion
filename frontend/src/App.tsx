@@ -10,6 +10,7 @@ import SearchEverywhere from './components/SearchEverywhere';
 import CommandPalette, { CommandPaletteItem } from './components/CommandPalette';
 import NewTabPicker, { NewTabChoice } from './components/NewTabPicker';
 import ConversionHistoryPicker, { ConversionHistoryCandidate } from './components/ConversionHistoryPicker';
+import GitStatusControl from './components/GitStatusControl';
 import AgentSigil from './components/AgentSigil';
 import OrionMark from './components/OrionMark';
 import { useStore, generateId, Tab, Pane, PaneLeaf, zoomFactorFor, sortWorkspaces } from './store';
@@ -138,6 +139,8 @@ function App() {
     codeReviewVisible,
     codeReviewWidth,
     toggleCodeReview,
+    setCodeReviewVisible,
+    setCodeReviewBase,
     setCodeReviewWidth,
     zoomLevel,
     zoomIn,
@@ -2217,7 +2220,14 @@ function App() {
         <div className="status-left">
           {activeWorkspace && (
             <>
-              <span>⎇ {activeWorkspace.branch || activeWorkspace.name}</span>
+              <GitStatusControl
+                workspacePath={activeWorkspace.path}
+                fallbackBranch={activeWorkspace.branch || activeWorkspace.name}
+                onOpenChanges={() => {
+                  setCodeReviewBase('uncommitted');
+                  setCodeReviewVisible(true);
+                }}
+              />
               <span style={{ color: 'var(--text-muted)' }}>|</span>
               <span>{activeWorkspace.path}</span>
             </>

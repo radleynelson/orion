@@ -77,6 +77,10 @@ type AppAPI interface {
 	GetAgentNames(repoRoot string) []AgentType
 	GetChangedFilesAgainst(workspacePath string, base string) ([]oriongit.ChangedFile, error)
 	GetUnifiedDiff(workspacePath string, base string, filePath string) (string, error)
+	GetGitStatus(workspacePath string) (*oriongit.RepositoryStatus, error)
+	GitFetch(workspacePath string) (*oriongit.ActionResult, error)
+	GitPull(workspacePath string) (*oriongit.ActionResult, error)
+	GitPush(workspacePath string) (*oriongit.ActionResult, error)
 	EmitSessionCreated(tmuxSession string, sessionType string, label string, workspacePath string)
 	EmitSessionCreatedInfo(session state.SessionInfo)
 	EmitSessionKilled(sessionID string)
@@ -150,6 +154,10 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/servers/stop", s.authMiddleware(s.handleServersStop))
 	mux.HandleFunc("/api/git/changes", s.authMiddleware(s.handleGitChanges))
 	mux.HandleFunc("/api/git/diff", s.authMiddleware(s.handleGitDiff))
+	mux.HandleFunc("/api/git/status", s.authMiddleware(s.handleGitStatus))
+	mux.HandleFunc("/api/git/fetch", s.authMiddleware(s.handleGitFetch))
+	mux.HandleFunc("/api/git/pull", s.authMiddleware(s.handleGitPull))
+	mux.HandleFunc("/api/git/push", s.authMiddleware(s.handleGitPush))
 	mux.HandleFunc("/api/kill-session", s.authMiddleware(s.handleKillSession))
 
 	// Voice mode routes
@@ -1021,6 +1029,60 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"diff": diff})
+}
+
+func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	workspacePath := r.URL.Query().Get("workspace")
+	if workspacePath == "" {
+		http.Error(w, "workspace parameter required", http.StatusBadRequest)
+		return
+	}
+	status, err := s.app.GetGitStatus(workspacePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, status)
+}
+
+func (s *Server) handleGitFetch(w http.ResponseWriter, r *http.Request) {
+	s.handleGitAction(w, r, s.app.GitFetch)
+}
+
+func (s *Server) handleGitPull(w http.ResponseWriter, r *http.Request) {
+	s.handleGitAction(w, r, s.app.GitPull)
+}
+
+func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
+	s.handleGitAction(w, r, s.app.GitPush)
+}
+
+func (s *Server) handleGitAction(w http.ResponseWriter, r *http.Request, run func(string) (*oriongit.ActionResult, error)) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		WorkspacePath string `json:"workspacePath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.WorkspacePath) == "" {
+		http.Error(w, "workspacePath required", http.StatusBadRequest)
+		return
+	}
+	result, err := run(req.WorkspacePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) handleLaunchAgent(w http.ResponseWriter, r *http.Request) {

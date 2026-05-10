@@ -1057,6 +1057,10 @@ func (a *App) GetGitStatus(workspacePath string) (*git.RepositoryStatus, error) 
 	return a.gitMgr.GetStatus(workspacePath)
 }
 
+func (a *App) GitFetch(workspacePath string) (*git.ActionResult, error) {
+	return a.gitMgr.Fetch(workspacePath)
+}
+
 func (a *App) GitPull(workspacePath string) (*git.ActionResult, error) {
 	return a.gitMgr.Pull(workspacePath)
 }

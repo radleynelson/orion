@@ -3,9 +3,6 @@ import { useStore } from '../store';
 import {
   GetChangedFilesAgainst,
   GetUnifiedDiff,
-  GetGitStatus,
-  GitPull,
-  GitPush,
   DiscardFileChanges,
   DiscardAllChanges,
 } from '../../wailsjs/go/main/App';
@@ -149,9 +146,6 @@ export default function CodeReviewPane() {
     });
   }, []);
   const [matchCursor, setMatchCursor] = useState(0);
-  const [gitStatus, setGitStatus] = useState<git.RepositoryStatus | null>(null);
-  const [gitAction, setGitAction] = useState<'pull' | 'push' | null>(null);
-  const [gitNotice, setGitNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const reqId = useRef(0);
   const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -166,23 +160,9 @@ export default function CodeReviewPane() {
     setFilesPanelWidth(clamped);
   }, []);
 
-  const refreshGitStatus = useCallback(async () => {
-    if (!activeWorkspacePath) {
-      setGitStatus(null);
-      return;
-    }
-    try {
-      setGitStatus(await GetGitStatus(activeWorkspacePath));
-    } catch (err) {
-      console.error('GetGitStatus failed', err);
-      setGitStatus(null);
-    }
-  }, [activeWorkspacePath]);
-
   const refresh = useCallback(async (clear?: boolean) => {
     if (!activeWorkspacePath) {
       setEntries([]);
-      setGitStatus(null);
       setLoading(true);
       setTimeout(() => setLoading(false), 150);
       return;
@@ -225,19 +205,13 @@ export default function CodeReviewPane() {
           return { file: f, diff: parsed, rawDiff: raw, collapsed, viewed };
         });
       });
-      void refreshGitStatus();
     } catch (err) {
       console.error('GetChangedFilesAgainst failed', { activeWorkspacePath, baseArg, err });
       if (myReq === reqId.current) setEntries([]);
-      void refreshGitStatus();
     } finally {
       if (myReq === reqId.current) setLoading(false);
     }
-  }, [activeWorkspacePath, baseArg, refreshGitStatus]);
-
-  useEffect(() => {
-    void refreshGitStatus();
-  }, [refreshGitStatus]);
+  }, [activeWorkspacePath, baseArg]);
 
   // Clear viewed state and entries when workspace or base changes
   const prevContext = useRef({ workspace: activeWorkspacePath, base: baseArg });
@@ -260,7 +234,12 @@ export default function CodeReviewPane() {
     const cancel = EventsOn('git:files-changed', () => {
       refresh();
     });
-    return cancel;
+    const refreshFromStatusBar = () => refresh();
+    window.addEventListener('orion:git-status-changed', refreshFromStatusBar);
+    return () => {
+      cancel();
+      window.removeEventListener('orion:git-status-changed', refreshFromStatusBar);
+    };
   }, [activeWorkspacePath, refresh]);
 
   const fileQuery = fileSearch.trim().toLowerCase();
@@ -362,32 +341,6 @@ export default function CodeReviewPane() {
       await refresh();
     } catch (err) {
       console.error('Discard all failed:', err);
-    }
-  };
-
-  const gitNoticeFromResult = (result: git.ActionResult): string => {
-    const firstLine = (result.output || '').split('\n').map((line) => line.trim()).find(Boolean);
-    if (firstLine) return firstLine;
-    return result.action === 'pull' ? 'Already up to date.' : 'Pushed.';
-  };
-
-  const runGitAction = async (action: 'pull' | 'push') => {
-    if (!activeWorkspacePath || gitAction) return;
-    setGitAction(action);
-    setGitNotice(null);
-    try {
-      const result = action === 'pull'
-        ? await GitPull(activeWorkspacePath)
-        : await GitPush(activeWorkspacePath);
-      setGitStatus(result.status || null);
-      setGitNotice({ tone: 'ok', text: gitNoticeFromResult(result) });
-      await refresh();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setGitNotice({ tone: 'error', text: message.replace(/^Error: /, '') });
-      await refreshGitStatus();
-    } finally {
-      setGitAction(null);
     }
   };
 
@@ -560,32 +513,6 @@ export default function CodeReviewPane() {
           <option value="uncommitted">Uncommitted changes</option>
           <option value="main">vs {project?.mainBranch || 'main'}</option>
         </select>
-        <div className="cr-git-actions" title={gitStatus?.upstream || 'No upstream branch'}>
-          <span className="cr-git-branch">{gitStatus?.branch || 'detached'}</span>
-          <button
-            type="button"
-            className="cr-git-button"
-            disabled={!gitStatus?.canPull || gitAction !== null}
-            onClick={() => void runGitAction('pull')}
-            title={gitStatus?.canPull ? `Pull from ${gitStatus.upstream}` : 'No upstream branch'}
-          >
-            {gitAction === 'pull' ? 'Pulling…' : gitStatus && gitStatus.behind > 0 ? `Pull ${gitStatus.behind}` : 'Pull'}
-          </button>
-          <button
-            type="button"
-            className="cr-git-button"
-            disabled={!gitStatus?.canPush || gitAction !== null}
-            onClick={() => void runGitAction('push')}
-            title={gitStatus?.canPush ? 'Push current branch' : 'Cannot push detached HEAD'}
-          >
-            {gitAction === 'push' ? 'Pushing…' : gitStatus && gitStatus.ahead > 0 ? `Push ${gitStatus.ahead}` : 'Push'}
-          </button>
-        </div>
-        {gitNotice && (
-          <span className={`cr-git-notice ${gitNotice.tone}`} title={gitNotice.text}>
-            {gitNotice.text}
-          </span>
-        )}
         <div className="cr-content-search-wrap">
           <input
             type="text"

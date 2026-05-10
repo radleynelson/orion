@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:browser": "ORION_BROWSER_PREVIEW=1 vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "qa": "tsc --noEmit"

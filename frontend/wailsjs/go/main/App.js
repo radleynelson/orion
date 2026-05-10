@@ -190,6 +190,10 @@ export function GetWorkspaceEnv(arg1) {
   return window['go']['main']['App']['GetWorkspaceEnv'](arg1);
 }
 
+export function GitFetch(arg1) {
+  return window['go']['main']['App']['GitFetch'](arg1);
+}
+
 export function GitPull(arg1) {
   return window['go']['main']['App']['GitPull'](arg1);
 }

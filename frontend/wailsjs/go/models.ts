@@ -699,6 +699,7 @@ export namespace git {
 	    ahead: number;
 	    behind: number;
 	    hasChanges: boolean;
+	    changeCount: number;
 	    detached: boolean;
 	    canPull: boolean;
 	    canPush: boolean;
@@ -714,6 +715,7 @@ export namespace git {
 	        this.ahead = source["ahead"];
 	        this.behind = source["behind"];
 	        this.hasChanges = source["hasChanges"];
+	        this.changeCount = source["changeCount"];
 	        this.detached = source["detached"];
 	        this.canPull = source["canPull"];
 	        this.canPush = source["canPush"];
