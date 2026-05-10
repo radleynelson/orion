@@ -89,6 +89,18 @@ actor OrionClient {
         let response: GitDiffResponse = try await get("/api/git/diff", query: ["workspace": workspacePath, "base": base, "file": filePath])
         return response.diff
     }
+    func getGitStatus(workspacePath: String) async throws -> GitRepositoryStatus {
+        try await get("/api/git/status", query: ["workspace": workspacePath])
+    }
+    func gitFetch(workspacePath: String) async throws -> GitActionResult {
+        try await postJSON("/api/git/fetch", body: GitActionRequest(workspacePath: workspacePath))
+    }
+    func gitPull(workspacePath: String) async throws -> GitActionResult {
+        try await postJSON("/api/git/pull", body: GitActionRequest(workspacePath: workspacePath))
+    }
+    func gitPush(workspacePath: String) async throws -> GitActionResult {
+        try await postJSON("/api/git/push", body: GitActionRequest(workspacePath: workspacePath))
+    }
 
     // Server management
     func getServerStatuses(root: String, workspace: String) async throws -> [ServerStatus] {

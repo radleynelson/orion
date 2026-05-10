@@ -256,6 +256,26 @@ final class AppState {
         return try await client.getUnifiedDiff(workspacePath: workspacePath, base: base, filePath: file.path)
     }
 
+    func gitStatus(workspacePath explicitWorkspacePath: String? = nil) async throws -> GitRepositoryStatus? {
+        guard let client, let workspacePath = explicitWorkspacePath ?? activeWorkspacePath else { return nil }
+        return try await client.getGitStatus(workspacePath: workspacePath)
+    }
+
+    func gitFetch(workspacePath: String) async throws -> GitActionResult {
+        guard let client else { throw OrionError.invalidResponse }
+        return try await client.gitFetch(workspacePath: workspacePath)
+    }
+
+    func gitPull(workspacePath: String) async throws -> GitActionResult {
+        guard let client else { throw OrionError.invalidResponse }
+        return try await client.gitPull(workspacePath: workspacePath)
+    }
+
+    func gitPush(workspacePath: String) async throws -> GitActionResult {
+        guard let client else { throw OrionError.invalidResponse }
+        return try await client.gitPush(workspacePath: workspacePath)
+    }
+
     func refreshSessions() async {
         guard let client, let info = projectInfo, !workspaces.isEmpty else { return }
         do {

@@ -81,6 +81,8 @@ export function GetConfig(arg1:string):Promise<config.OrionConfig>;
 
 export function GetFileDiff(arg1:string,arg2:string):Promise<git.FileDiff>;
 
+export function GetGitStatus(arg1:string):Promise<git.RepositoryStatus>;
+
 export function GetLastProject():Promise<string>;
 
 export function GetMemorySnapshot():Promise<diag.MemorySnapshot>;
@@ -104,6 +106,12 @@ export function GetTmuxSession(arg1:string):Promise<string>;
 export function GetUnifiedDiff(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetWorkspaceEnv(arg1:string):Promise<Record<string, string>>;
+
+export function GitFetch(arg1:string):Promise<git.ActionResult>;
+
+export function GitPull(arg1:string):Promise<git.ActionResult>;
+
+export function GitPush(arg1:string):Promise<git.ActionResult>;
 
 export function IsTerminalBusy(arg1:string):Promise<boolean>;
 

@@ -234,7 +234,12 @@ export default function CodeReviewPane() {
     const cancel = EventsOn('git:files-changed', () => {
       refresh();
     });
-    return cancel;
+    const refreshFromStatusBar = () => refresh();
+    window.addEventListener('orion:git-status-changed', refreshFromStatusBar);
+    return () => {
+      cancel();
+      window.removeEventListener('orion:git-status-changed', refreshFromStatusBar);
+    };
   }, [activeWorkspacePath, refresh]);
 
   const fileQuery = fileSearch.trim().toLowerCase();
