@@ -3,3 +3,4 @@ node_modules
 frontend/dist
 .orion/
 .sidecar/
+.claude/settings.local.json

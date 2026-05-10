@@ -146,6 +146,10 @@ export function GetFileDiff(arg1, arg2) {
   return window['go']['main']['App']['GetFileDiff'](arg1, arg2);
 }
 
+export function GetGitStatus(arg1) {
+  return window['go']['main']['App']['GetGitStatus'](arg1);
+}
+
 export function GetLastProject() {
   return window['go']['main']['App']['GetLastProject']();
 }
@@ -192,6 +196,22 @@ export function GetUnifiedDiff(arg1, arg2, arg3) {
 
 export function GetWorkspaceEnv(arg1) {
   return window['go']['main']['App']['GetWorkspaceEnv'](arg1);
+}
+
+export function GitFetch(arg1) {
+  return window['go']['main']['App']['GitFetch'](arg1);
+}
+
+export function GitPull(arg1) {
+  return window['go']['main']['App']['GitPull'](arg1);
+}
+
+export function GitPush(arg1) {
+  return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function IsTerminalBusy(arg1) {
+  return window['go']['main']['App']['IsTerminalBusy'](arg1);
 }
 
 export function KillSession(arg1) {

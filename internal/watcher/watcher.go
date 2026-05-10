@@ -93,11 +93,13 @@ func (m *Manager) Watch(workspacePath string) error {
 				if event.Op == fsnotify.Chmod {
 					continue
 				}
-				// Debounce: wait 500ms after the last event before firing
+				// Debounce: wait 1.5s after the last event before firing.
+				// Long enough to coalesce agent-driven `.git` churn (git status,
+				// index refresh) without delaying real edits noticeably.
 				if debounce != nil {
 					debounce.Stop()
 				}
-				debounce = time.AfterFunc(500*time.Millisecond, fire)
+				debounce = time.AfterFunc(1500*time.Millisecond, fire)
 			case _, ok := <-w.Errors:
 				if !ok {
 					return

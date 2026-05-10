@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"orion/internal/applog"
 	"orion/internal/chatattachments"
@@ -71,7 +72,17 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	repairLaunchPath()
+	// Fix PATH for macOS dock launches. launchd hands GUI apps a minimal PATH,
+	// so version managers like asdf/nvm/volta/fnm/bun aren't visible. Ask the
+	// user's login shell for its PATH and merge it in — same trick VS Code uses.
+	mergePathFromLoginShell()
+	path := os.Getenv("PATH")
+	for _, p := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/opt/homebrew/sbin", "/usr/local/sbin"} {
+		if !strings.Contains(path, p) {
+			path = p + ":" + path
+		}
+	}
+	os.Setenv("PATH", path)
 
 	a.termMgr.SetContext(ctx)
 	a.claudeMgr.SetContext(ctx)
@@ -181,6 +192,10 @@ func (a *App) DetachTerminal(id string) error {
 
 func (a *App) GetTmuxSession(terminalId string) string {
 	return a.termMgr.GetTmuxSession(terminalId)
+}
+
+func (a *App) IsTerminalBusy(terminalId string) bool {
+	return a.termMgr.IsBusy(terminalId)
 }
 
 func (a *App) ListTerminals() []string {
@@ -961,41 +976,6 @@ func agentExecutable(command string, fallback string) (string, error) {
 	return resolved, nil
 }
 
-func repairLaunchPath() {
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, ".local", "bin"),
-		filepath.Join(home, "bin"),
-		"/opt/homebrew/bin",
-		"/opt/homebrew/sbin",
-		"/usr/local/bin",
-		"/usr/local/sbin",
-	}
-	path := prependPathEntries(os.Getenv("PATH"), candidates)
-	os.Setenv("PATH", path)
-}
-
-func prependPathEntries(pathValue string, candidates []string) string {
-	entries := filepath.SplitList(pathValue)
-	seen := make(map[string]bool, len(entries)+len(candidates))
-	for _, entry := range entries {
-		if entry != "" {
-			seen[entry] = true
-		}
-	}
-	prepend := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate == "" || seen[candidate] {
-			continue
-		}
-		if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
-			prepend = append(prepend, candidate)
-			seen[candidate] = true
-		}
-	}
-	return strings.Join(append(prepend, entries...), string(os.PathListSeparator))
-}
-
 func resolveExecutable(executable string) (string, error) {
 	executable = expandUserPath(strings.TrimSpace(executable))
 	if executable == "" {
@@ -1255,6 +1235,22 @@ func (a *App) GetUnifiedDiff(workspacePath string, base string, filePath string)
 	return a.gitMgr.GetUnifiedDiff(workspacePath, base, filePath)
 }
 
+func (a *App) GetGitStatus(workspacePath string) (*git.RepositoryStatus, error) {
+	return a.gitMgr.GetStatus(workspacePath)
+}
+
+func (a *App) GitFetch(workspacePath string) (*git.ActionResult, error) {
+	return a.gitMgr.Fetch(workspacePath)
+}
+
+func (a *App) GitPull(workspacePath string) (*git.ActionResult, error) {
+	return a.gitMgr.Pull(workspacePath)
+}
+
+func (a *App) GitPush(workspacePath string) (*git.ActionResult, error) {
+	return a.gitMgr.Push(workspacePath)
+}
+
 func (a *App) DiscardFileChanges(workspacePath string, filePath string) error {
 	return a.gitMgr.DiscardFileChanges(workspacePath, filePath)
 }
@@ -1328,4 +1324,50 @@ func mobileServerPort() int {
 		}
 	}
 	return 9867
+}
+
+// mergePathFromLoginShell asks the user's login shell for its PATH and merges
+// any new entries into the current process PATH. This picks up version-manager
+// shims (asdf, nvm, volta, fnm, bun, etc.) that aren't visible to GUI apps
+// launched via launchd. Failures are non-fatal — we just keep the existing PATH.
+func mergePathFromLoginShell() {
+	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// Use -i -l so zsh sources .zshrc (where version-manager init like asdf
+	// usually lives). -l alone is non-interactive and skips .zshrc on zsh.
+	out, err := exec.CommandContext(ctx, shell, "-i", "-l", "-c", "printf %s \"$PATH\"").Output()
+	if err != nil {
+		return
+	}
+	shellPath := strings.TrimSpace(string(out))
+	if shellPath == "" {
+		return
+	}
+	current := os.Getenv("PATH")
+	seen := make(map[string]struct{})
+	for _, p := range strings.Split(current, ":") {
+		if p != "" {
+			seen[p] = struct{}{}
+		}
+	}
+	merged := current
+	for _, p := range strings.Split(shellPath, ":") {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		if merged == "" {
+			merged = p
+		} else {
+			merged = merged + ":" + p
+		}
+	}
+	os.Setenv("PATH", merged)
 }

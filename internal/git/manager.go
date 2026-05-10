@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ChangedFile represents a file with uncommitted changes.
@@ -23,6 +25,27 @@ type FileDiff struct {
 	Language        string `json:"language"`
 }
 
+// RepositoryStatus summarizes the current branch state for lightweight UI actions.
+type RepositoryStatus struct {
+	Branch      string `json:"branch"`
+	Upstream    string `json:"upstream"`
+	Ahead       int    `json:"ahead"`
+	Behind      int    `json:"behind"`
+	HasChanges  bool   `json:"hasChanges"`
+	ChangeCount int    `json:"changeCount"`
+	Detached    bool   `json:"detached"`
+	CanPull     bool   `json:"canPull"`
+	CanPush     bool   `json:"canPush"`
+}
+
+// ActionResult captures git command output for display after a click action.
+type ActionResult struct {
+	Action   string            `json:"action"`
+	Output   string            `json:"output"`
+	Status   *RepositoryStatus `json:"status"`
+	Duration int64             `json:"durationMs"`
+}
+
 // Manager handles git operations.
 type Manager struct {
 	ctx context.Context
@@ -34,6 +57,77 @@ func NewManager() *Manager {
 
 func (m *Manager) SetContext(ctx context.Context) {
 	m.ctx = ctx
+}
+
+// GetStatus returns branch/upstream/ahead/behind state for a workspace.
+func (m *Manager) GetStatus(workspacePath string) (*RepositoryStatus, error) {
+	out, err := exec.Command("git", "-C", workspacePath, "status", "--porcelain=v2", "--branch").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status failed: %w", err)
+	}
+
+	status := &RepositoryStatus{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "# branch.head "):
+			status.Branch = strings.TrimPrefix(line, "# branch.head ")
+			status.Detached = status.Branch == "(detached)"
+			if status.Detached {
+				status.Branch = ""
+			}
+		case strings.HasPrefix(line, "# branch.upstream "):
+			status.Upstream = strings.TrimPrefix(line, "# branch.upstream ")
+		case strings.HasPrefix(line, "# branch.ab "):
+			parseAheadBehind(status, strings.TrimPrefix(line, "# branch.ab "))
+		case !strings.HasPrefix(line, "#"):
+			status.HasChanges = true
+			status.ChangeCount++
+		}
+	}
+	status.CanPull = status.Upstream != "" && !status.HasChanges
+	status.CanPush = status.Branch != "" && !status.Detached
+	return status, nil
+}
+
+// Fetch updates remote refs without changing the working tree.
+func (m *Manager) Fetch(workspacePath string) (*ActionResult, error) {
+	return m.runAction(workspacePath, "fetch", "fetch", "--prune")
+}
+
+// Pull fast-forwards from the configured upstream. It intentionally refuses
+// merge pulls so a click cannot create surprise merge commits.
+func (m *Manager) Pull(workspacePath string) (*ActionResult, error) {
+	status, err := m.GetStatus(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	if status.Upstream == "" {
+		return nil, fmt.Errorf("current branch has no upstream")
+	}
+	if status.HasChanges {
+		return nil, fmt.Errorf("working tree has %d uncommitted change(s); stash or commit before pulling", status.ChangeCount)
+	}
+	return m.runAction(workspacePath, "pull", "pull", "--ff-only")
+}
+
+// Push pushes the current branch. If the branch has no upstream, it sets
+// origin/HEAD as the upstream target.
+func (m *Manager) Push(workspacePath string) (*ActionResult, error) {
+	status, err := m.GetStatus(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	if status.Branch == "" || status.Detached {
+		return nil, fmt.Errorf("cannot push a detached HEAD")
+	}
+	if status.Upstream == "" {
+		return m.runAction(workspacePath, "push", "push", "-u", "origin", "HEAD")
+	}
+	return m.runAction(workspacePath, "push", "push")
 }
 
 // GetChangedFiles returns all files with uncommitted changes in the workspace.
@@ -71,6 +165,60 @@ func (m *Manager) GetChangedFiles(workspacePath string) ([]ChangedFile, error) {
 	}
 
 	return files, nil
+}
+
+func parseAheadBehind(status *RepositoryStatus, value string) {
+	fields := strings.Fields(value)
+	for _, field := range fields {
+		if len(field) < 2 {
+			continue
+		}
+		n, err := strconv.Atoi(field[1:])
+		if err != nil {
+			continue
+		}
+		switch field[0] {
+		case '+':
+			status.Ahead = n
+		case '-':
+			status.Behind = n
+		}
+	}
+}
+
+func (m *Manager) runAction(workspacePath string, action string, args ...string) (*ActionResult, error) {
+	start := time.Now()
+	ctx := context.Background()
+	if m.ctx != nil {
+		ctx = m.ctx
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", workspacePath}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("git %s timed out after 2 minutes", action)
+	}
+	if err != nil {
+		if output == "" {
+			output = err.Error()
+		}
+		return nil, fmt.Errorf("git %s failed: %s", action, output)
+	}
+
+	status, statusErr := m.GetStatus(workspacePath)
+	if statusErr != nil {
+		return nil, statusErr
+	}
+	return &ActionResult{
+		Action:   action,
+		Output:   output,
+		Status:   status,
+		Duration: time.Since(start).Milliseconds(),
+	}, nil
 }
 
 // GetChangedFilesAgainst returns changed files in the workspace, comparing
@@ -316,41 +464,41 @@ func parseStatus(xy string) (string, string) {
 func detectLanguage(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
 	languages := map[string]string{
-		".js":    "javascript",
-		".jsx":   "javascript",
-		".ts":    "typescript",
-		".tsx":   "typescript",
-		".go":    "go",
-		".py":    "python",
-		".rb":    "ruby",
-		".rs":    "rust",
-		".java":  "java",
-		".json":  "json",
-		".yaml":  "yaml",
-		".yml":   "yaml",
-		".toml":  "toml",
-		".md":    "markdown",
-		".css":   "css",
-		".scss":  "scss",
-		".html":  "html",
-		".xml":   "xml",
-		".sql":   "sql",
-		".sh":    "shell",
-		".bash":  "shell",
-		".zsh":   "shell",
-		".env":   "plaintext",
-		".txt":   "plaintext",
-		".vue":   "html",
-		".svelte": "html",
-		".c":     "c",
-		".cpp":   "cpp",
-		".h":     "c",
-		".hpp":   "cpp",
-		".swift": "swift",
-		".kt":    "kotlin",
-		".php":   "php",
-		".lua":   "lua",
-		".r":     "r",
+		".js":         "javascript",
+		".jsx":        "javascript",
+		".ts":         "typescript",
+		".tsx":        "typescript",
+		".go":         "go",
+		".py":         "python",
+		".rb":         "ruby",
+		".rs":         "rust",
+		".java":       "java",
+		".json":       "json",
+		".yaml":       "yaml",
+		".yml":        "yaml",
+		".toml":       "toml",
+		".md":         "markdown",
+		".css":        "css",
+		".scss":       "scss",
+		".html":       "html",
+		".xml":        "xml",
+		".sql":        "sql",
+		".sh":         "shell",
+		".bash":       "shell",
+		".zsh":        "shell",
+		".env":        "plaintext",
+		".txt":        "plaintext",
+		".vue":        "html",
+		".svelte":     "html",
+		".c":          "c",
+		".cpp":        "cpp",
+		".h":          "c",
+		".hpp":        "cpp",
+		".swift":      "swift",
+		".kt":         "kotlin",
+		".php":        "php",
+		".lua":        "lua",
+		".r":          "r",
 		".dockerfile": "dockerfile",
 	}
 

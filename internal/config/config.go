@@ -59,6 +59,7 @@ type AgentConfig struct {
 	Provider          string `toml:"provider"`
 	Icon              string `toml:"icon"`
 	Command           string `toml:"command"`
+	InitialPrompt     string `toml:"initial_prompt"`
 	Model             string `toml:"model"`
 	ReasoningEffort   string `toml:"reasoning_effort"`
 	ApprovalPolicy    string `toml:"approval_policy"`

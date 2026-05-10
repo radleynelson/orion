@@ -274,6 +274,7 @@ export namespace config {
 	    Provider: string;
 	    Icon: string;
 	    Command: string;
+	    InitialPrompt: string;
 	    Model: string;
 	    ReasoningEffort: string;
 	    ApprovalPolicy: string;
@@ -291,6 +292,7 @@ export namespace config {
 	        this.Provider = source["Provider"];
 	        this.Icon = source["Icon"];
 	        this.Command = source["Command"];
+	        this.InitialPrompt = source["InitialPrompt"];
 	        this.Model = source["Model"];
 	        this.ReasoningEffort = source["ReasoningEffort"];
 	        this.ApprovalPolicy = source["ApprovalPolicy"];
@@ -739,6 +741,70 @@ export namespace files {
 
 export namespace git {
 
+	export class RepositoryStatus {
+	    branch: string;
+	    upstream: string;
+	    ahead: number;
+	    behind: number;
+	    hasChanges: boolean;
+	    changeCount: number;
+	    detached: boolean;
+	    canPull: boolean;
+	    canPush: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new RepositoryStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.branch = source["branch"];
+	        this.upstream = source["upstream"];
+	        this.ahead = source["ahead"];
+	        this.behind = source["behind"];
+	        this.hasChanges = source["hasChanges"];
+	        this.changeCount = source["changeCount"];
+	        this.detached = source["detached"];
+	        this.canPull = source["canPull"];
+	        this.canPush = source["canPush"];
+	    }
+	}
+	export class ActionResult {
+	    action: string;
+	    output: string;
+	    status?: RepositoryStatus;
+	    durationMs: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ActionResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.action = source["action"];
+	        this.output = source["output"];
+	        this.status = this.convertValues(source["status"], RepositoryStatus);
+	        this.durationMs = source["durationMs"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ChangedFile {
 	    path: string;
 	    status: string;

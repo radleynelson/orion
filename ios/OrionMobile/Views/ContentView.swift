@@ -1041,9 +1041,12 @@ private struct WorkspaceDetailSheet: View {
     @State private var serverStatuses: [ServerStatus] = []
     @State private var history: [CodexHistoryThread] = []
     @State private var changedFiles: [GitChangedFile] = []
+    @State private var gitStatus: GitRepositoryStatus?
     @State private var loading = false
     @State private var serverBusy = false
     @State private var showingCodexOptions = false
+    @State private var showingGitActions = false
+    @State private var gitBusyAction: GitQuickAction?
     @State private var codexOptions = CodexLaunchOptions()
 
     private var sessions: [SessionInfo] {
@@ -1060,6 +1063,7 @@ private struct WorkspaceDetailSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     header
                     summaryGrid
+                    gitSummaryButton
                     primaryActions
                     liveSessionsSection
                     recentHistorySection
@@ -1110,6 +1114,24 @@ private struct WorkspaceDetailSheet: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
             }
+            .sheet(isPresented: $showingGitActions) {
+                GitActionsSheet(
+                    workspace: workspace,
+                    status: gitStatus,
+                    busyAction: gitBusyAction,
+                    onAction: { action in Task { await runGitAction(action) } },
+                    onReviewChanges: {
+                        showingGitActions = false
+                        Task {
+                            await state.activateWorkspace(workspace.path)
+                            state.showDiffReview = true
+                            onClose()
+                        }
+                    }
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
         }
     }
 
@@ -1147,6 +1169,57 @@ private struct WorkspaceDetailSheet: View {
             WorkspaceSummaryTile(value: "\(runningServers.count)", label: "servers", tint: runningServers.isEmpty ? OrionTheme.textDim : OrionTheme.accentGreen)
             WorkspaceSummaryTile(value: "\(changedFiles.count)", label: "files", tint: changedFiles.isEmpty ? OrionTheme.textDim : OrionTheme.accentYellow)
         }
+    }
+
+    private var gitSummaryButton: some View {
+        Button { showingGitActions = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OrionTheme.accentGreen)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(gitBranchLabel)
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(1)
+                    Text(gitSummaryText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                }
+                Spacer()
+                HStack(spacing: 7) {
+                    Label("\(gitStatus?.behind ?? 0)", systemImage: "arrow.down")
+                    Label("\(gitStatus?.ahead ?? 0)", systemImage: "arrow.up")
+                }
+                .labelStyle(.titleAndIcon)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textDim)
+            }
+            .padding(12)
+            .background(OrionTheme.bgSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var gitSummaryText: String {
+        guard let gitStatus else { return "Git status unavailable" }
+        var parts = [gitStatus.upstream.isEmpty ? "no upstream" : gitStatus.upstream]
+        if gitStatus.hasChanges {
+            parts.append("\(gitStatus.changeCount) uncommitted")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var gitBranchLabel: String {
+        if let branch = gitStatus?.branch, !branch.isEmpty { return branch }
+        if !workspace.branch.isEmpty { return workspace.branch }
+        return workspace.name
     }
 
     private var primaryActions: some View {
@@ -1333,9 +1406,53 @@ private struct WorkspaceDetailSheet: View {
         async let loadedServers = state.getServerStatuses(workspace: workspace)
         async let loadedHistory = state.codexHistory(workspace: workspace)
         let loadedChanges = (try? await state.changedFiles(workspacePath: workspace.path)) ?? []
+        let loadedGitStatus = try? await state.gitStatus(workspacePath: workspace.path)
         serverStatuses = await loadedServers
         history = await loadedHistory
         changedFiles = loadedChanges
+        gitStatus = loadedGitStatus ?? nil
+    }
+
+    private func runGitAction(_ action: GitQuickAction) async {
+        guard gitBusyAction == nil else { return }
+        if (action == .pull || action == .sync), gitStatus?.hasChanges == true {
+            state.showTransientError("Stash or commit changes before pulling.")
+            return
+        }
+        gitBusyAction = action
+        defer { gitBusyAction = nil }
+        do {
+            let result: GitActionResult
+            switch action {
+            case .fetch:
+                result = try await state.gitFetch(workspacePath: workspace.path)
+            case .pull:
+                result = try await state.gitPull(workspacePath: workspace.path)
+            case .push:
+                result = try await state.gitPush(workspacePath: workspace.path)
+            case .sync:
+                let pulled = try await state.gitPull(workspacePath: workspace.path)
+                if let pulledStatus = pulled.status, pulledStatus.canPush, (!pulledStatus.upstream.isEmpty && pulledStatus.ahead > 0) {
+                    result = try await state.gitPush(workspacePath: workspace.path)
+                } else {
+                    result = pulled
+                }
+            }
+            if let resultStatus = result.status {
+                gitStatus = resultStatus
+            } else if let refreshedStatus = try? await state.gitStatus(workspacePath: workspace.path) {
+                gitStatus = refreshedStatus
+            }
+            if let refreshedFiles = try? await state.changedFiles(workspacePath: workspace.path) {
+                changedFiles = refreshedFiles
+            }
+            await onRefresh()
+        } catch {
+            state.showTransientError(error.localizedDescription)
+            if let refreshedStatus = try? await state.gitStatus(workspacePath: workspace.path) {
+                gitStatus = refreshedStatus
+            }
+        }
     }
 
     private func liveSession(for thread: CodexHistoryThread) -> SessionInfo? {
@@ -1356,6 +1473,198 @@ private struct WorkspaceDetailSheet: View {
                 state.showTransientError("Failed to resume thread: \(error.localizedDescription)")
             }
         }
+    }
+}
+
+private enum GitQuickAction: String, Identifiable {
+    case fetch
+    case pull
+    case push
+    case sync
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .fetch: return "Fetch"
+        case .pull: return "Pull"
+        case .push: return "Push"
+        case .sync: return "Sync"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .fetch: return "arrow.triangle.2.circlepath"
+        case .pull: return "arrow.down"
+        case .push: return "arrow.up"
+        case .sync: return "arrow.triangle.2.circlepath"
+        }
+    }
+}
+
+private struct GitActionsSheet: View {
+    let workspace: Workspace
+    let status: GitRepositoryStatus?
+    let busyAction: GitQuickAction?
+    let onAction: (GitQuickAction) -> Void
+    let onReviewChanges: () -> Void
+
+    private var branchLabel: String {
+        if let branch = status?.branch, !branch.isEmpty { return branch }
+        if !workspace.branch.isEmpty { return workspace.branch }
+        return workspace.name
+    }
+
+    private var upstreamLabel: String {
+        guard let upstream = status?.upstream, !upstream.isEmpty else { return "no upstream" }
+        return upstream
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Git")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .textCase(.uppercase)
+                    .foregroundStyle(OrionTheme.textDim)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(branchLabel)
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                HStack(spacing: 14) {
+                    Label("\(status?.behind ?? 0)", systemImage: "arrow.down")
+                    Label("\(status?.ahead ?? 0)", systemImage: "arrow.up")
+                    if status?.hasChanges == true {
+                        Label("\(status?.changeCount ?? 0) uncommitted", systemImage: "circle.fill")
+                            .foregroundStyle(OrionTheme.accentYellow)
+                    }
+                }
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                Text(upstreamLabel)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            VStack(spacing: 7) {
+                gitActionButton(.fetch, hint: "Check what changed upstream")
+                gitActionButton(.pull, hint: pullHint, disabled: pullDisabled)
+                gitActionButton(.push, hint: pushHint, disabled: pushDisabled)
+                gitActionButton(.sync, hint: syncHint, disabled: syncDisabled)
+
+                Button(action: onReviewChanges) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                        Text("Open changes")
+                        Spacer()
+                        if status?.hasChanges == true {
+                            Text("\(status?.changeCount ?? 0)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(OrionTheme.accentYellow)
+                        }
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                    .padding(14)
+                    .background(OrionTheme.bgSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+            .padding(.horizontal, 16)
+
+            Spacer(minLength: 18)
+        }
+        .background(OrionTheme.bgPrimary)
+    }
+
+    private var pullDisabled: Bool {
+        guard let status else { return true }
+        return status.upstream.isEmpty || status.hasChanges
+    }
+
+    private var pushDisabled: Bool {
+        guard let status else { return true }
+        return status.detached || status.branch.isEmpty || (!status.upstream.isEmpty && status.ahead == 0)
+    }
+
+    private var syncDisabled: Bool {
+        guard let status else { return true }
+        return status.upstream.isEmpty || status.hasChanges || status.detached
+    }
+
+    private var pullHint: String {
+        guard let status else { return "Git status unavailable" }
+        if status.upstream.isEmpty { return "No upstream branch" }
+        if status.hasChanges { return "\(status.changeCount) uncommitted change\(status.changeCount == 1 ? "" : "s") - stash first" }
+        return "Fast-forward only"
+    }
+
+    private var pushHint: String {
+        guard let status else { return "Git status unavailable" }
+        if status.detached || status.branch.isEmpty { return "Cannot push detached HEAD" }
+        if status.upstream.isEmpty { return "Set upstream and push" }
+        if status.ahead == 0 { return "Nothing to push" }
+        return "Push committed changes"
+    }
+
+    private var syncHint: String {
+        guard let status else { return "Git status unavailable" }
+        if status.upstream.isEmpty { return "No upstream branch" }
+        if status.hasChanges { return "Requires clean tree" }
+        if status.detached { return "Cannot sync detached HEAD" }
+        return "Pull, then push if needed"
+    }
+
+    private func gitActionButton(_ action: GitQuickAction, hint: String, disabled: Bool = false) -> some View {
+        Button { onAction(action) } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(OrionTheme.bgPrimary)
+                    if busyAction == action {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: action.systemImage)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textDim)
+                    }
+                }
+                .frame(width: 36, height: 36)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(action.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Text(hint)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(disabled ? OrionTheme.accentYellow : OrionTheme.textDim)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textDim)
+            }
+            .padding(14)
+            .background(OrionTheme.bgSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+            .opacity(disabled ? 0.55 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled || busyAction != nil)
     }
 }
 

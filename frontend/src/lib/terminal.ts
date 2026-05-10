@@ -4,6 +4,8 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { EventsOn, EventsEmit, BrowserOpenURL, ClipboardGetText, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 
+declare const __ORION_BROWSER_PREVIEW__: boolean;
+
 // Nocturne dark theme for xterm.js
 const THEME = {
   background: '#131316',
@@ -56,6 +58,38 @@ function clipboardTextFromSelection(selection: string, cols: number): string {
     joined.push(line);
   }
   return joined.join('\n');
+}
+
+function clipboardTextFromTerminalSelection(terminal: Terminal): string {
+  const selection = terminal.getSelection();
+  const range = terminal.getSelectionPosition();
+  if (!selection || !range) return selection;
+
+  try {
+    const buffer = terminal.buffer.active;
+    const startRow = Math.max(0, range.start.y);
+    const endRow = Math.max(startRow, range.end.y);
+    const parts: string[] = [];
+
+    for (let row = startRow; row <= endRow; row++) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+      const startCol = row === startRow ? Math.max(0, range.start.x) : 0;
+      const endCol = row === endRow ? Math.max(startCol, range.end.x) : terminal.cols;
+      parts.push(line.translateToString(false, startCol, endCol).trimEnd());
+    }
+
+    if (parts.length === 0) return clipboardTextFromSelection(selection, terminal.cols);
+
+    let text = parts[0] ?? '';
+    for (let i = 1; i < parts.length; i++) {
+      const line = buffer.getLine(startRow + i);
+      text += line?.isWrapped ? parts[i] : `\n${parts[i]}`;
+    }
+    return text;
+  } catch {
+    return clipboardTextFromSelection(selection, terminal.cols);
+  }
 }
 
 async function writeClipboardText(text: string): Promise<void> {
@@ -173,15 +207,18 @@ export function createTerminal(
 
   terminal.open(container);
 
-  // Try WebGL renderer for GPU-accelerated rendering
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      webglAddon.dispose();
-    });
-    terminal.loadAddon(webglAddon);
-  } catch (e) {
-    console.warn('WebGL addon failed, falling back to canvas renderer');
+  // Try WebGL renderer for GPU-accelerated rendering. Browser preview mode
+  // intentionally uses xterm's default renderer to keep headless tests quiet.
+  if (!__ORION_BROWSER_PREVIEW__) {
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      terminal.loadAddon(webglAddon);
+    } catch (e) {
+      console.warn('WebGL addon failed, falling back to canvas renderer');
+    }
   }
 
   // Clickable links — Cmd+click opens in default browser.
@@ -334,12 +371,11 @@ export function createTerminal(
       if (isEditableTarget(e.target) && !(e.target instanceof Node && container.contains(e.target))) {
         return;
       }
-      const selection = terminal.getSelection();
-      if (selection) {
+      if (terminal.hasSelection()) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
+        copyTerminalText(clipboardTextFromTerminalSelection(terminal));
         return;
       }
     }
@@ -399,11 +435,10 @@ export function createTerminal(
     }
 
     if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c') {
-      const selection = terminal.getSelection();
-      if (selection) {
+      if (terminal.hasSelection()) {
         e.preventDefault();
         e.stopPropagation();
-        copyTerminalText(clipboardTextFromSelection(selection, terminal.cols));
+        copyTerminalText(clipboardTextFromTerminalSelection(terminal));
         return false;
       }
     }
@@ -436,12 +471,11 @@ export function createTerminal(
   // Prevents random spaces in copied URLs and rejoins text that wraps
   // at the terminal edge.
   const copyHandler = (e: ClipboardEvent) => {
-    const selection = terminal.getSelection();
-    if (selection) {
+    if (terminal.hasSelection()) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      const text = clipboardTextFromSelection(selection, terminal.cols);
+      const text = clipboardTextFromTerminalSelection(terminal);
       e.clipboardData?.setData('text/plain', text);
       copyTerminalText(text);
     }
@@ -484,58 +518,112 @@ export function createTerminal(
   container.ownerDocument.addEventListener('keyup', documentKeyReleaseHandler, { capture: true });
   container.ownerDocument.addEventListener('paste', documentPasteHandler, { capture: true });
 
+  type BufferPoint = { col: number; row: number };
+  let dragSelectionStart: BufferPoint | null = null;
+  let dragSelectionActive = false;
+  let dragSelectionOrigin: { x: number; y: number } | null = null;
+  const dragSelectionThreshold = 4;
+
+  const bufferPointFromMouseEvent = (e: MouseEvent): BufferPoint => {
+    const rect = container.getBoundingClientRect();
+    const cellWidth = rect.width / terminal.cols;
+    const cellHeight = rect.height / terminal.rows;
+    const viewportCol = Math.min(terminal.cols - 1, Math.max(0, Math.floor((e.clientX - rect.left) / cellWidth)));
+    const viewportRow = Math.min(terminal.rows - 1, Math.max(0, Math.floor((e.clientY - rect.top) / cellHeight)));
+    const buffer = terminal.buffer.active;
+    return {
+      col: viewportCol,
+      row: Math.min(buffer.length - 1, Math.max(0, buffer.viewportY + viewportRow)),
+    };
+  };
+
+  const selectBufferRange = (start: BufferPoint, end: BufferPoint) => {
+    const startOffset = start.row * terminal.cols + start.col;
+    const endOffset = end.row * terminal.cols + end.col;
+    const from = Math.min(startOffset, endOffset);
+    const to = Math.max(startOffset, endOffset) + 1;
+    terminal.select(from % terminal.cols, Math.floor(from / terminal.cols), Math.max(1, to - from));
+  };
+
+  const mouseDownSelectionHandler = (e: MouseEvent) => {
+    if (e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (!isTerminalActive(e.target)) return;
+    dragSelectionStart = bufferPointFromMouseEvent(e);
+    dragSelectionOrigin = { x: e.clientX, y: e.clientY };
+    dragSelectionActive = false;
+  };
+
+  const mouseMoveSelectionHandler = (e: MouseEvent) => {
+    if (!dragSelectionStart || !dragSelectionOrigin) return;
+    const dx = e.clientX - dragSelectionOrigin.x;
+    const dy = e.clientY - dragSelectionOrigin.y;
+    if (!dragSelectionActive && Math.hypot(dx, dy) < dragSelectionThreshold) return;
+
+    dragSelectionActive = true;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    selectBufferRange(dragSelectionStart, bufferPointFromMouseEvent(e));
+  };
+
+  const mouseUpSelectionHandler = (e: MouseEvent) => {
+    if (!dragSelectionStart) return;
+    if (dragSelectionActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      terminal.focus();
+    }
+    dragSelectionStart = null;
+    dragSelectionOrigin = null;
+    dragSelectionActive = false;
+  };
+  container.addEventListener('mousedown', mouseDownSelectionHandler, { capture: true });
+  container.ownerDocument.addEventListener('mousemove', mouseMoveSelectionHandler, { capture: true });
+  container.ownerDocument.addEventListener('mouseup', mouseUpSelectionHandler, { capture: true });
+
   // Mouse scroll handling — sends SGR mouse sequences so tmux can scroll
   // in both alternate screen (TUI apps) and normal buffer (server logs).
   const el = container;
 
   let wheelAccumulator = 0;
   let lastWheelTime = 0;
-  let lastScrollEmitTime = 0;
-  let scrollFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollAnimationFrame: number | null = null;
+  let pendingScrollCol = 1;
+  let pendingScrollRow = 1;
+  let pendingScrollThreshold = 16;
   const scrollIdleResetMs = 180;
-  const scrollEmitIntervalMs = 48;
-  const minScrollPixelsPerEvent = 88;
+  const minScrollPixelsPerLine = 12;
+  const maxScrollEventsPerFrame = 24;
 
   const normalizedWheelDelta = (e: WheelEvent, cellHeight: number, viewportHeight: number) => {
-    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * cellHeight;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * Math.max(cellHeight, 1);
     if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * viewportHeight;
     return e.deltaY;
   };
 
-  const emitScrollEvent = (direction: 1 | -1, col: number, row: number) => {
+  const emitScrollEvents = (direction: 1 | -1, col: number, row: number, count: number) => {
     const button = direction < 0 ? 64 : 65;
-    const seq = `\x1b[<${button};${col};${row}M`;
-    const bytes = new TextEncoder().encode(seq);
-    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
-    EventsEmit('terminal:input', terminalId, btoa(binary));
+    sendData(`\x1b[<${button};${col};${row}M`.repeat(count));
   };
 
-  const scheduleScrollFlush = (delay: number, col: number, row: number, threshold: number) => {
-    if (scrollFlushTimer) return;
-    scrollFlushTimer = setTimeout(() => {
-      scrollFlushTimer = null;
-      const magnitude = Math.abs(wheelAccumulator);
-      if (magnitude < threshold) return;
+  const flushWheelAccumulator = () => {
+    scrollAnimationFrame = null;
+    const magnitude = Math.abs(wheelAccumulator);
+    if (magnitude < pendingScrollThreshold) return;
 
-      const now = Date.now();
-      const elapsed = now - lastScrollEmitTime;
-      if (elapsed < scrollEmitIntervalMs) {
-        scheduleScrollFlush(scrollEmitIntervalMs - elapsed, col, row, threshold);
-        return;
-      }
+    const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
+    const count = Math.min(maxScrollEventsPerFrame, Math.floor(magnitude / pendingScrollThreshold));
+    emitScrollEvents(direction, pendingScrollCol, pendingScrollRow, count);
+    wheelAccumulator -= direction * count * pendingScrollThreshold;
 
-      const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
-      emitScrollEvent(direction, col, row);
-      wheelAccumulator -= direction * threshold;
-      lastScrollEmitTime = now;
-
-      if (Math.abs(wheelAccumulator) >= threshold) {
-        scheduleScrollFlush(scrollEmitIntervalMs, col, row, threshold);
-      }
-    }, delay);
+    if (Math.abs(wheelAccumulator) >= pendingScrollThreshold) {
+      scrollAnimationFrame = requestAnimationFrame(flushWheelAccumulator);
+    }
   };
 
   const wheelHandler = (e: WheelEvent) => {
+    if (Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -555,10 +643,12 @@ export function createTerminal(
     }
     lastWheelTime = now;
     wheelAccumulator += delta;
+    pendingScrollCol = col;
+    pendingScrollRow = row;
+    pendingScrollThreshold = Math.max(minScrollPixelsPerLine, cellHeight * 1.15);
 
-    const threshold = Math.max(minScrollPixelsPerEvent, cellHeight * 5);
-    if (Math.abs(wheelAccumulator) >= threshold) {
-      scheduleScrollFlush(0, col, row, threshold);
+    if (Math.abs(wheelAccumulator) >= pendingScrollThreshold && scrollAnimationFrame === null) {
+      scrollAnimationFrame = requestAnimationFrame(flushWheelAccumulator);
     }
   };
   // Use capture phase so we intercept before xterm.js's internal handlers
@@ -609,17 +699,20 @@ export function createTerminal(
   EventsEmit('terminal:resize', terminalId, terminal.cols, terminal.rows);
 
   const dispose = () => {
-    if (scrollFlushTimer) clearTimeout(scrollFlushTimer);
+    if (scrollAnimationFrame !== null) cancelAnimationFrame(scrollAnimationFrame);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
     container.removeEventListener('keypress', keyCaptureHandler, { capture: true } as any);
     container.removeEventListener('keyup', keyReleaseHandler, { capture: true } as any);
     container.removeEventListener('copy', copyHandler, { capture: true } as any);
     container.removeEventListener('paste', pasteHandler, { capture: true } as any);
+    container.removeEventListener('mousedown', mouseDownSelectionHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keydown', documentKeyCaptureHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keypress', documentKeyCaptureHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('keyup', documentKeyReleaseHandler, { capture: true } as any);
     container.ownerDocument.removeEventListener('paste', documentPasteHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('mousemove', mouseMoveSelectionHandler, { capture: true } as any);
+    container.ownerDocument.removeEventListener('mouseup', mouseUpSelectionHandler, { capture: true } as any);
     window.removeEventListener('blur', blurHandler);
     onDataDispose.dispose();
     onResizeDispose.dispose();
