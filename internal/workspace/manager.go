@@ -179,6 +179,7 @@ func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*W
 		branchName = cfg.BranchPrefix + "/" + name
 	}
 
+	m.emitWorkspaceCreateProgress(worktreePath, "Creating git worktree")
 	cmd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath, baseBranch)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -187,7 +188,25 @@ func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*W
 
 	// Copy credential files
 	if cfg != nil {
+		m.emitWorkspaceCreateProgress(worktreePath, "Copying credentials")
 		copyCredentialFiles(mainPath, worktreePath, cfg.Credentials.Copy)
+	}
+
+	if cfg != nil {
+		if strings.TrimSpace(cfg.Hooks.WorktreeCreated.Command) != "" {
+			m.emitWorkspaceCreateProgress(worktreePath, "Running setup hook")
+		}
+		hookCtx := hookContext{
+			Name:             name,
+			Branch:           branchName,
+			BaseRef:          baseBranch,
+			WorkspacePath:    worktreePath,
+			RepoRoot:         repoRoot,
+			MainWorktreePath: mainPath,
+		}
+		if err := runHook(hookWorktreeCreated, cfg.Hooks.WorktreeCreated, hookCtx, true); err != nil {
+			return nil, err
+		}
 	}
 
 	// Run setup script if exists
@@ -200,6 +219,7 @@ func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*W
 		}
 	}
 
+	m.emitWorkspaceCreateProgress(worktreePath, "Ready")
 	return &Workspace{
 		Name:   filepath.Base(worktreePath),
 		Path:   worktreePath,
@@ -221,6 +241,22 @@ func (m *Manager) DeleteWorkspace(repoRoot, path string) error {
 			break
 		}
 		killSession(extra)
+	}
+
+	mainPath := getMainWorktreePath(repoRoot)
+	if mainPath == "" {
+		mainPath = repoRoot
+	}
+	cfg := config.Load(mainPath)
+	hookCtx := hookContext{
+		Name:             workspaceNameFromPath(repoName, path),
+		Branch:           getWorktreeBranch(path),
+		WorkspacePath:    path,
+		RepoRoot:         repoRoot,
+		MainWorktreePath: mainPath,
+	}
+	if err := runHook(hookWorktreeDeleting, cfg.Hooks.WorktreeDeleting, hookCtx, false); err != nil {
+		return err
 	}
 
 	cmd := exec.Command("git", "worktree", "remove", path, "--force")

@@ -124,3 +124,31 @@ func TestLoadReadsLegacyConfigName(t *testing.T) {
 		t.Fatalf("legacy codex command = %q, want codex custom", got)
 	}
 }
+
+func TestLoadReadsWorktreeHooks(t *testing.T) {
+	dir := t.TempDir()
+	data := `[hooks.worktree_created]
+command = "bin/orion-neon-db provision --branch {{branch}}"
+
+[hooks.worktree_deleting]
+command = "bin/orion-neon-db destroy --branch {{branch}}"
+blocking = false
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Load(dir)
+	if got := cfg.Hooks.WorktreeCreated.Command; got != "bin/orion-neon-db provision --branch {{branch}}" {
+		t.Fatalf("worktree_created command = %q", got)
+	}
+	if !cfg.Hooks.WorktreeCreated.IsBlocking(true) {
+		t.Fatalf("worktree_created should use default blocking=true")
+	}
+	if got := cfg.Hooks.WorktreeDeleting.Command; got != "bin/orion-neon-db destroy --branch {{branch}}" {
+		t.Fatalf("worktree_deleting command = %q", got)
+	}
+	if cfg.Hooks.WorktreeDeleting.IsBlocking(true) {
+		t.Fatalf("worktree_deleting blocking = true, want false")
+	}
+}

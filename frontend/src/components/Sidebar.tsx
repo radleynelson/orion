@@ -120,6 +120,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   const [creating, setCreating] = useState(false);
   const [newWorkspaceDraft, setNewWorkspaceDraft] = useState<NewWorkspaceDraft>(DEFAULT_WORKSPACE_DRAFT);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [createStage, setCreateStage] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
@@ -243,6 +244,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
           codexOptions: { ...DEFAULT_CODEX_OPTIONS },
         });
         setCreateError(null);
+        setCreateStage('');
         setCreating(true);
       }
       // Cmd+Shift+Backspace: delete active workspace
@@ -297,8 +299,16 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       codexOptions: { ...DEFAULT_CODEX_OPTIONS },
     });
     setCreateError(null);
+    setCreateStage('');
     setCreating(true);
   }, [project?.mainBranch, workspaces]);
+
+  useEffect(() => {
+    const cancel = EventsOn('workspace:create-progress', (payload: { stage?: string } = {}) => {
+      if (payload.stage) setCreateStage(payload.stage);
+    });
+    return () => cancel();
+  }, []);
 
   useEffect(() => {
     const handler = () => openNewWorkspace();
@@ -485,6 +495,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     if (!project || !newWorkspaceDraft.name.trim()) return;
     setCreatingWorkspace(true);
     setCreateError(null);
+    setCreateStage('Creating git worktree');
     try {
       const ws = await CreateWorkspaceFrom(project.root, normalizedWorkspaceName(newWorkspaceDraft.name), newWorkspaceDraft.baseRef);
       setCreating(false);
@@ -522,6 +533,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       setCreateError(err instanceof Error ? err.message : String(err));
     } finally {
       setCreatingWorkspace(false);
+      setCreateStage('');
     }
   }, [project, newWorkspaceDraft, refreshWorkspaces, setActiveWorkspace, handleLaunchCodexChat, handleLaunchClaudeChat, handleLaunchAgent, handleLaunchShell]);
 
@@ -903,6 +915,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
                 </label>
 
                 {createError && <div className="workspace-create-error">{createError}</div>}
+                {creatingWorkspace && createStage && <div className="workspace-create-progress">{createStage}</div>}
               </div>
             </div>
           </div>

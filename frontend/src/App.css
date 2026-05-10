@@ -621,6 +621,7 @@
 
 .workspace-create-wide,
 .workspace-create-error,
+.workspace-create-progress,
 .workspace-create-codex {
   grid-column: 1 / -1;
 }
@@ -689,6 +690,12 @@
   border-radius: 10px;
   color: var(--accent-red);
   background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+  font-size: var(--font-size-sm);
+}
+
+.workspace-create-progress {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
 
