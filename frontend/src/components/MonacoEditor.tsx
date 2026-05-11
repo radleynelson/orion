@@ -2,7 +2,9 @@ import { useEffect, useState, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReadFileContents, WriteFileContents } from '../../wailsjs/go/main/App';
 import type { editor } from 'monaco-editor';
+import * as monaco from 'monaco-editor';
 import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
+import { ensureServer, didOpen, didChange, didSave, didClose, getLSPLanguage } from '../lib/lspClient';
 
 interface MonacoEditorProps {
   filePath: string;
@@ -17,11 +19,16 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const lspInitialized = useRef(false);
+  const changeTimer = useRef<ReturnType<typeof setTimeout>>();
   const zoomLevel = useStore((s) => s.zoomLevel);
   const searchInFileQuery = useStore((s) => s.searchInFileQuery);
   const setSearchInFileQuery = useStore((s) => s.setSearchInFileQuery);
   const markDirty = useStore((s) => s.markDirty);
   const markClean = useStore((s) => s.markClean);
+  const project = useStore((s) => s.project);
+  const activeWorkspacePath = useStore((s) => s.activeWorkspacePath);
+  const openFile = useStore((s) => s.openFile);
   const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
 
   useEffect(() => {
@@ -44,6 +51,40 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     })();
   }, [filePath, markClean]);
 
+  // Initialize LSP when file is loaded
+  useEffect(() => {
+    if (content === null || !project || !activeWorkspacePath) return;
+    if (lspInitialized.current) return;
+
+    const lspLanguage = getLSPLanguage(filePath);
+    if (!lspLanguage) return;
+
+    (async () => {
+      const ready = await ensureServer(project.root, lspLanguage, activeWorkspacePath);
+      if (ready) {
+        lspInitialized.current = true;
+        // Create a proper Monaco URI for this file so LSP can find the model
+        const uri = monaco.Uri.file(filePath);
+        const existingModel = monaco.editor.getModel(uri);
+        if (!existingModel) {
+          // The model will be created by Monaco Editor component with its own URI,
+          // so we just notify LSP about the document
+        }
+        await didOpen(filePath, lspLanguage, content);
+      }
+    })();
+  }, [content, filePath, project, activeWorkspacePath]);
+
+  // Clean up LSP document on unmount
+  useEffect(() => {
+    return () => {
+      const lspLanguage = getLSPLanguage(filePath);
+      if (lspLanguage && lspInitialized.current) {
+        void didClose(filePath, lspLanguage);
+      }
+    };
+  }, [filePath]);
+
   // Scroll to line when it changes
   useEffect(() => {
     if (line && editorRef.current) {
@@ -61,6 +102,12 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       await WriteFileContents(filePath, currentContent);
       setSavedContent(currentContent);
       markClean(filePath);
+
+      // Notify LSP about save
+      const lspLanguage = getLSPLanguage(filePath);
+      if (lspLanguage && lspInitialized.current) {
+        await didSave(filePath, lspLanguage, currentContent);
+      }
     } catch (err: any) {
       console.error('Failed to save file:', err);
     } finally {
@@ -68,22 +115,43 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     }
   };
 
-  const handleEditorMount = (editor: editor.IStandaloneCodeEditor) => {
-    editorRef.current = editor;
+  const handleEditorMount = (ed: editor.IStandaloneCodeEditor) => {
+    editorRef.current = ed;
     if (line) {
-      editor.revealLineInCenter(line);
-      editor.setPosition({ lineNumber: line, column: 1 });
+      ed.revealLineInCenter(line);
+      ed.setPosition({ lineNumber: line, column: 1 });
     }
 
     // Add Cmd+S keybinding for save (uses ref to avoid stale closure)
-    editor.addCommand(
-      // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KeyS
-      2048 | 49, // CtrlCmd = 2048, KeyS = 49
+    ed.addCommand(
+      2048 | 49, // CtrlCmd | KeyS
       () => { void saveRef.current?.(); }
     );
 
+    // Handle go-to-definition: when Monaco resolves a definition to a file,
+    // intercept navigation to open it in a new Orion editor tab
+    const editorService = (ed as any)._codeEditorService;
+    if (editorService) {
+      editorService.openCodeEditor = async (input: any) => {
+        const targetPath = input?.resource?.path;
+        if (targetPath) {
+          const ext = '.' + targetPath.split('.').pop()?.toLowerCase();
+          const langMap: Record<string, string> = {
+            '.ts': 'typescript', '.tsx': 'typescriptreact', '.js': 'javascript', '.jsx': 'javascriptreact',
+            '.go': 'go', '.rb': 'ruby', '.css': 'css', '.html': 'html', '.json': 'json',
+            '.py': 'python', '.rs': 'rust', '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
+            '.toml': 'toml', '.sh': 'shell', '.scss': 'scss',
+          };
+          const lang = langMap[ext] || 'plaintext';
+          const targetLine = input?.options?.selection?.startLineNumber;
+          openFile(targetPath, lang, targetLine);
+        }
+        return null;
+      };
+    }
+
     // Focus immediately so Cmd+F works right away
-    editor.focus();
+    ed.focus();
   };
 
   const handleEditorChange = (value: string | undefined) => {
@@ -94,6 +162,15 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     } else {
       markClean(filePath);
     }
+
+    // Debounce LSP didChange notifications (300ms)
+    if (changeTimer.current) clearTimeout(changeTimer.current);
+    changeTimer.current = setTimeout(() => {
+      const lspLanguage = getLSPLanguage(filePath);
+      if (lspLanguage && lspInitialized.current) {
+        void didChange(filePath, lspLanguage, value);
+      }
+    }, 300);
   };
 
   // Re-focus editor when tab becomes visible
@@ -109,9 +186,7 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       const ed = editorRef.current;
       setTimeout(() => {
         ed.focus();
-        // Set the search string and open the find widget
         ed.getAction('actions.find')?.run();
-        // After the find widget opens, set its value
         setTimeout(() => {
           const findController = (ed as any).getContribution('editor.contrib.findController');
           if (findController) {
@@ -178,7 +253,7 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
         wordWrap: 'off',
         renderWhitespace: 'none',
         folding: true,
-        glyphMargin: false,
+        glyphMargin: true,
         overviewRulerBorder: false,
         hideCursorInOverviewRuler: true,
         scrollbar: {

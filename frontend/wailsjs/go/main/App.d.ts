@@ -137,7 +137,11 @@ export function ListCodexChatHistory(arg1:string,arg2:number):Promise<Array<code
 
 export function ListCodexChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;
 
+export function IsLSPRunning(arg1:string):Promise<boolean>;
+
 export function ListDirectory(arg1:string,arg2:number):Promise<Array<files.FileEntry>>;
+
+export function ListLSPServers():Promise<Array<string>>;
 
 export function ListTerminals():Promise<Array<string>>;
 
@@ -146,6 +150,14 @@ export function ListWorkspaces(arg1:string):Promise<Array<workspace.Workspace>>;
 export function LogClient(arg1:string,arg2:string):Promise<void>;
 
 export function LogPath():Promise<string>;
+
+export function SendLSPMessage(arg1:string,arg2:string):Promise<void>;
+
+export function SendLSPRequest(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function StartLSP(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function StopLSP(arg1:string):Promise<void>;
 
 export function NewWindow():Promise<void>;
 

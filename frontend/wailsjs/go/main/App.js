@@ -250,8 +250,16 @@ export function ListCodexChatSessions(arg1) {
   return window['go']['main']['App']['ListCodexChatSessions'](arg1);
 }
 
+export function IsLSPRunning(arg1) {
+  return window['go']['main']['App']['IsLSPRunning'](arg1);
+}
+
 export function ListDirectory(arg1, arg2) {
   return window['go']['main']['App']['ListDirectory'](arg1, arg2);
+}
+
+export function ListLSPServers() {
+  return window['go']['main']['App']['ListLSPServers']();
 }
 
 export function ListTerminals() {
@@ -268,6 +276,22 @@ export function LogClient(arg1, arg2) {
 
 export function LogPath() {
   return window['go']['main']['App']['LogPath']();
+}
+
+export function SendLSPMessage(arg1, arg2) {
+  return window['go']['main']['App']['SendLSPMessage'](arg1, arg2);
+}
+
+export function SendLSPRequest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendLSPRequest'](arg1, arg2, arg3);
+}
+
+export function StartLSP(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartLSP'](arg1, arg2, arg3);
+}
+
+export function StopLSP(arg1) {
+  return window['go']['main']['App']['StopLSP'](arg1);
 }
 
 export function NewWindow() {

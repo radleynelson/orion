@@ -22,6 +22,7 @@ type OrionConfig struct {
 	Credentials  CredentialsConfig       `toml:"credentials"`
 	Servers      map[string]ServerConfig `toml:"servers"`
 	Agents       map[string]AgentConfig  `toml:"agents"`
+	LSP          map[string]LSPConfig    `toml:"lsp"`
 }
 
 type CredentialsConfig struct {
@@ -34,6 +35,11 @@ type ServerConfig struct {
 	DefaultPort int               `toml:"default_port"`
 	PortEnv     string            `toml:"port_env"`
 	Env         map[string]string `toml:"env"`
+}
+
+type LSPConfig struct {
+	Command    string   `toml:"command"`
+	Extensions []string `toml:"extensions"`
 }
 
 type AgentConfig struct {

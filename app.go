@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"orion/internal/applog"
+	"orion/internal/lsp"
 	"orion/internal/chatattachments"
 	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
@@ -46,6 +48,7 @@ type App struct {
 	webSrv     *web.Server
 	notifier   *notify.Notifier
 	diagMgr    *diag.Manager
+	lspMgr     *lsp.Manager
 }
 
 // NewApp creates a new App instance.
@@ -64,6 +67,7 @@ func NewApp() *App {
 		watcherMgr: watcher.NewManager(),
 		notifier:   notify.New(nil),
 		diagMgr:    diag.NewManager(),
+		lspMgr:     lsp.NewManager(),
 	}
 }
 
@@ -101,6 +105,7 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.notifier.SetContext(ctx)
 	a.diagMgr.SetContext(ctx)
+	a.lspMgr.SetContext(ctx)
 	if err := a.notifier.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "notify: failed to start hook listener: %v\n", err)
 	}
@@ -165,6 +170,7 @@ func (a *App) shutdown(ctx context.Context) {
 		a.claudeMgr.DetachAll()
 	}
 	a.watcherMgr.Stop()
+	a.lspMgr.StopAll()
 }
 
 // --- Terminal methods ---
@@ -1118,6 +1124,105 @@ func (a *App) KillSession(name string) error {
 		}
 	}
 	return exec.Command("tmux", "kill-session", "-t", name).Run()
+}
+
+// --- LSP methods ---
+
+// StartLSP starts a language server for the given language using config from .orion.toml.
+// If no config exists, uses built-in defaults for common languages.
+func (a *App) StartLSP(repoRoot string, language string, workspacePath string) error {
+	cfg := config.Load(repoRoot)
+	var lspCfg lsp.ServerConfig
+
+	if lspConf, ok := cfg.LSP[language]; ok {
+		lspCfg = lsp.ServerConfig{
+			Language:   language,
+			Command:    lspConf.Command,
+			Extensions: lspConf.Extensions,
+			RootURI:    "file://" + workspacePath,
+		}
+	} else {
+		// Built-in defaults for common languages
+		switch language {
+		case "typescript", "javascript", "typescriptreact", "javascriptreact":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "typescript-language-server --stdio",
+				Extensions: []string{".ts", ".tsx", ".js", ".jsx"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "go":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "gopls serve",
+				Extensions: []string{".go"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "ruby":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "ruby-lsp",
+				Extensions: []string{".rb", ".rake", ".gemspec"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "css", "scss", "less":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "vscode-css-language-server --stdio",
+				Extensions: []string{".css", ".scss", ".less"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "html":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "vscode-html-language-server --stdio",
+				Extensions: []string{".html", ".htm"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "json":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "vscode-json-language-server --stdio",
+				Extensions: []string{".json"},
+				RootURI:    "file://" + workspacePath,
+			}
+		default:
+			return fmt.Errorf("no LSP configuration for language: %s", language)
+		}
+	}
+
+	return a.lspMgr.StartServer(lspCfg)
+}
+
+// StopLSP stops a language server.
+func (a *App) StopLSP(language string) error {
+	return a.lspMgr.StopServer(language)
+}
+
+// SendLSPMessage sends a raw JSON-RPC message to an LSP server.
+func (a *App) SendLSPMessage(language string, message string) error {
+	return a.lspMgr.SendMessage(language, message)
+}
+
+// SendLSPRequest sends a JSON-RPC request and waits for the response.
+func (a *App) SendLSPRequest(language string, method string, params string) (string, error) {
+	var p interface{}
+	if params != "" {
+		if err := json.Unmarshal([]byte(params), &p); err != nil {
+			return "", fmt.Errorf("invalid params JSON: %w", err)
+		}
+	}
+	return a.lspMgr.SendRequest(language, method, p)
+}
+
+// IsLSPRunning checks if an LSP server is running.
+func (a *App) IsLSPRunning(language string) bool {
+	return a.lspMgr.IsRunning(language)
+}
+
+// ListLSPServers returns running LSP server languages.
+func (a *App) ListLSPServers() []string {
+	return a.lspMgr.ListRunning()
 }
 
 func sortAgents(agents []AgentTypeInfo) {
