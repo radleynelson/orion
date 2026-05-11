@@ -51,6 +51,7 @@ interface LSPServerState {
   openDocuments: Set<string>;
   documentVersions: Map<string, number>;
   eventCancel?: () => void;
+  semanticTokensLegend?: { tokenTypes: string[]; tokenModifiers: string[] };
 }
 
 const servers = new Map<string, LSPServerState>();
@@ -141,6 +142,23 @@ export async function ensureServer(repoRoot: string, language: string, workspace
               parameterInformation: { labelOffsetSupport: true },
             },
           },
+          semanticTokens: {
+            dynamicRegistration: false,
+            tokenTypes: [
+              'namespace', 'type', 'class', 'enum', 'interface', 'struct',
+              'typeParameter', 'parameter', 'variable', 'property', 'enumMember',
+              'event', 'function', 'method', 'macro', 'keyword', 'modifier',
+              'comment', 'string', 'number', 'regexp', 'operator', 'decorator',
+            ],
+            tokenModifiers: [
+              'declaration', 'definition', 'readonly', 'static', 'deprecated',
+              'abstract', 'async', 'modification', 'documentation', 'defaultLibrary',
+            ],
+            formats: ['relative'],
+            requests: { full: true, range: false },
+            multilineTokenSupport: false,
+            overlappingTokenSupport: false,
+          },
         },
         workspace: {
           workspaceFolders: true,
@@ -150,6 +168,15 @@ export async function ensureServer(repoRoot: string, language: string, workspace
     }));
 
     if (initResult) {
+      // Parse server capabilities for semantic tokens
+      try {
+        const parsed = JSON.parse(initResult);
+        const caps = parsed?.result?.capabilities;
+        if (caps?.semanticTokensProvider?.legend) {
+          state.semanticTokensLegend = caps.semanticTokensProvider.legend;
+        }
+      } catch {}
+
       // Send initialized notification
       await SendLSPMessage(serverKey, JSON.stringify({
         jsonrpc: '2.0',
@@ -610,6 +637,74 @@ function registerProviders(): void {
           return null;
         }
       },
+    })
+  );
+
+  // Semantic tokens provider (LSP-powered syntax highlighting)
+  disposables.push(
+    monaco.languages.registerDocumentSemanticTokensProvider('*', {
+      getLegend: () => {
+        // Return a merged legend from all servers, or a default one
+        const tokenTypes = [
+          'namespace', 'type', 'class', 'enum', 'interface', 'struct',
+          'typeParameter', 'parameter', 'variable', 'property', 'enumMember',
+          'event', 'function', 'method', 'macro', 'keyword', 'modifier',
+          'comment', 'string', 'number', 'regexp', 'operator', 'decorator',
+        ];
+        const tokenModifiers = [
+          'declaration', 'definition', 'readonly', 'static', 'deprecated',
+          'abstract', 'async', 'modification', 'documentation', 'defaultLibrary',
+        ];
+        return { tokenTypes, tokenModifiers };
+      },
+      provideDocumentSemanticTokens: async (model) => {
+        const language = getLSPLanguageForModel(model);
+        if (!language) return null;
+
+        const serverKey = getServerKey(language);
+        const state = servers.get(serverKey);
+        if (!state?.initialized || !state.semanticTokensLegend) return null;
+
+        try {
+          const result = await SendLSPRequest(serverKey, 'textDocument/semanticTokens/full', JSON.stringify({
+            textDocument: { uri: model.uri.toString() },
+          }));
+
+          const parsed = JSON.parse(result);
+          const tokens = parsed?.result;
+          if (!tokens?.data?.length) return null;
+
+          // The server's legend may differ from ours — remap token types
+          const serverLegend = state.semanticTokensLegend;
+          const ourTypes = [
+            'namespace', 'type', 'class', 'enum', 'interface', 'struct',
+            'typeParameter', 'parameter', 'variable', 'property', 'enumMember',
+            'event', 'function', 'method', 'macro', 'keyword', 'modifier',
+            'comment', 'string', 'number', 'regexp', 'operator', 'decorator',
+          ];
+
+          const typeMap = new Map<number, number>();
+          for (let i = 0; i < serverLegend.tokenTypes.length; i++) {
+            const ourIdx = ourTypes.indexOf(serverLegend.tokenTypes[i]);
+            if (ourIdx >= 0) typeMap.set(i, ourIdx);
+          }
+
+          // Remap the encoded data
+          const data = new Uint32Array(tokens.data.length);
+          for (let i = 0; i < tokens.data.length; i += 5) {
+            data[i] = tokens.data[i];     // deltaLine
+            data[i + 1] = tokens.data[i + 1]; // deltaStartChar
+            data[i + 2] = tokens.data[i + 2]; // length
+            data[i + 3] = typeMap.get(tokens.data[i + 3]) ?? tokens.data[i + 3]; // tokenType
+            data[i + 4] = tokens.data[i + 4]; // tokenModifiers
+          }
+
+          return { data };
+        } catch {
+          return null;
+        }
+      },
+      releaseDocumentSemanticTokens: () => {},
     })
   );
 }
