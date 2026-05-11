@@ -137,7 +137,13 @@ export function ListCodexChatHistory(arg1:string,arg2:number):Promise<Array<code
 
 export function ListCodexChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;
 
+export function FormatFile(arg1:string,arg2:string,arg3:string):Promise<{formatted:boolean,content:string,error?:string}>;
+
+export function GetFormatOnSaveExtensions(arg1:string):Promise<Array<string>>;
+
 export function IsLSPRunning(arg1:string):Promise<boolean>;
+
+export function LintFile(arg1:string,arg2:string):Promise<{output:string,error?:string}>;
 
 export function ListDirectory(arg1:string,arg2:number):Promise<Array<files.FileEntry>>;
 
@@ -150,6 +156,8 @@ export function ListWorkspaces(arg1:string):Promise<Array<workspace.Workspace>>;
 export function LogClient(arg1:string,arg2:string):Promise<void>;
 
 export function LogPath():Promise<string>;
+
+export function RunOnSave(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function SendLSPMessage(arg1:string,arg2:string):Promise<void>;
 

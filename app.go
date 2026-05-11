@@ -13,6 +13,7 @@ import (
 
 	"orion/internal/applog"
 	"orion/internal/lsp"
+	"orion/internal/plugin"
 	"orion/internal/chatattachments"
 	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
@@ -49,6 +50,7 @@ type App struct {
 	notifier   *notify.Notifier
 	diagMgr    *diag.Manager
 	lspMgr     *lsp.Manager
+	pluginMgr  *plugin.Manager
 }
 
 // NewApp creates a new App instance.
@@ -68,6 +70,7 @@ func NewApp() *App {
 		notifier:   notify.New(nil),
 		diagMgr:    diag.NewManager(),
 		lspMgr:     lsp.NewManager(),
+		pluginMgr:  plugin.NewManager(),
 	}
 }
 
@@ -106,6 +109,7 @@ func (a *App) startup(ctx context.Context) {
 	a.notifier.SetContext(ctx)
 	a.diagMgr.SetContext(ctx)
 	a.lspMgr.SetContext(ctx)
+	a.pluginMgr.SetContext(ctx)
 	if err := a.notifier.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "notify: failed to start hook listener: %v\n", err)
 	}
@@ -1223,6 +1227,28 @@ func (a *App) IsLSPRunning(language string) bool {
 // ListLSPServers returns running LSP server languages.
 func (a *App) ListLSPServers() []string {
 	return a.lspMgr.ListRunning()
+}
+
+// --- Plugin methods ---
+
+// FormatFile runs the configured formatter for a file.
+func (a *App) FormatFile(repoRoot string, filePath string, content string) (*plugin.FormatResult, error) {
+	return a.pluginMgr.FormatFile(repoRoot, filePath, content)
+}
+
+// RunOnSave executes on-save hooks for a file.
+func (a *App) RunOnSave(repoRoot string, filePath string) ([]string, error) {
+	return a.pluginMgr.RunOnSave(repoRoot, filePath)
+}
+
+// LintFile runs the configured linter for a file.
+func (a *App) LintFile(repoRoot string, filePath string) (*plugin.LintResult, error) {
+	return a.pluginMgr.LintFile(repoRoot, filePath)
+}
+
+// GetFormatOnSaveExtensions returns extensions with formatters available.
+func (a *App) GetFormatOnSaveExtensions(repoRoot string) []string {
+	return a.pluginMgr.GetFormatOnSaveExtensions(repoRoot)
 }
 
 func sortAgents(agents []AgentTypeInfo) {

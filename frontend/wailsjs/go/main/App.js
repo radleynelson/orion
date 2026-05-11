@@ -250,8 +250,20 @@ export function ListCodexChatSessions(arg1) {
   return window['go']['main']['App']['ListCodexChatSessions'](arg1);
 }
 
+export function FormatFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['FormatFile'](arg1, arg2, arg3);
+}
+
+export function GetFormatOnSaveExtensions(arg1) {
+  return window['go']['main']['App']['GetFormatOnSaveExtensions'](arg1);
+}
+
 export function IsLSPRunning(arg1) {
   return window['go']['main']['App']['IsLSPRunning'](arg1);
+}
+
+export function LintFile(arg1, arg2) {
+  return window['go']['main']['App']['LintFile'](arg1, arg2);
 }
 
 export function ListDirectory(arg1, arg2) {
@@ -276,6 +288,10 @@ export function LogClient(arg1, arg2) {
 
 export function LogPath() {
   return window['go']['main']['App']['LogPath']();
+}
+
+export function RunOnSave(arg1, arg2) {
+  return window['go']['main']['App']['RunOnSave'](arg1, arg2);
 }
 
 export function SendLSPMessage(arg1, arg2) {

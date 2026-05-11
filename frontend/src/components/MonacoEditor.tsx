@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import Editor from '@monaco-editor/react';
-import { ReadFileContents, WriteFileContents } from '../../wailsjs/go/main/App';
+import { ReadFileContents, WriteFileContents, FormatFile, RunOnSave } from '../../wailsjs/go/main/App';
 import type { editor } from 'monaco-editor';
 import * as monaco from 'monaco-editor';
 import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
@@ -96,12 +96,35 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
   const saveRef = useRef<() => Promise<void>>();
   saveRef.current = async () => {
     if (!editorRef.current || saving) return;
-    const currentContent = editorRef.current.getValue();
+    let currentContent = editorRef.current.getValue();
     setSaving(true);
     try {
+      // Format on save if a formatter is available
+      if (project) {
+        try {
+          const result = await FormatFile(project.root, filePath, currentContent);
+          if (result?.formatted && result.content) {
+            currentContent = result.content;
+            // Update the editor content with formatted version
+            const ed = editorRef.current;
+            const pos = ed.getPosition();
+            ed.setValue(currentContent);
+            if (pos) ed.setPosition(pos);
+          }
+        } catch {
+          // Formatting failed — save without formatting
+        }
+      }
+
       await WriteFileContents(filePath, currentContent);
       setSavedContent(currentContent);
+      setContent(currentContent);
       markClean(filePath);
+
+      // Run on-save hooks
+      if (project) {
+        RunOnSave(project.root, filePath).catch(() => {});
+      }
 
       // Notify LSP about save
       const lspLanguage = getLSPLanguage(filePath);

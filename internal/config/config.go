@@ -23,6 +23,33 @@ type OrionConfig struct {
 	Servers      map[string]ServerConfig `toml:"servers"`
 	Agents       map[string]AgentConfig  `toml:"agents"`
 	LSP          map[string]LSPConfig    `toml:"lsp"`
+	Plugins      PluginsConfig           `toml:"plugins"`
+}
+
+type PluginsConfig struct {
+	Formatters map[string]FormatterConfig `toml:"formatters"`
+	Linters    map[string]LinterConfig    `toml:"linters"`
+	OnSave     []OnSaveAction             `toml:"on_save"`
+}
+
+type FormatterConfig struct {
+	Command    string   `toml:"command"`
+	Extensions []string `toml:"extensions"`
+	// If true, pass file content via stdin and read formatted output from stdout
+	Stdin bool `toml:"stdin"`
+}
+
+type LinterConfig struct {
+	Command    string   `toml:"command"`
+	Extensions []string `toml:"extensions"`
+}
+
+type OnSaveAction struct {
+	Extensions []string `toml:"extensions"`
+	Command    string   `toml:"command"`
+	// "format" runs the command as a formatter (replaces content),
+	// "run" just executes the command without replacing content
+	Action string `toml:"action"`
 }
 
 type CredentialsConfig struct {
