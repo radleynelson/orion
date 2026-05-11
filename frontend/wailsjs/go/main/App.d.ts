@@ -159,6 +159,8 @@ export function OpenProjectDialog():Promise<workspace.ProjectInfo>;
 
 export function ReadFileContents(arg1:string):Promise<string>;
 
+export function WriteFileContents(arg1:string,arg2:string):Promise<void>;
+
 export function RecoverSessions(arg1:string,arg2:Array<string>):Promise<Array<state.SessionInfo>>;
 
 export function ResumeClaudeChat(arg1:string,arg2:string,arg3:string):Promise<claudesdk.SessionInfo>;

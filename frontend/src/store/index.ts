@@ -126,6 +126,12 @@ interface OrionState {
   zoomOut: () => void;
   zoomReset: () => void;
 
+  // Dirty file tracking (files with unsaved changes)
+  dirtyFiles: Set<string>;
+  markDirty: (filePath: string) => void;
+  markClean: (filePath: string) => void;
+  isDirty: (filePath: string) => boolean;
+
   // Helpers
   getAllTerminalIds: (tab: Tab) => string[];
   getFocusedTerminalId: () => string | null;
@@ -770,6 +776,21 @@ export const useStore = create<OrionState>((set, get) => ({
   setActiveServerTab: (id) => set({ activeServerTabId: id }),
   setServerPaneVisible: (v) => set({ serverPaneVisible: v }),
   setServerPaneHeight: (h) => set({ serverPaneHeight: Math.max(15, Math.min(60, h)) }),
+
+  dirtyFiles: new Set<string>(),
+  markDirty: (filePath) => set((s) => {
+    if (s.dirtyFiles.has(filePath)) return s;
+    const next = new Set(s.dirtyFiles);
+    next.add(filePath);
+    return { dirtyFiles: next };
+  }),
+  markClean: (filePath) => set((s) => {
+    if (!s.dirtyFiles.has(filePath)) return s;
+    const next = new Set(s.dirtyFiles);
+    next.delete(filePath);
+    return { dirtyFiles: next };
+  }),
+  isDirty: (filePath) => get().dirtyFiles.has(filePath),
 
   getAllTerminalIds: (tab) => collectLeaves(tab.rootPane).filter((l) => l.type === 'terminal' && l.terminalId).map((l) => l.terminalId!),
 

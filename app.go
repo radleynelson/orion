@@ -1015,6 +1015,10 @@ func (a *App) ReadFileContents(path string) (string, error) {
 	return a.filesMgr.ReadFileContents(path)
 }
 
+func (a *App) WriteFileContents(path string, content string) error {
+	return a.filesMgr.WriteFileContents(path, content)
+}
+
 // RevealInFinder opens Finder with the file selected.
 func (a *App) RevealInFinder(path string) error {
 	return exec.Command("open", "-R", path).Run()

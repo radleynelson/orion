@@ -136,6 +136,26 @@ func (m *Manager) ReadFileContents(path string) (string, error) {
 	return string(data), nil
 }
 
+// WriteFileContents writes content to a file, creating it if it doesn't exist.
+// Refuses to write files larger than 5MB.
+func (m *Manager) WriteFileContents(path string, content string) error {
+	if len(content) > 5*1024*1024 {
+		return fmt.Errorf("content too large (%d bytes, max 5MB)", len(content))
+	}
+
+	// Ensure the parent directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
+}
+
 // SearchResult represents a file matching a search query.
 type SearchResult struct {
 	Name  string `json:"name"`

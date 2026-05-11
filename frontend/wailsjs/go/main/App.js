@@ -294,6 +294,10 @@ export function ReadFileContents(arg1) {
   return window['go']['main']['App']['ReadFileContents'](arg1);
 }
 
+export function WriteFileContents(arg1, arg2) {
+  return window['go']['main']['App']['WriteFileContents'](arg1, arg2);
+}
+
 export function RecoverSessions(arg1, arg2) {
   return window['go']['main']['App']['RecoverSessions'](arg1, arg2);
 }

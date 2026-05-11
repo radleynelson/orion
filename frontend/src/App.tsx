@@ -146,6 +146,7 @@ function App() {
     zoomIn,
     zoomOut,
     zoomReset,
+    dirtyFiles,
   } = useStore();
 
   // Refit terminals after code review pane opens/closes
@@ -887,6 +888,24 @@ function App() {
   const handleCloseTab = useCallback(async (tabId: string) => {
     const tab = useStore.getState().tabs.find((t) => t.id === tabId);
     if (!tab) return;
+
+    // Check for unsaved editor changes
+    if (tab.tabType === 'editor') {
+      const leaves = collectLeavesFromPane(tab.rootPane);
+      const dirtyLeaf = leaves.find((l) => l.type === 'editor' && l.filePath && useStore.getState().dirtyFiles.has(l.filePath));
+      if (dirtyLeaf) {
+        setCloseConfirm({
+          label: 'Unsaved Changes',
+          detail: `"${tab.label}" has unsaved changes. Close without saving?`,
+          onConfirm: () => {
+            if (dirtyLeaf.filePath) useStore.getState().markClean(dirtyLeaf.filePath);
+            removeTab(tabId);
+          },
+        });
+        return;
+      }
+    }
+
     const termIds = getAllTerminalIds(tab);
     const fallbackKind = tab.tabType === 'claude-chat' ? 'claude' : 'codex';
     const chatSessions = getChatSessions(tab.rootPane, fallbackKind);
@@ -1938,7 +1957,11 @@ function App() {
                         setRenameValue(tab.label);
                       }}
                     >
-                      {tab.label}
+                      {tab.tabType === 'editor' && (() => {
+                        const leaves = collectLeavesFromPane(tab.rootPane);
+                        const editorLeaf = leaves.find((l) => l.type === 'editor' && l.filePath);
+                        return editorLeaf?.filePath && dirtyFiles.has(editorLeaf.filePath) ? '● ' : '';
+                      })()}{tab.label}
                     </span>
                   )}
                   {(tab.tabType === 'claude' || tab.tabType === 'codex' || tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat') && (
@@ -2498,6 +2521,16 @@ function parseChatMetadata(msg: any): { threadId?: string; model?: string; reaso
   } catch {
     return {};
   }
+}
+
+function collectLeavesFromPane(pane: Pane): PaneLeaf[] {
+  if (pane.type === 'terminal' || pane.type === 'editor' || pane.type === 'chat' || pane.type === 'diagnostics') {
+    return [pane as PaneLeaf];
+  }
+  if ('children' in pane) {
+    return pane.children.flatMap(collectLeavesFromPane);
+  }
+  return [];
 }
 
 function findPaneById(pane: Pane, paneId: string): Pane | null {

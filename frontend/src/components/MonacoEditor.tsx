@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import Editor, { type Monaco } from '@monaco-editor/react';
-import { ReadFileContents } from '../../wailsjs/go/main/App';
+import Editor from '@monaco-editor/react';
+import { ReadFileContents, WriteFileContents } from '../../wailsjs/go/main/App';
 import type { editor } from 'monaco-editor';
 import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
 
@@ -13,11 +13,15 @@ interface MonacoEditorProps {
 
 export default function MonacoEditor({ filePath, language, visible, line }: MonacoEditorProps) {
   const [content, setContent] = useState<string | null>(null);
+  const [savedContent, setSavedContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const zoomLevel = useStore((s) => s.zoomLevel);
   const searchInFileQuery = useStore((s) => s.searchInFileQuery);
   const setSearchInFileQuery = useStore((s) => s.setSearchInFileQuery);
+  const markDirty = useStore((s) => s.markDirty);
+  const markClean = useStore((s) => s.markClean);
   const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
 
   useEffect(() => {
@@ -29,13 +33,16 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       try {
         const data = await ReadFileContents(filePath);
         setContent(data);
+        setSavedContent(data);
         setError(null);
+        markClean(filePath);
       } catch (err: any) {
         setError(err?.message || 'Failed to read file');
         setContent(null);
+        setSavedContent(null);
       }
     })();
-  }, [filePath]);
+  }, [filePath, markClean]);
 
   // Scroll to line when it changes
   useEffect(() => {
@@ -45,14 +52,48 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     }
   }, [line]);
 
+  const saveRef = useRef<() => Promise<void>>();
+  saveRef.current = async () => {
+    if (!editorRef.current || saving) return;
+    const currentContent = editorRef.current.getValue();
+    setSaving(true);
+    try {
+      await WriteFileContents(filePath, currentContent);
+      setSavedContent(currentContent);
+      markClean(filePath);
+    } catch (err: any) {
+      console.error('Failed to save file:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleEditorMount = (editor: editor.IStandaloneCodeEditor) => {
     editorRef.current = editor;
     if (line) {
       editor.revealLineInCenter(line);
       editor.setPosition({ lineNumber: line, column: 1 });
     }
+
+    // Add Cmd+S keybinding for save (uses ref to avoid stale closure)
+    editor.addCommand(
+      // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KeyS
+      2048 | 49, // CtrlCmd = 2048, KeyS = 49
+      () => { void saveRef.current?.(); }
+    );
+
     // Focus immediately so Cmd+F works right away
     editor.focus();
+  };
+
+  const handleEditorChange = (value: string | undefined) => {
+    if (value === undefined) return;
+    setContent(value);
+    if (value !== savedContent) {
+      markDirty(filePath);
+    } else {
+      markClean(filePath);
+    }
   };
 
   // Re-focus editor when tab becomes visible
@@ -125,8 +166,9 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       language={language}
       theme="orion-dark"
       onMount={handleEditorMount}
+      onChange={handleEditorChange}
       options={{
-        readOnly: true,
+        readOnly: false,
         minimap: { enabled: false },
         fontSize,
         fontFamily: "'JetBrains Mono', 'Menlo', 'Monaco', monospace",
@@ -143,6 +185,13 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
           verticalScrollbarSize: 6,
           horizontalScrollbarSize: 6,
         },
+        tabSize: 2,
+        insertSpaces: true,
+        bracketPairColorization: { enabled: true },
+        guides: { bracketPairs: true },
+        suggestOnTriggerCharacters: true,
+        quickSuggestions: true,
+        parameterHints: { enabled: true },
       }}
     />
   );
