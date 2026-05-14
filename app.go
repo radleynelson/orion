@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -300,15 +301,45 @@ func (a *App) NewWindowWithProject(projectRoot string) error {
 }
 
 func (a *App) ListWorkspaces(repoRoot string) ([]workspace.Workspace, error) {
-	return a.wsMgr.ListWorkspaces(repoRoot)
+	workspaces, err := a.wsMgr.ListWorkspaces(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(workspaces))
+	for _, ws := range workspaces {
+		paths = append(paths, ws.Path)
+	}
+	order := paths
+	if samePath(a.appState.ProjectRoot(), repoRoot) {
+		order = a.appState.ReconcileWorkspaceOrder(paths)
+	}
+	return orderWorkspaces(workspaces, order), nil
 }
 
 func (a *App) CreateWorkspace(repoRoot string, name string) (*workspace.Workspace, error) {
-	return a.wsMgr.CreateWorkspace(repoRoot, name)
+	return a.CreateWorkspaceFrom(repoRoot, name, "")
 }
 
 func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) (*workspace.Workspace, error) {
-	return a.wsMgr.CreateWorkspaceFrom(repoRoot, name, baseRef)
+	ws, err := a.wsMgr.CreateWorkspaceFrom(repoRoot, name, baseRef)
+	if err != nil {
+		return nil, err
+	}
+	if ws != nil {
+		if samePath(a.appState.ProjectRoot(), repoRoot) {
+			if all, listErr := a.wsMgr.ListWorkspaces(repoRoot); listErr == nil {
+				paths := make([]string, 0, len(all))
+				for _, current := range all {
+					paths = append(paths, current.Path)
+				}
+				a.appState.ReconcileWorkspaceOrder(movePathToEnd(paths, ws.Path))
+			} else {
+				a.appState.RememberWorkspace(ws.Path)
+			}
+		}
+		a.EmitWorkspaceCreated(repoRoot, *ws)
+	}
+	return ws, nil
 }
 
 func (a *App) DeleteWorkspace(repoRoot string, path string) error {
@@ -321,7 +352,14 @@ func (a *App) DeleteWorkspace(repoRoot string, path string) error {
 	}
 	a.portReg.ReleaseWorkspace(wsID)
 	a.portReg.ReleaseRedisDB(wsID)
-	return a.wsMgr.DeleteWorkspace(repoRoot, path)
+	if err := a.wsMgr.DeleteWorkspace(repoRoot, path); err != nil {
+		return err
+	}
+	if samePath(a.appState.ProjectRoot(), repoRoot) {
+		a.appState.ForgetWorkspace(path)
+	}
+	a.EmitWorkspaceDeleted(repoRoot, path)
+	return nil
 }
 
 func (a *App) LaunchAgent(repoRoot string, workspacePath string, agentType string) (string, error) {
@@ -384,6 +422,10 @@ func (a *App) LaunchClaudeChat(repoRoot string, workspacePath string) (*claudech
 
 func (a *App) LaunchClaudeChatWithOptions(repoRoot string, workspacePath string, model string, reasoningEffort string, approvalPolicy string, sandboxMode string, permissionMode string) (*claudechat.SessionInfo, error) {
 	_, agent := a.agentForProvider(repoRoot, "claude")
+	claudeExecutable, err := agentExecutable(agent.Command, "claude")
+	if err != nil {
+		return nil, err
+	}
 	info, err := a.claudeMgr.StartWithOptions(claudechat.StartOptions{
 		WorkspacePath:    workspacePath,
 		Label:            chatLabel(agent, "Claude Chat"),
@@ -393,7 +435,7 @@ func (a *App) LaunchClaudeChatWithOptions(repoRoot string, workspacePath string,
 		ApprovalPolicy:   firstNonEmpty(approvalPolicy, agent.ApprovalPolicy),
 		SandboxMode:      firstNonEmpty(sandboxMode, agent.SandboxMode),
 		PermissionMode:   firstNonEmpty(permissionMode, agent.PermissionMode, "bypassPermissions"),
-		ClaudeExecutable: agentExecutable(agent.Command, "claude"),
+		ClaudeExecutable: claudeExecutable,
 	})
 	if info != nil {
 		info.Provider = "claude"
@@ -413,6 +455,10 @@ func (a *App) ResumeClaudeChatWithOptions(repoRoot string, workspacePath string,
 		return nil, fmt.Errorf("threadId required")
 	}
 	_, agent := a.agentForProvider(repoRoot, "claude")
+	claudeExecutable, err := agentExecutable(agent.Command, "claude")
+	if err != nil {
+		return nil, err
+	}
 	info, err := a.claudeMgr.StartWithOptions(claudechat.StartOptions{
 		WorkspacePath:    workspacePath,
 		Label:            chatLabel(agent, "Claude Chat"),
@@ -423,7 +469,7 @@ func (a *App) ResumeClaudeChatWithOptions(repoRoot string, workspacePath string,
 		ApprovalPolicy:   firstNonEmpty(approvalPolicy, agent.ApprovalPolicy),
 		SandboxMode:      firstNonEmpty(sandboxMode, agent.SandboxMode),
 		PermissionMode:   firstNonEmpty(permissionMode, agent.PermissionMode, "bypassPermissions"),
-		ClaudeExecutable: agentExecutable(agent.Command, "claude"),
+		ClaudeExecutable: claudeExecutable,
 	})
 	if info != nil {
 		info.Provider = "claude"
@@ -768,6 +814,10 @@ func (a *App) SaveTabs(tabs []state.SavedTab) {
 	a.appState.SaveTabs(tabs)
 }
 
+func (a *App) SaveWorkspaceOrder(workspacePaths []string) {
+	a.appState.SaveWorkspaceOrder(workspacePaths)
+}
+
 func (a *App) GetSavedTabs() []state.SavedTab {
 	saved := a.appState.GetSavedTabs()
 	if len(saved) == 0 {
@@ -831,6 +881,22 @@ func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 		"sandboxMode":       session.SandboxMode,
 		"permissionMode":    session.PermissionMode,
 		"collaborationMode": session.CollaborationMode,
+	})
+}
+
+func (a *App) EmitWorkspaceCreated(repoRoot string, ws workspace.Workspace) {
+	wailsRuntime.EventsEmit(a.ctx, "mobile:workspace-created", map[string]string{
+		"root":   repoRoot,
+		"path":   ws.Path,
+		"name":   ws.Name,
+		"branch": ws.Branch,
+	})
+}
+
+func (a *App) EmitWorkspaceDeleted(repoRoot string, workspacePath string) {
+	wailsRuntime.EventsEmit(a.ctx, "mobile:workspace-deleted", map[string]string{
+		"root": repoRoot,
+		"path": workspacePath,
 	})
 }
 
@@ -905,12 +971,128 @@ func chatLabel(agent config.AgentConfig, fallback string) string {
 	return label + " Chat"
 }
 
-func agentExecutable(command string, fallback string) string {
+func agentExecutable(command string, fallback string) (string, error) {
 	fields := strings.Fields(command)
+	executable := fallback
 	if len(fields) == 0 {
-		return fallback
+		executable = fallback
+	} else {
+		executable = fields[0]
 	}
-	return fields[0]
+	resolved, err := resolveExecutable(executable)
+	if err != nil {
+		return "", fmt.Errorf("%s executable %q not found: %w", fallback, executable, err)
+	}
+	return resolved, nil
+}
+
+func resolveExecutable(executable string) (string, error) {
+	executable = expandUserPath(strings.TrimSpace(executable))
+	if executable == "" {
+		return "", fmt.Errorf("empty executable")
+	}
+	if strings.ContainsRune(executable, os.PathSeparator) {
+		if isExecutableFile(executable) {
+			if abs, err := filepath.Abs(executable); err == nil {
+				return abs, nil
+			}
+			return executable, nil
+		}
+		return "", fmt.Errorf("not executable")
+	}
+	if resolved, err := exec.LookPath(executable); err == nil {
+		return resolved, nil
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		candidate := filepath.Join(dir, executable)
+		if isExecutableFile(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("not found on PATH")
+}
+
+func expandUserPath(pathValue string) string {
+	if pathValue == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(pathValue, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(pathValue, "~/"))
+		}
+	}
+	return pathValue
+}
+
+func isExecutableFile(pathValue string) bool {
+	stat, err := os.Stat(pathValue)
+	if err != nil || stat.IsDir() {
+		return false
+	}
+	return stat.Mode()&0111 != 0
+}
+
+func samePath(a string, b string) bool {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func orderWorkspaces(workspaces []workspace.Workspace, order []string) []workspace.Workspace {
+	if len(workspaces) < 2 {
+		return workspaces
+	}
+	orderIndex := make(map[string]int, len(order))
+	for i, path := range order {
+		if _, exists := orderIndex[path]; !exists {
+			orderIndex[path] = i
+		}
+	}
+	originalIndex := make(map[string]int, len(workspaces))
+	ordered := append([]workspace.Workspace(nil), workspaces...)
+	for i, ws := range ordered {
+		originalIndex[ws.Path] = i
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a := ordered[i]
+		b := ordered[j]
+		if a.IsMain != b.IsMain {
+			return a.IsMain
+		}
+		ai, aok := orderIndex[a.Path]
+		bi, bok := orderIndex[b.Path]
+		if aok && bok && ai != bi {
+			return ai < bi
+		}
+		if aok != bok {
+			return aok
+		}
+		return originalIndex[a.Path] < originalIndex[b.Path]
+	})
+	return ordered
+}
+
+func movePathToEnd(paths []string, target string) []string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return paths
+	}
+	next := make([]string, 0, len(paths))
+	found := false
+	for _, path := range paths {
+		if path == target {
+			found = true
+			continue
+		}
+		next = append(next, path)
+	}
+	if found {
+		next = append(next, target)
+	}
+	return next
 }
 
 func claudeResumeCommand(command string, threadID string, model string, reasoningEffort string, permissionMode string) string {
@@ -1222,14 +1404,6 @@ func defaultTypeScriptLSPConfig(language string, workspacePath string) lsp.Serve
 	}
 
 	return cfg
-}
-
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return info.Mode()&0111 != 0
 }
 
 // StopLSP stops a language server.

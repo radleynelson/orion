@@ -341,6 +341,7 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 		cmd:             cmd,
 		stdin:           stdin,
 		ready:           make(chan struct{}),
+		exited:          make(chan error, 1),
 		subscribers:     make(map[chan Message]struct{}),
 		metadataEmitted: false,
 	}
@@ -360,6 +361,12 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 
 	select {
 	case <-session.ready:
+	case err := <-session.exited:
+		session.manager.remove(session.id)
+		if err != nil {
+			return nil, fmt.Errorf("Claude SDK bridge exited before ready: %w", err)
+		}
+		return nil, errors.New("Claude SDK bridge exited before ready")
 	case <-time.After(30 * time.Second):
 		_ = session.Stop()
 		return nil, errors.New("timed out waiting for Claude SDK session to initialize")
@@ -397,6 +404,7 @@ type Session struct {
 	writeMu sync.Mutex
 
 	ready     chan struct{}
+	exited    chan error
 	readyOnce sync.Once
 
 	messagesMu sync.Mutex
@@ -552,6 +560,10 @@ func (s *Session) stderrLoop(stderr io.Reader) {
 
 func (s *Session) wait() {
 	err := s.cmd.Wait()
+	select {
+	case s.exited <- err:
+	default:
+	}
 	if s.ctx.Err() == nil && err != nil {
 		s.emit(Message{Type: "error", Text: err.Error()})
 	}

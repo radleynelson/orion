@@ -328,6 +328,15 @@
   position: relative;
 }
 
+.sidebar-workspace-row.workspace-drop-target .sidebar-item {
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 42%, transparent);
+}
+
+.sidebar-item.workspace-dragging {
+  opacity: 0.55;
+}
+
 .workspace-activity-badges {
   display: inline-flex;
   align-items: center;
@@ -612,6 +621,7 @@
 
 .workspace-create-wide,
 .workspace-create-error,
+.workspace-create-progress,
 .workspace-create-codex {
   grid-column: 1 / -1;
 }
@@ -680,6 +690,12 @@
   border-radius: 10px;
   color: var(--accent-red);
   background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+  font-size: var(--font-size-sm);
+}
+
+.workspace-create-progress {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
 

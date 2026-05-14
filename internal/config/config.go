@@ -20,6 +20,7 @@ type OrionConfig struct {
 	BranchPrefix string                  `toml:"branch_prefix"`
 	WorktreesDir string                  `toml:"worktrees_dir"`
 	Credentials  CredentialsConfig       `toml:"credentials"`
+	Hooks        HooksConfig             `toml:"hooks"`
 	Servers      map[string]ServerConfig `toml:"servers"`
 	Agents       map[string]AgentConfig  `toml:"agents"`
 	LSP          map[string]LSPConfig    `toml:"lsp"`
@@ -54,6 +55,23 @@ type OnSaveAction struct {
 
 type CredentialsConfig struct {
 	Copy []string `toml:"copy"`
+}
+
+type HooksConfig struct {
+	WorktreeCreated  HookConfig `toml:"worktree_created"`
+	WorktreeDeleting HookConfig `toml:"worktree_deleting"`
+}
+
+type HookConfig struct {
+	Command  string `toml:"command"`
+	Blocking *bool  `toml:"blocking"`
+}
+
+func (h HookConfig) IsBlocking(defaultValue bool) bool {
+	if h.Blocking == nil {
+		return defaultValue
+	}
+	return *h.Blocking
 }
 
 type ServerConfig struct {

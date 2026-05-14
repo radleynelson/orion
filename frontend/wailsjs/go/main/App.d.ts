@@ -64,6 +64,10 @@ export function EmitSessionCreatedInfo(arg1:state.SessionInfo):Promise<void>;
 
 export function EmitSessionKilled(arg1:string):Promise<void>;
 
+export function EmitWorkspaceCreated(arg1:string,arg2:workspace.Workspace):Promise<void>;
+
+export function EmitWorkspaceDeleted(arg1:string,arg2:string):Promise<void>;
+
 export function FormatFile(arg1:string,arg2:string,arg3:string):Promise<plugin.FormatResult>;
 
 export function GetAgentNames(arg1:string):Promise<Array<web.AgentType>>;
@@ -185,6 +189,8 @@ export function RevealInFinder(arg1:string):Promise<void>;
 export function RunOnSave(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function SaveTabs(arg1:Array<state.SavedTab>):Promise<void>;
+
+export function SaveWorkspaceOrder(arg1:Array<string>):Promise<void>;
 
 export function SearchContents(arg1:string,arg2:string):Promise<Array<files.GrepResult>>;
 

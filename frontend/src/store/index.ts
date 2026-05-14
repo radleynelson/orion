@@ -138,19 +138,19 @@ interface OrionState {
   getFocusedTerminalId: () => string | null;
 }
 
-// Shared workspace sort: main first, then active, then alphabetical.
+// Shared workspace sort: main first, then preserve the backend's persisted order.
 // Used by both the Sidebar render and the Cmd+Up/Down cycle so order stays consistent.
 export function sortWorkspaces<T extends { path: string; isMain: boolean; branch?: string; name: string }>(
   list: T[],
-  active: Record<string, number>,
+  _active?: Record<string, number>,
 ): T[] {
-  return [...list].sort((a, b) => {
-    if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
-    const aT = active[a.path] ?? 2;
-    const bT = active[b.path] ?? 2;
-    if (aT !== bT) return aT - bT;
-    return (a.branch || a.name).localeCompare(b.branch || b.name);
-  });
+  return list
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      if (a.item.isMain !== b.item.isMain) return a.item.isMain ? -1 : 1;
+      return a.index - b.index;
+    })
+    .map(({ item }) => item);
 }
 
 const ZOOM_MIN = -3;

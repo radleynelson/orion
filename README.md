@@ -52,6 +52,15 @@ copy = [
   "backend/config/credentials/*.key",  # glob patterns supported
 ]
 
+# Workspace lifecycle callbacks
+[hooks.worktree_created]
+command = "./scripts/provision-preview-db.sh --branch {{branch}} --path {{workspace_path}}"
+# blocking defaults to true for create hooks
+
+[hooks.worktree_deleting]
+command = "./scripts/destroy-preview-db.sh --branch {{branch}}"
+blocking = false
+
 # Server definitions
 [servers.frontend]
 command = "npm install && npm run dev"
@@ -138,6 +147,41 @@ LSP support can provide diagnostics, completions, hover, go to definition, refer
 Built-in defaults cover TypeScript/JavaScript, Go, Ruby, CSS, HTML, and JSON. Orion does not bundle language servers; it resolves project or system tools. For TypeScript, Orion first looks for `frontend/node_modules/.bin/typescript-language-server` in the active worktree, then `node_modules/.bin/typescript-language-server`, then `typescript-language-server` on `PATH`. Installing language servers as project dev dependencies keeps Orion lightweight and makes worktrees behave like the app itself.
 
 You can override a language server in `.orion.toml` with `[lsp.<language>]`. `command` is parsed as an executable plus args, not as a shell command; use a wrapper script when you need shell features.
+
+### Workspace Callbacks
+
+Orion can run shell callbacks around worktree lifecycle events. Use these when a workspace needs matching external resources, such as a preview database, cloud branch, seeded cache, or cleanup job.
+
+```toml
+[hooks.worktree_created]
+command = "./scripts/provision-preview-db.sh --branch {{branch}} --workspace {{workspace_path}}"
+
+[hooks.worktree_deleting]
+command = "./scripts/destroy-preview-db.sh --branch {{branch}}"
+blocking = false
+```
+
+Available callbacks:
+
+| Callback | Runs | Default blocking behavior |
+|----------|------|---------------------------|
+| `hooks.worktree_created` | After `git worktree add` and credential copying, before Orion reports the workspace as ready | Blocking. A failure stops workspace creation and leaves the worktree in place for inspection. |
+| `hooks.worktree_deleting` | Before `git worktree remove --force` | Non-blocking. A failure is logged and deletion continues unless `blocking = true` is set. |
+
+Each hook runs with `bash -lc` from the workspace directory. The command can use shell-quoted template placeholders:
+
+| Placeholder | Meaning |
+|-------------|---------|
+| `{{name}}` | Workspace name typed in Orion, without the repo prefix |
+| `{{branch}}` | Git branch for the workspace |
+| `{{base_ref}}` | Base ref used to create the workspace, when available |
+| `{{workspace_path}}` | Full path to the worktree |
+| `{{repo_root}}` | Repository root passed to Orion |
+| `{{main_worktree_path}}` | Main worktree path |
+
+The same values are also available as environment variables: `ORION_WORKSPACE_NAME`, `ORION_BRANCH`, `ORION_BASE_REF`, `ORION_WORKSPACE_PATH`, `ORION_REPO_ROOT`, and `ORION_MAIN_WORKTREE_PATH`.
+
+Hook output is written under `.orion/hooks/`, and `.orion/` is added to `.gitignore` automatically. Delete-hook logs are written under the main worktree because the target worktree is about to be removed.
 
 ### Backward Compatibility
 
