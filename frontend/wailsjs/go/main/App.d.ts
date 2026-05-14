@@ -4,6 +4,7 @@ import {claudesdk} from '../models';
 import {codexchat} from '../models';
 import {workspace} from '../models';
 import {state} from '../models';
+import {plugin} from '../models';
 import {web} from '../models';
 import {main} from '../models';
 import {git} from '../models';
@@ -63,6 +64,8 @@ export function EmitSessionCreatedInfo(arg1:state.SessionInfo):Promise<void>;
 
 export function EmitSessionKilled(arg1:string):Promise<void>;
 
+export function FormatFile(arg1:string,arg2:string,arg3:string):Promise<plugin.FormatResult>;
+
 export function GetAgentNames(arg1:string):Promise<Array<web.AgentType>>;
 
 export function GetAgentTypes(arg1:string):Promise<Array<main.AgentTypeInfo>>;
@@ -80,6 +83,8 @@ export function GetCodexChatMessages(arg1:string):Promise<Array<codexchat.Messag
 export function GetConfig(arg1:string):Promise<config.OrionConfig>;
 
 export function GetFileDiff(arg1:string,arg2:string):Promise<git.FileDiff>;
+
+export function GetFormatOnSaveExtensions(arg1:string):Promise<Array<string>>;
 
 export function GetGitStatus(arg1:string):Promise<git.RepositoryStatus>;
 
@@ -113,6 +118,8 @@ export function GitPull(arg1:string):Promise<git.ActionResult>;
 
 export function GitPush(arg1:string):Promise<git.ActionResult>;
 
+export function IsLSPRunning(arg1:string):Promise<boolean>;
+
 export function IsTerminalBusy(arg1:string):Promise<boolean>;
 
 export function KillSession(arg1:string):Promise<void>;
@@ -129,6 +136,8 @@ export function LaunchCodexChatWithOptions(arg1:string,arg2:string,arg3:string,a
 
 export function LaunchShell(arg1:string,arg2:string):Promise<string>;
 
+export function LintFile(arg1:string,arg2:string):Promise<plugin.LintResult>;
+
 export function ListClaudeChatHistory(arg1:string,arg2:number):Promise<Array<claudesdk.HistoryThread>>;
 
 export function ListClaudeChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;
@@ -136,14 +145,6 @@ export function ListClaudeChatSessions(arg1:Array<string>):Promise<Array<state.S
 export function ListCodexChatHistory(arg1:string,arg2:number):Promise<Array<codexchat.HistoryThread>>;
 
 export function ListCodexChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;
-
-export function FormatFile(arg1:string,arg2:string,arg3:string):Promise<{formatted:boolean,content:string,error?:string}>;
-
-export function GetFormatOnSaveExtensions(arg1:string):Promise<Array<string>>;
-
-export function IsLSPRunning(arg1:string):Promise<boolean>;
-
-export function LintFile(arg1:string,arg2:string):Promise<{output:string,error?:string}>;
 
 export function ListDirectory(arg1:string,arg2:number):Promise<Array<files.FileEntry>>;
 
@@ -157,16 +158,6 @@ export function LogClient(arg1:string,arg2:string):Promise<void>;
 
 export function LogPath():Promise<string>;
 
-export function RunOnSave(arg1:string,arg2:string):Promise<Array<string>>;
-
-export function SendLSPMessage(arg1:string,arg2:string):Promise<void>;
-
-export function SendLSPRequest(arg1:string,arg2:string,arg3:string):Promise<string>;
-
-export function StartLSP(arg1:string,arg2:string,arg3:string):Promise<void>;
-
-export function StopLSP(arg1:string):Promise<void>;
-
 export function NewWindow():Promise<void>;
 
 export function NewWindowWithProject(arg1:string):Promise<void>;
@@ -178,8 +169,6 @@ export function OpenChatAttachmentDialog():Promise<Array<chatattachments.Attachm
 export function OpenProjectDialog():Promise<workspace.ProjectInfo>;
 
 export function ReadFileContents(arg1:string):Promise<string>;
-
-export function WriteFileContents(arg1:string,arg2:string):Promise<void>;
 
 export function RecoverSessions(arg1:string,arg2:Array<string>):Promise<Array<state.SessionInfo>>;
 
@@ -193,6 +182,8 @@ export function ResumeCodexChatWithOptions(arg1:string,arg2:string,arg3:string,a
 
 export function RevealInFinder(arg1:string):Promise<void>;
 
+export function RunOnSave(arg1:string,arg2:string):Promise<Array<string>>;
+
 export function SaveTabs(arg1:Array<state.SavedTab>):Promise<void>;
 
 export function SearchContents(arg1:string,arg2:string):Promise<Array<files.GrepResult>>;
@@ -203,9 +194,15 @@ export function SendClaudeChatMessage(arg1:string,arg2:string,arg3:Array<chatatt
 
 export function SendCodexChatMessage(arg1:string,arg2:string,arg3:Array<chatattachments.Attachment>):Promise<void>;
 
+export function SendLSPMessage(arg1:string,arg2:string):Promise<void>;
+
+export function SendLSPRequest(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function SetActiveProject(arg1:string):Promise<void>;
 
 export function SetClipboard(arg1:string):Promise<void>;
+
+export function StartLSP(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function StartServers(arg1:string,arg2:string,arg3:boolean):Promise<Array<server.ServerStatus>>;
 
@@ -213,6 +210,10 @@ export function StopClaudeChat(arg1:string):Promise<void>;
 
 export function StopCodexChat(arg1:string):Promise<void>;
 
+export function StopLSP(arg1:string):Promise<void>;
+
 export function StopServers(arg1:string):Promise<void>;
 
 export function WatchWorkspace(arg1:string):Promise<void>;
+
+export function WriteFileContents(arg1:string,arg2:string):Promise<void>;

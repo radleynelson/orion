@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"orion/internal/applog"
-	"orion/internal/lsp"
-	"orion/internal/plugin"
 	"orion/internal/chatattachments"
 	claudechat "orion/internal/claudesdk"
 	"orion/internal/codexchat"
@@ -21,7 +19,9 @@ import (
 	"orion/internal/diag"
 	"orion/internal/files"
 	"orion/internal/git"
+	"orion/internal/lsp"
 	"orion/internal/notify"
+	"orion/internal/plugin"
 	"orion/internal/port"
 	"orion/internal/server"
 	"orion/internal/state"
@@ -1142,6 +1142,7 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 		lspCfg = lsp.ServerConfig{
 			Language:   language,
 			Command:    lspConf.Command,
+			WorkDir:    workspacePath,
 			Extensions: lspConf.Extensions,
 			RootURI:    "file://" + workspacePath,
 		}
@@ -1149,16 +1150,12 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 		// Built-in defaults for common languages
 		switch language {
 		case "typescript", "javascript", "typescriptreact", "javascriptreact":
-			lspCfg = lsp.ServerConfig{
-				Language:   language,
-				Command:    "typescript-language-server --stdio",
-				Extensions: []string{".ts", ".tsx", ".js", ".jsx"},
-				RootURI:    "file://" + workspacePath,
-			}
+			lspCfg = defaultTypeScriptLSPConfig(language, workspacePath)
 		case "go":
 			lspCfg = lsp.ServerConfig{
 				Language:   language,
 				Command:    "gopls serve",
+				WorkDir:    workspacePath,
 				Extensions: []string{".go"},
 				RootURI:    "file://" + workspacePath,
 			}
@@ -1166,6 +1163,7 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 			lspCfg = lsp.ServerConfig{
 				Language:   language,
 				Command:    "ruby-lsp",
+				WorkDir:    workspacePath,
 				Extensions: []string{".rb", ".rake", ".gemspec"},
 				RootURI:    "file://" + workspacePath,
 			}
@@ -1173,6 +1171,7 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 			lspCfg = lsp.ServerConfig{
 				Language:   language,
 				Command:    "vscode-css-language-server --stdio",
+				WorkDir:    workspacePath,
 				Extensions: []string{".css", ".scss", ".less"},
 				RootURI:    "file://" + workspacePath,
 			}
@@ -1180,6 +1179,7 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 			lspCfg = lsp.ServerConfig{
 				Language:   language,
 				Command:    "vscode-html-language-server --stdio",
+				WorkDir:    workspacePath,
 				Extensions: []string{".html", ".htm"},
 				RootURI:    "file://" + workspacePath,
 			}
@@ -1187,6 +1187,7 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 			lspCfg = lsp.ServerConfig{
 				Language:   language,
 				Command:    "vscode-json-language-server --stdio",
+				WorkDir:    workspacePath,
 				Extensions: []string{".json"},
 				RootURI:    "file://" + workspacePath,
 			}
@@ -1196,6 +1197,39 @@ func (a *App) StartLSP(repoRoot string, language string, workspacePath string) e
 	}
 
 	return a.lspMgr.StartServer(lspCfg)
+}
+
+func defaultTypeScriptLSPConfig(language string, workspacePath string) lsp.ServerConfig {
+	cfg := lsp.ServerConfig{
+		Language:   language,
+		Command:    "typescript-language-server --stdio",
+		WorkDir:    workspacePath,
+		Extensions: []string{".ts", ".tsx", ".js", ".jsx"},
+		RootURI:    "file://" + workspacePath,
+	}
+
+	for _, rel := range []string{
+		filepath.Join("frontend", "node_modules", ".bin", "typescript-language-server"),
+		filepath.Join("node_modules", ".bin", "typescript-language-server"),
+	} {
+		path := filepath.Join(workspacePath, rel)
+		if isExecutableFile(path) {
+			cfg.Command = path + " --stdio"
+			cfg.Executable = path
+			cfg.Args = []string{"--stdio"}
+			return cfg
+		}
+	}
+
+	return cfg
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0111 != 0
 }
 
 // StopLSP stops a language server.

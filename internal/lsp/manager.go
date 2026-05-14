@@ -8,9 +8,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"orion/internal/applog"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -21,6 +25,11 @@ type ServerConfig struct {
 	Language string `json:"language"`
 	// Command to run (e.g. "typescript-language-server --stdio")
 	Command string `json:"command"`
+	// Executable and Args allow callers to avoid shell-style parsing for resolved commands.
+	Executable string   `json:"executable,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	// WorkDir is the process working directory, usually the workspace root.
+	WorkDir string `json:"workDir,omitempty"`
 	// File extensions this server handles
 	Extensions []string `json:"extensions"`
 	// Root URI for the workspace
@@ -65,18 +74,28 @@ func (m *Manager) StartServer(cfg ServerConfig) error {
 		return fmt.Errorf("server already running for %s", cfg.Language)
 	}
 
-	parts := strings.Fields(cfg.Command)
-	if len(parts) == 0 {
+	executable, args := cfg.Executable, cfg.Args
+	if executable == "" {
+		parts := strings.Fields(cfg.Command)
+		if len(parts) > 0 {
+			executable = parts[0]
+			args = parts[1:]
+		}
+	}
+	if executable == "" {
 		return fmt.Errorf("empty command for %s", cfg.Language)
 	}
 
-	cmdPath, err := exec.LookPath(parts[0])
+	cmdPath, err := resolveExecutable(executable, cfg.WorkDir)
 	if err != nil {
-		return fmt.Errorf("%s not found in PATH: %w", parts[0], err)
+		return missingExecutableError(executable, cfg, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, cmdPath, parts[1:]...)
+	cmd := exec.CommandContext(ctx, cmdPath, args...)
+	if cfg.WorkDir != "" {
+		cmd.Dir = cfg.WorkDir
+	}
 	cmd.Env = append(os.Environ(), "NODE_OPTIONS=--max-old-space-size=4096")
 
 	stdin, err := cmd.StdinPipe()
@@ -89,8 +108,11 @@ func (m *Manager) StartServer(cfg ServerConfig) error {
 		cancel()
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	// Discard stderr to prevent blocking
-	cmd.Stderr = io.Discard
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -110,6 +132,7 @@ func (m *Manager) StartServer(cfg ServerConfig) error {
 
 	// Read LSP responses/notifications and forward to frontend
 	go m.readLoop(srv)
+	go logStderr(cfg.Language, stderr)
 
 	return nil
 }
@@ -198,9 +221,15 @@ func (m *Manager) SendRequest(language string, method string, params interface{}
 		return "", err
 	}
 
-	// Wait for response
-	resp := <-ch
-	return string(resp), nil
+	select {
+	case resp := <-ch:
+		return string(resp), nil
+	case <-time.After(30 * time.Second):
+		srv.mu.Lock()
+		delete(srv.pending, id)
+		srv.mu.Unlock()
+		return "", fmt.Errorf("LSP request %s timed out for %s", method, language)
+	}
 }
 
 // IsRunning checks if an LSP server is running for the given language.
@@ -256,6 +285,62 @@ func (m *Manager) readLoop(srv *server) {
 		if m.ctx != nil {
 			wailsRuntime.EventsEmit(m.ctx, "lsp:message:"+srv.cfg.Language, string(msg))
 		}
+	}
+}
+
+func resolveExecutable(name string, workDir string) (string, error) {
+	if filepath.IsAbs(name) || strings.ContainsRune(name, os.PathSeparator) {
+		if filepath.IsAbs(name) {
+			return executablePath(name)
+		}
+		if workDir != "" {
+			return executablePath(filepath.Join(workDir, name))
+		}
+		return executablePath(name)
+	}
+
+	if workDir != "" {
+		if path, err := executablePath(filepath.Join(workDir, "node_modules", ".bin", name)); err == nil {
+			return path, nil
+		}
+	}
+
+	return exec.LookPath(name)
+}
+
+func executablePath(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory", path)
+	}
+	if info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("%s is not executable", path)
+	}
+	return path, nil
+}
+
+func missingExecutableError(name string, cfg ServerConfig, err error) error {
+	switch cfg.Language {
+	case "typescript", "javascript", "typescriptreact", "javascriptreact":
+		return fmt.Errorf("%s not found for TypeScript LSP. Install typescript-language-server in the project or configure [lsp.typescript].command: %w", name, err)
+	}
+	return fmt.Errorf("%s not found for %s LSP: %w", name, cfg.Language, err)
+}
+
+func logStderr(language string, stderr io.Reader) {
+	scanner := bufio.NewScanner(stderr)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			applog.Warnf("lsp stderr [%s]: %s", language, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		applog.Warnf("lsp stderr [%s] read failed: %v", language, err)
 	}
 }
 

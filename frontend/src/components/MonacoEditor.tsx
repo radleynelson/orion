@@ -4,16 +4,67 @@ import { ReadFileContents, WriteFileContents, FormatFile, RunOnSave } from '../.
 import type { editor } from 'monaco-editor';
 import * as monaco from 'monaco-editor';
 import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
-import { ensureServer, didOpen, didChange, didSave, didClose, getLSPLanguage } from '../lib/lspClient';
+import { ensureServer, didOpen, didChange, didSave, didClose, getLSPLanguage, setMonacoInstance } from '../lib/lspClient';
 
 interface MonacoEditorProps {
   filePath: string;
   language: string;
   visible: boolean;
   line?: number;
+  column?: number;
 }
 
-export default function MonacoEditor({ filePath, language, visible, line }: MonacoEditorProps) {
+type EditorNavLocation = {
+  filePath: string;
+  language: string;
+  line?: number;
+  column?: number;
+};
+
+const MAX_NAV_HISTORY = 100;
+const navBackStack: EditorNavLocation[] = [];
+const navForwardStack: EditorNavLocation[] = [];
+
+function languageForPath(filePath: string): string {
+  const ext = '.' + filePath.split('.').pop()?.toLowerCase();
+  const langMap: Record<string, string> = {
+    '.ts': 'typescript', '.tsx': 'typescriptreact', '.js': 'javascript', '.jsx': 'javascriptreact',
+    '.go': 'go', '.rb': 'ruby', '.css': 'css', '.html': 'html', '.json': 'json',
+    '.py': 'python', '.rs': 'rust', '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
+    '.toml': 'toml', '.sh': 'shell', '.scss': 'scss',
+  };
+  return langMap[ext] || 'plaintext';
+}
+
+function sameLocation(a: EditorNavLocation, b: EditorNavLocation): boolean {
+  return a.filePath === b.filePath && a.line === b.line && a.column === b.column;
+}
+
+function pushLocation(stack: EditorNavLocation[], location: EditorNavLocation) {
+  const last = stack[stack.length - 1];
+  if (last && sameLocation(last, location)) return;
+  stack.push(location);
+  if (stack.length > MAX_NAV_HISTORY) {
+    stack.splice(0, stack.length - MAX_NAV_HISTORY);
+  }
+}
+
+function currentLocation(
+  ed: editor.IStandaloneCodeEditor,
+  fallbackPath: string,
+  fallbackLanguage: string,
+): EditorNavLocation {
+  const modelPath = ed.getModel()?.uri?.path || fallbackPath;
+  const position = ed.getPosition();
+  return {
+    filePath: modelPath,
+    language: modelPath ? languageForPath(modelPath) : fallbackLanguage,
+    line: position?.lineNumber,
+    column: position?.column,
+  };
+}
+
+export default function MonacoEditor({ filePath, language, visible, line, column }: MonacoEditorProps) {
   const [content, setContent] = useState<string | null>(null);
   const [savedContent, setSavedContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +81,22 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
   const activeWorkspacePath = useStore((s) => s.activeWorkspacePath);
   const openFile = useStore((s) => s.openFile);
   const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
+  const modelPath = monaco.Uri.file(filePath).toString();
+
+  const configureMonaco = (monacoInstance: any) => {
+    setMonacoInstance(monacoInstance);
+    // LSP owns project-aware diagnostics. Monaco's built-in TS worker does not
+    // know repo tsconfig path aliases in this embedded setup, so it produces
+    // false "cannot find module" squiggles for imports that the LSP resolves.
+    monacoInstance.languages.typescript?.typescriptDefaults?.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: false,
+    });
+    monacoInstance.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: false,
+    });
+  };
 
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize });
@@ -63,13 +130,6 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       const ready = await ensureServer(project.root, lspLanguage, activeWorkspacePath);
       if (ready) {
         lspInitialized.current = true;
-        // Create a proper Monaco URI for this file so LSP can find the model
-        const uri = monaco.Uri.file(filePath);
-        const existingModel = monaco.editor.getModel(uri);
-        if (!existingModel) {
-          // The model will be created by Monaco Editor component with its own URI,
-          // so we just notify LSP about the document
-        }
         await didOpen(filePath, lspLanguage, content);
       }
     })();
@@ -87,11 +147,11 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
 
   // Scroll to line when it changes
   useEffect(() => {
-    if (line && editorRef.current) {
+    if (line !== undefined && editorRef.current) {
       editorRef.current.revealLineInCenter(line);
-      editorRef.current.setPosition({ lineNumber: line, column: 1 });
+      editorRef.current.setPosition({ lineNumber: line, column: column ?? 1 });
     }
-  }, [line]);
+  }, [line, column]);
 
   const saveRef = useRef<() => Promise<void>>();
   saveRef.current = async () => {
@@ -138,36 +198,51 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     }
   };
 
-  const handleEditorMount = (ed: editor.IStandaloneCodeEditor) => {
+  const handleEditorMount = (ed: editor.IStandaloneCodeEditor, monacoInstance?: any) => {
+    if (monacoInstance) configureMonaco(monacoInstance);
     editorRef.current = ed;
-    if (line) {
+    if (line !== undefined) {
       ed.revealLineInCenter(line);
-      ed.setPosition({ lineNumber: line, column: 1 });
+      ed.setPosition({ lineNumber: line, column: column ?? 1 });
     }
 
     // Add Cmd+S keybinding for save (uses ref to avoid stale closure)
     ed.addCommand(
-      2048 | 49, // CtrlCmd | KeyS
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
       () => { void saveRef.current?.(); }
     );
+
+    // JetBrains-style editor navigation: Cmd+B for definition, Cmd+[ / Cmd+] for history.
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => {
+      void ed.getAction('editor.action.revealDefinition')?.run();
+    });
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.BracketLeft, () => {
+      const previous = navBackStack.pop();
+      if (!previous) return;
+      pushLocation(navForwardStack, currentLocation(ed, filePath, language));
+      openFile(previous.filePath, previous.language, previous.line, previous.column);
+    });
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.BracketRight, () => {
+      const next = navForwardStack.pop();
+      if (!next) return;
+      pushLocation(navBackStack, currentLocation(ed, filePath, language));
+      openFile(next.filePath, next.language, next.line, next.column);
+    });
 
     // Handle go-to-definition: when Monaco resolves a definition to a file,
     // intercept navigation to open it in a new Orion editor tab
     const editorService = (ed as any)._codeEditorService;
     if (editorService) {
-      editorService.openCodeEditor = async (input: any) => {
+      editorService.openCodeEditor = async (input: any, source?: editor.IStandaloneCodeEditor) => {
         const targetPath = input?.resource?.path;
         if (targetPath) {
-          const ext = '.' + targetPath.split('.').pop()?.toLowerCase();
-          const langMap: Record<string, string> = {
-            '.ts': 'typescript', '.tsx': 'typescriptreact', '.js': 'javascript', '.jsx': 'javascriptreact',
-            '.go': 'go', '.rb': 'ruby', '.css': 'css', '.html': 'html', '.json': 'json',
-            '.py': 'python', '.rs': 'rust', '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
-            '.toml': 'toml', '.sh': 'shell', '.scss': 'scss',
-          };
-          const lang = langMap[ext] || 'plaintext';
+          const sourceEditor = source || ed;
+          pushLocation(navBackStack, currentLocation(sourceEditor, filePath, language));
+          navForwardStack.length = 0;
+          const lang = languageForPath(targetPath);
           const targetLine = input?.options?.selection?.startLineNumber;
-          openFile(targetPath, lang, targetLine);
+          const targetColumn = input?.options?.selection?.startColumn;
+          openFile(targetPath, lang, targetLine, targetColumn);
         }
         return null;
       };
@@ -262,7 +337,9 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     <Editor
       value={content}
       language={language}
+      path={modelPath}
       theme="orion-dark"
+      beforeMount={configureMonaco}
       onMount={handleEditorMount}
       onChange={handleEditorChange}
       options={{
