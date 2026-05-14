@@ -1,0 +1,29 @@
+# Orion project config.
+# Orion generated this file because the project did not have one yet.
+# Model is intentionally omitted so Claude/Codex use their current default.
+
+[credentials]
+copy = [
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.development.local",
+]
+
+[agents.claude]
+label = "Claude"
+provider = "claude"
+command = "claude --dangerously-skip-permissions"
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+label = "Codex"
+provider = "codex"
+command = "codex --dangerously-bypass-approvals-and-sandbox"
+reasoning_effort = "xhigh"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+collaboration_mode = "default"
+
+# Optional custom role icon for non-default agents:
+# icon = "reviewer" # reviewer, scribe, plan, test, debug, deploy, ops, data, design, security, browser, automate, branch, docs, clean

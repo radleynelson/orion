@@ -40,7 +40,7 @@
 		AE8DD86EAB0B0B95B864B979 /* OrionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrionClient.swift; sourceTree = "<group>"; };
 		BBC80655EAB6311EE8550AC5 /* TerminalContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalContainerView.swift; sourceTree = "<group>"; };
 		C0EE7499ED7C3529C6E48804 /* VoiceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceConnection.swift; sourceTree = "<group>"; };
-		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C37C53D4F455F66F6E3B4C8D /* OrionMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrionMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3FC0DF96360A36DED8150A9 /* SpeechService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechService.swift; sourceTree = "<group>"; };
 		C6F028C8077632CBF28D5615 /* TerminalConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalConnection.swift; sourceTree = "<group>"; };
 		E31AE562E83C275EEDFEA5BB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -318,7 +318,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.radnelson.orionmobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.radnelson;
 				SDKROOT = iphoneos;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 5.9;
@@ -342,7 +342,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.radnelson.orionmobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.radnelson;
 				SDKROOT = iphoneos;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 5.9;
