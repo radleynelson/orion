@@ -1413,10 +1413,34 @@ function App() {
       EventsOn('menu:split-down', () => handleSplit('horizontal')),
       EventsOn('menu:next-pane', () => navigatePane('next')),
       EventsOn('menu:prev-pane', () => navigatePane('prev')),
+      EventsOn('mobile:workspace-created', async (data: any) => {
+        const currentProject = useStore.getState().project;
+        if (!currentProject || (data?.root && data.root !== currentProject.root)) return;
+        try {
+          const ws = await ListWorkspaces(currentProject.root);
+          useStore.getState().setWorkspaces(ws);
+        } catch {}
+      }),
+      EventsOn('mobile:workspace-deleted', async (data: any) => {
+        const currentProject = useStore.getState().project;
+        if (!currentProject || (data?.root && data.root !== currentProject.root)) return;
+        try {
+          const ws = await ListWorkspaces(currentProject.root);
+          useStore.getState().setWorkspaces(ws);
+        } catch {}
+      }),
       EventsOn('mobile:session-created', async (data: any) => {
         if (!data?.tmuxSession || !data?.workspacePath) return;
-        // Only add if this workspace belongs to the current project
-        const ws = useStore.getState().workspaces;
+        let ws = useStore.getState().workspaces;
+        if (!ws.some((w: any) => w.path === data.workspacePath)) {
+          const currentProject = useStore.getState().project;
+          if (currentProject) {
+            try {
+              ws = await ListWorkspaces(currentProject.root);
+              useStore.getState().setWorkspaces(ws);
+            } catch {}
+          }
+        }
         if (!ws.some((w: any) => w.path === data.workspacePath)) return;
         const incoming = { ...data, tmuxName: data.tmuxName || data.tmuxSession } as state.SessionInfo;
         if (useStore.getState().tabs.some((tab) => tabMatchesSession(tab, incoming))) return;

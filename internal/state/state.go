@@ -131,8 +131,9 @@ func (g *GlobalState) save() {
 
 // ProjectState stores state for a single project (saved tabs, etc.)
 type ProjectState struct {
-	SavedTabs []SavedTab `json:"savedTabs,omitempty"`
-	filePath  string
+	SavedTabs      []SavedTab `json:"savedTabs,omitempty"`
+	WorkspaceOrder []string   `json:"workspaceOrder,omitempty"`
+	filePath       string
 }
 
 func projectHash(root string) string {
@@ -163,6 +164,108 @@ func (ps *ProjectState) SaveTabs(tabs []SavedTab) {
 
 func (ps *ProjectState) GetSavedTabs() []SavedTab {
 	return ps.SavedTabs
+}
+
+func (ps *ProjectState) SaveWorkspaceOrder(paths []string) {
+	ps.WorkspaceOrder = cleanWorkspaceOrder(paths)
+	ps.save()
+}
+
+func (ps *ProjectState) ReconcileWorkspaceOrder(paths []string) []string {
+	current := cleanWorkspaceOrder(paths)
+	if len(current) == 0 {
+		if len(ps.WorkspaceOrder) != 0 {
+			ps.WorkspaceOrder = nil
+			ps.save()
+		}
+		return nil
+	}
+
+	pathSet := make(map[string]bool, len(current))
+	for _, path := range current {
+		pathSet[path] = true
+	}
+
+	next := make([]string, 0, len(current))
+	seen := make(map[string]bool, len(current))
+	for _, path := range ps.WorkspaceOrder {
+		path = strings.TrimSpace(path)
+		if path == "" || !pathSet[path] || seen[path] {
+			continue
+		}
+		next = append(next, path)
+		seen[path] = true
+	}
+	for _, path := range current {
+		if seen[path] {
+			continue
+		}
+		next = append(next, path)
+		seen[path] = true
+	}
+
+	if !sameStringSlice(ps.WorkspaceOrder, next) {
+		ps.WorkspaceOrder = next
+		ps.save()
+	}
+	return append([]string(nil), ps.WorkspaceOrder...)
+}
+
+func (ps *ProjectState) RememberWorkspace(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	for _, existing := range ps.WorkspaceOrder {
+		if existing == path {
+			return
+		}
+	}
+	ps.WorkspaceOrder = append(ps.WorkspaceOrder, path)
+	ps.save()
+}
+
+func (ps *ProjectState) ForgetWorkspace(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" || len(ps.WorkspaceOrder) == 0 {
+		return
+	}
+	next := make([]string, 0, len(ps.WorkspaceOrder))
+	for _, existing := range ps.WorkspaceOrder {
+		if existing != path {
+			next = append(next, existing)
+		}
+	}
+	if len(next) != len(ps.WorkspaceOrder) {
+		ps.WorkspaceOrder = next
+		ps.save()
+	}
+}
+
+func cleanWorkspaceOrder(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		cleaned = append(cleaned, path)
+	}
+	return cleaned
+}
+
+func sameStringSlice(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func dedupeSavedTabs(tabs []SavedTab) []SavedTab {
@@ -244,8 +347,9 @@ func migrateOldTabs(projectRoot string, ps *ProjectState) {
 // --- AppState wraps both global and project state ---
 
 type AppState struct {
-	global  *GlobalState
-	project *ProjectState
+	global      *GlobalState
+	project     *ProjectState
+	projectRoot string
 }
 
 func NewAppState() *AppState {
@@ -257,6 +361,11 @@ func NewAppState() *AppState {
 func (a *AppState) SetProject(root string) {
 	a.global.SetLastProject(root)
 	a.project = NewProjectState(root)
+	a.projectRoot = root
+}
+
+func (a *AppState) ProjectRoot() string {
+	return a.projectRoot
 }
 
 func (a *AppState) GetLastProject() string {
@@ -278,6 +387,31 @@ func (a *AppState) GetSavedTabs() []SavedTab {
 		return a.project.GetSavedTabs()
 	}
 	return nil
+}
+
+func (a *AppState) SaveWorkspaceOrder(paths []string) {
+	if a.project != nil {
+		a.project.SaveWorkspaceOrder(paths)
+	}
+}
+
+func (a *AppState) ReconcileWorkspaceOrder(paths []string) []string {
+	if a.project != nil {
+		return a.project.ReconcileWorkspaceOrder(paths)
+	}
+	return cleanWorkspaceOrder(paths)
+}
+
+func (a *AppState) RememberWorkspace(path string) {
+	if a.project != nil {
+		a.project.RememberWorkspace(path)
+	}
+}
+
+func (a *AppState) ForgetWorkspace(path string) {
+	if a.project != nil {
+		a.project.ForgetWorkspace(path)
+	}
 }
 
 // --- Session Recovery (unchanged) ---

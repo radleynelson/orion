@@ -102,6 +102,14 @@ export function EmitSessionKilled(arg1) {
   return window['go']['main']['App']['EmitSessionKilled'](arg1);
 }
 
+export function EmitWorkspaceCreated(arg1, arg2) {
+  return window['go']['main']['App']['EmitWorkspaceCreated'](arg1, arg2);
+}
+
+export function EmitWorkspaceDeleted(arg1, arg2) {
+  return window['go']['main']['App']['EmitWorkspaceDeleted'](arg1, arg2);
+}
+
 export function GetAgentNames(arg1) {
   return window['go']['main']['App']['GetAgentNames'](arg1);
 }
@@ -320,6 +328,10 @@ export function RevealInFinder(arg1) {
 
 export function SaveTabs(arg1) {
   return window['go']['main']['App']['SaveTabs'](arg1);
+}
+
+export function SaveWorkspaceOrder(arg1) {
+  return window['go']['main']['App']['SaveWorkspaceOrder'](arg1);
 }
 
 export function SearchContents(arg1, arg2) {
