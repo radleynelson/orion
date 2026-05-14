@@ -58,6 +58,12 @@ interface LSPServerState {
   semanticTokensLegend?: { tokenTypes: string[]; tokenModifiers: string[] };
 }
 
+export interface LSPDefinitionTarget {
+  filePath: string;
+  line?: number;
+  column?: number;
+}
+
 const servers = new Map<string, LSPServerState>();
 const disposables: monaco.IDisposable[] = [];
 let providersRegistered = false;
@@ -305,6 +311,38 @@ export async function didClose(filePath: string, language: string): Promise<void
       textDocument: { uri },
     },
   }));
+}
+
+export async function getDefinitionTarget(
+  filePath: string,
+  language: string,
+  lineNumber: number,
+  column: number,
+): Promise<LSPDefinitionTarget | null> {
+  const serverKey = getServerKey(language);
+  const state = servers.get(serverKey);
+  if (!state?.initialized) return null;
+
+  try {
+    const result = await SendLSPRequest(serverKey, 'textDocument/definition', JSON.stringify({
+      textDocument: { uri: monacoApi.Uri.file(filePath).toString() },
+      position: { line: lineNumber - 1, character: column - 1 },
+    }));
+    const parsed = JSON.parse(result);
+    const def = parsed.result || parsed;
+    const loc = Array.isArray(def) ? def[0] : def;
+    const targetUri = loc?.targetUri || loc?.uri;
+    if (!targetUri) return null;
+
+    const range = loc.targetSelectionRange || loc.range || loc.targetRange;
+    return {
+      filePath: monacoApi.Uri.parse(targetUri).path,
+      line: range?.start?.line !== undefined ? range.start.line + 1 : undefined,
+      column: range?.start?.character !== undefined ? range.start.character + 1 : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

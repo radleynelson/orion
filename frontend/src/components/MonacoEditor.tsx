@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReadFileContents, WriteFileContents, FormatFile, RunOnSave } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { editor } from 'monaco-editor';
 import * as monaco from 'monaco-editor';
 import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
-import { ensureServer, didOpen, didChange, didSave, didClose, getLSPLanguage, setMonacoInstance } from '../lib/lspClient';
+import { ensureServer, didOpen, didChange, didSave, didClose, getDefinitionTarget, getLSPLanguage, setMonacoInstance } from '../lib/lspClient';
 
 interface MonacoEditorProps {
   filePath: string;
@@ -24,6 +25,18 @@ type EditorNavLocation = {
 const MAX_NAV_HISTORY = 100;
 const navBackStack: EditorNavLocation[] = [];
 const navForwardStack: EditorNavLocation[] = [];
+
+function isPrimaryModifierPressed(event: KeyboardEvent): boolean {
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+  return isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}
+
+function isGoToDefinitionShortcut(event: KeyboardEvent): boolean {
+  return isPrimaryModifierPressed(event)
+    && !event.shiftKey
+    && !event.altKey
+    && event.key.toLowerCase() === 'b';
+}
 
 function languageForPath(filePath: string): string {
   const ext = '.' + filePath.split('.').pop()?.toLowerCase();
@@ -70,6 +83,8 @@ export default function MonacoEditor({ filePath, language, visible, line, column
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const editorDisposables = useRef<Array<{ dispose: () => void }>>([]);
+  const goToDefinitionRef = useRef<() => Promise<void>>();
   const lspInitialized = useRef(false);
   const changeTimer = useRef<ReturnType<typeof setTimeout>>();
   const zoomLevel = useStore((s) => s.zoomLevel);
@@ -101,6 +116,15 @@ export default function MonacoEditor({ filePath, language, visible, line, column
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize });
   }, [fontSize]);
+
+  useEffect(() => {
+    return () => {
+      for (const disposable of editorDisposables.current) {
+        disposable.dispose();
+      }
+      editorDisposables.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -198,8 +222,41 @@ export default function MonacoEditor({ filePath, language, visible, line, column
     }
   };
 
+  goToDefinitionRef.current = async () => {
+    const ed = editorRef.current;
+    const position = ed?.getPosition();
+    if (!ed || !position) return;
+
+    const modelFilePath = ed.getModel()?.uri?.path || filePath;
+    const lspLanguage = getLSPLanguage(modelFilePath);
+    if (!lspLanguage) {
+      await ed.getAction('editor.action.revealDefinition')?.run();
+      return;
+    }
+
+    const target = await getDefinitionTarget(
+      modelFilePath,
+      lspLanguage,
+      position.lineNumber,
+      position.column,
+    );
+
+    if (!target) {
+      await ed.getAction('editor.action.revealDefinition')?.run();
+      return;
+    }
+
+    pushLocation(navBackStack, currentLocation(ed, filePath, language));
+    navForwardStack.length = 0;
+    openFile(target.filePath, languageForPath(target.filePath), target.line, target.column);
+  };
+
   const handleEditorMount = (ed: editor.IStandaloneCodeEditor, monacoInstance?: any) => {
     if (monacoInstance) configureMonaco(monacoInstance);
+    for (const disposable of editorDisposables.current) {
+      disposable.dispose();
+    }
+    editorDisposables.current = [];
     editorRef.current = ed;
     if (line !== undefined) {
       ed.revealLineInCenter(line);
@@ -212,10 +269,24 @@ export default function MonacoEditor({ filePath, language, visible, line, column
       () => { void saveRef.current?.(); }
     );
 
+    const goToDefinition = () => { void goToDefinitionRef.current?.(); };
+
     // JetBrains-style editor navigation: Cmd+B for definition, Cmd+[ / Cmd+] for history.
-    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => {
-      void ed.getAction('editor.action.revealDefinition')?.run();
-    });
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, goToDefinition);
+    const domNode = ed.getDomNode();
+    if (domNode) {
+      const definitionShortcutHandler = (event: KeyboardEvent) => {
+        if (!isGoToDefinitionShortcut(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        goToDefinition();
+      };
+      domNode.addEventListener('keydown', definitionShortcutHandler, true);
+      editorDisposables.current.push({
+        dispose: () => domNode.removeEventListener('keydown', definitionShortcutHandler, true),
+      });
+    }
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.BracketLeft, () => {
       const previous = navBackStack.pop();
       if (!previous) return;
@@ -276,6 +347,30 @@ export default function MonacoEditor({ filePath, language, visible, line, column
     if (visible && editorRef.current) {
       setTimeout(() => editorRef.current?.focus(), 50);
     }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+
+    const definitionShortcutHandler = (event: KeyboardEvent) => {
+      const ed = editorRef.current;
+      if (!ed?.hasTextFocus() || !isGoToDefinitionShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      void goToDefinitionRef.current?.();
+    };
+
+    window.addEventListener('keydown', definitionShortcutHandler, true);
+    return () => window.removeEventListener('keydown', definitionShortcutHandler, true);
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const cancel = EventsOn('menu:go-to-definition', () => {
+      void goToDefinitionRef.current?.();
+    });
+    return () => cancel();
   }, [visible]);
 
   // Trigger find widget when a global search result opens this file
@@ -362,8 +457,9 @@ export default function MonacoEditor({ filePath, language, visible, line, column
         },
         tabSize: 2,
         insertSpaces: true,
-        bracketPairColorization: { enabled: true },
-        guides: { bracketPairs: true },
+        matchBrackets: 'never',
+        bracketPairColorization: { enabled: false },
+        guides: { bracketPairs: false },
         suggestOnTriggerCharacters: true,
         quickSuggestions: true,
         parameterHints: { enabled: true },

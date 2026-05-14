@@ -8,6 +8,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/logger"
 	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
@@ -46,7 +47,7 @@ func main() {
 	// IMPORTANT: Do NOT assign accelerators for Cmd+C, Cmd+V, Cmd+X, Cmd+A,
 	// Cmd+T, Cmd+W, Cmd+D, Cmd+N — these are handled by JS in the webview.
 	// Native menu accelerators intercept keydown before xterm.js can process them.
-	// Only use Cmd+Shift combos or no accelerator for menu items.
+	// Only use native accelerators for shortcuts that must bypass WKWebView.
 	appMenu := menu.NewMenu()
 	appMenu.Append(menu.AppMenu())
 
@@ -88,6 +89,10 @@ func main() {
 	viewMenu.AddText("Git Changes", nil, func(_ *menu.CallbackData) {
 		wailsRuntime.EventsEmit(app.ctx, "menu:show-git")
 	})
+	viewMenu.AddSeparator()
+	viewMenu.AddText("Go To Definition", keys.CmdOrCtrl("b"), func(_ *menu.CallbackData) {
+		wailsRuntime.EventsEmit(app.ctx, "menu:go-to-definition")
+	})
 
 	// Terminal menu
 	termMenu := appMenu.AddSubmenu("Terminal")
@@ -128,10 +133,10 @@ func main() {
 		Mac: &mac.Options{
 			TitleBar: &mac.TitleBar{
 				TitlebarAppearsTransparent: true,
-				HideTitle:                 true,
-				HideTitleBar:              false,
-				FullSizeContent:           true,
-				UseToolbar:                true,
+				HideTitle:                  true,
+				HideTitleBar:               false,
+				FullSizeContent:            true,
+				UseToolbar:                 true,
 			},
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
