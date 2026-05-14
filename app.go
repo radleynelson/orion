@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +20,9 @@ import (
 	"orion/internal/diag"
 	"orion/internal/files"
 	"orion/internal/git"
+	"orion/internal/lsp"
 	"orion/internal/notify"
+	"orion/internal/plugin"
 	"orion/internal/port"
 	"orion/internal/server"
 	"orion/internal/state"
@@ -47,6 +50,8 @@ type App struct {
 	webSrv     *web.Server
 	notifier   *notify.Notifier
 	diagMgr    *diag.Manager
+	lspMgr     *lsp.Manager
+	pluginMgr  *plugin.Manager
 }
 
 // NewApp creates a new App instance.
@@ -65,6 +70,8 @@ func NewApp() *App {
 		watcherMgr: watcher.NewManager(),
 		notifier:   notify.New(nil),
 		diagMgr:    diag.NewManager(),
+		lspMgr:     lsp.NewManager(),
+		pluginMgr:  plugin.NewManager(),
 	}
 }
 
@@ -102,6 +109,8 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.notifier.SetContext(ctx)
 	a.diagMgr.SetContext(ctx)
+	a.lspMgr.SetContext(ctx)
+	a.pluginMgr.SetContext(ctx)
 	if err := a.notifier.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "notify: failed to start hook listener: %v\n", err)
 	}
@@ -166,6 +175,7 @@ func (a *App) shutdown(ctx context.Context) {
 		a.claudeMgr.DetachAll()
 	}
 	a.watcherMgr.Stop()
+	a.lspMgr.StopAll()
 }
 
 // --- Terminal methods ---
@@ -1197,6 +1207,10 @@ func (a *App) ReadFileContents(path string) (string, error) {
 	return a.filesMgr.ReadFileContents(path)
 }
 
+func (a *App) WriteFileContents(path string, content string) error {
+	return a.filesMgr.WriteFileContents(path, content)
+}
+
 // RevealInFinder opens Finder with the file selected.
 func (a *App) RevealInFinder(path string) error {
 	return exec.Command("open", "-R", path).Run()
@@ -1296,6 +1310,153 @@ func (a *App) KillSession(name string) error {
 		}
 	}
 	return exec.Command("tmux", "kill-session", "-t", name).Run()
+}
+
+// --- LSP methods ---
+
+// StartLSP starts a language server for the given language using config from .orion.toml.
+// If no config exists, uses built-in defaults for common languages.
+func (a *App) StartLSP(repoRoot string, language string, workspacePath string) error {
+	cfg := config.Load(repoRoot)
+	var lspCfg lsp.ServerConfig
+
+	if lspConf, ok := cfg.LSP[language]; ok {
+		lspCfg = lsp.ServerConfig{
+			Language:   language,
+			Command:    lspConf.Command,
+			WorkDir:    workspacePath,
+			Extensions: lspConf.Extensions,
+			RootURI:    "file://" + workspacePath,
+		}
+	} else {
+		// Built-in defaults for common languages
+		switch language {
+		case "typescript", "javascript", "typescriptreact", "javascriptreact":
+			lspCfg = defaultTypeScriptLSPConfig(language, workspacePath)
+		case "go":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "gopls serve",
+				WorkDir:    workspacePath,
+				Extensions: []string{".go"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "ruby":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "ruby-lsp",
+				WorkDir:    workspacePath,
+				Extensions: []string{".rb", ".rake", ".gemspec"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "css", "scss", "less":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "vscode-css-language-server --stdio",
+				WorkDir:    workspacePath,
+				Extensions: []string{".css", ".scss", ".less"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "html":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "vscode-html-language-server --stdio",
+				WorkDir:    workspacePath,
+				Extensions: []string{".html", ".htm"},
+				RootURI:    "file://" + workspacePath,
+			}
+		case "json":
+			lspCfg = lsp.ServerConfig{
+				Language:   language,
+				Command:    "vscode-json-language-server --stdio",
+				WorkDir:    workspacePath,
+				Extensions: []string{".json"},
+				RootURI:    "file://" + workspacePath,
+			}
+		default:
+			return fmt.Errorf("no LSP configuration for language: %s", language)
+		}
+	}
+
+	return a.lspMgr.StartServer(lspCfg)
+}
+
+func defaultTypeScriptLSPConfig(language string, workspacePath string) lsp.ServerConfig {
+	cfg := lsp.ServerConfig{
+		Language:   language,
+		Command:    "typescript-language-server --stdio",
+		WorkDir:    workspacePath,
+		Extensions: []string{".ts", ".tsx", ".js", ".jsx"},
+		RootURI:    "file://" + workspacePath,
+	}
+
+	for _, rel := range []string{
+		filepath.Join("frontend", "node_modules", ".bin", "typescript-language-server"),
+		filepath.Join("node_modules", ".bin", "typescript-language-server"),
+	} {
+		path := filepath.Join(workspacePath, rel)
+		if isExecutableFile(path) {
+			cfg.Command = path + " --stdio"
+			cfg.Executable = path
+			cfg.Args = []string{"--stdio"}
+			return cfg
+		}
+	}
+
+	return cfg
+}
+
+// StopLSP stops a language server.
+func (a *App) StopLSP(language string) error {
+	return a.lspMgr.StopServer(language)
+}
+
+// SendLSPMessage sends a raw JSON-RPC message to an LSP server.
+func (a *App) SendLSPMessage(language string, message string) error {
+	return a.lspMgr.SendMessage(language, message)
+}
+
+// SendLSPRequest sends a JSON-RPC request and waits for the response.
+func (a *App) SendLSPRequest(language string, method string, params string) (string, error) {
+	var p interface{}
+	if params != "" {
+		if err := json.Unmarshal([]byte(params), &p); err != nil {
+			return "", fmt.Errorf("invalid params JSON: %w", err)
+		}
+	}
+	return a.lspMgr.SendRequest(language, method, p)
+}
+
+// IsLSPRunning checks if an LSP server is running.
+func (a *App) IsLSPRunning(language string) bool {
+	return a.lspMgr.IsRunning(language)
+}
+
+// ListLSPServers returns running LSP server languages.
+func (a *App) ListLSPServers() []string {
+	return a.lspMgr.ListRunning()
+}
+
+// --- Plugin methods ---
+
+// FormatFile runs the configured formatter for a file.
+func (a *App) FormatFile(repoRoot string, filePath string, content string) (*plugin.FormatResult, error) {
+	return a.pluginMgr.FormatFile(repoRoot, filePath, content)
+}
+
+// RunOnSave executes on-save hooks for a file.
+func (a *App) RunOnSave(repoRoot string, filePath string) ([]string, error) {
+	return a.pluginMgr.RunOnSave(repoRoot, filePath)
+}
+
+// LintFile runs the configured linter for a file.
+func (a *App) LintFile(repoRoot string, filePath string) (*plugin.LintResult, error) {
+	return a.pluginMgr.LintFile(repoRoot, filePath)
+}
+
+// GetFormatOnSaveExtensions returns extensions with formatters available.
+func (a *App) GetFormatOnSaveExtensions(repoRoot string) []string {
+	return a.pluginMgr.GetFormatOnSaveExtensions(repoRoot)
 }
 
 func sortAgents(agents []AgentTypeInfo) {

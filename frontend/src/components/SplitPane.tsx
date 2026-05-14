@@ -32,7 +32,13 @@ export default function SplitPane({ pane, visible }: SplitPaneProps) {
         className={`pane-leaf ${isFocused ? 'pane-focused' : ''}`}
         onMouseDownCapture={() => setFocusedPane(pane.id)}
       >
-        <MonacoEditor filePath={pane.filePath!} language={pane.language || 'plaintext'} visible={visible} line={pane.line} />
+        <MonacoEditor
+          filePath={pane.filePath!}
+          language={pane.language || 'plaintext'}
+          visible={visible}
+          line={pane.line}
+          column={pane.column}
+        />
       </div>
     );
   }

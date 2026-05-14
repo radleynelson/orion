@@ -313,6 +313,22 @@ export namespace config {
 	        this.Copy = source["Copy"];
 	    }
 	}
+	export class FormatterConfig {
+	    Command: string;
+	    Extensions: string[];
+	    Stdin: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FormatterConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Command = source["Command"];
+	        this.Extensions = source["Extensions"];
+	        this.Stdin = source["Stdin"];
+	    }
+	}
 	export class HookConfig {
 	    Command: string;
 	    Blocking?: boolean;
@@ -339,6 +355,84 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.WorktreeCreated = this.convertValues(source["WorktreeCreated"], HookConfig);
 	        this.WorktreeDeleting = this.convertValues(source["WorktreeDeleting"], HookConfig);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class LSPConfig {
+	    Command: string;
+	    Extensions: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new LSPConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Command = source["Command"];
+	        this.Extensions = source["Extensions"];
+	    }
+	}
+	export class LinterConfig {
+	    Command: string;
+	    Extensions: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new LinterConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Command = source["Command"];
+	        this.Extensions = source["Extensions"];
+	    }
+	}
+	export class OnSaveAction {
+	    Extensions: string[];
+	    Command: string;
+	    Action: string;
+
+	    static createFrom(source: any = {}) {
+	        return new OnSaveAction(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Extensions = source["Extensions"];
+	        this.Command = source["Command"];
+	        this.Action = source["Action"];
+	    }
+	}
+	export class PluginsConfig {
+	    Formatters: Record<string, FormatterConfig>;
+	    Linters: Record<string, LinterConfig>;
+	    OnSave: OnSaveAction[];
+
+	    static createFrom(source: any = {}) {
+	        return new PluginsConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Formatters = this.convertValues(source["Formatters"], FormatterConfig, true);
+	        this.Linters = this.convertValues(source["Linters"], LinterConfig, true);
+	        this.OnSave = this.convertValues(source["OnSave"], OnSaveAction);
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -386,6 +480,8 @@ export namespace config {
 	    Hooks: HooksConfig;
 	    Servers: Record<string, ServerConfig>;
 	    Agents: Record<string, AgentConfig>;
+	    LSP: Record<string, LSPConfig>;
+	    Plugins: PluginsConfig;
 
 	    static createFrom(source: any = {}) {
 	        return new OrionConfig(source);
@@ -399,6 +495,8 @@ export namespace config {
 	        this.Hooks = this.convertValues(source["Hooks"], HooksConfig);
 	        this.Servers = this.convertValues(source["Servers"], ServerConfig, true);
 	        this.Agents = this.convertValues(source["Agents"], AgentConfig, true);
+	        this.LSP = this.convertValues(source["LSP"], LSPConfig, true);
+	        this.Plugins = this.convertValues(source["Plugins"], PluginsConfig);
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -419,6 +517,7 @@ export namespace config {
 		    return a;
 		}
 	}
+
 
 }
 
@@ -874,6 +973,41 @@ export namespace main {
 	        this.permissionMode = source["permissionMode"];
 	        this.collaborationMode = source["collaborationMode"];
 	        this.chatCapable = source["chatCapable"];
+	    }
+	}
+
+}
+
+export namespace plugin {
+
+	export class FormatResult {
+	    formatted: boolean;
+	    content: string;
+	    error?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new FormatResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.formatted = source["formatted"];
+	        this.content = source["content"];
+	        this.error = source["error"];
+	    }
+	}
+	export class LintResult {
+	    output: string;
+	    error?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new LintResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.output = source["output"];
+	        this.error = source["error"];
 	    }
 	}
 

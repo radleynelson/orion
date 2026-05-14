@@ -1,24 +1,102 @@
 import { useEffect, useState, useRef } from 'react';
-import Editor, { type Monaco } from '@monaco-editor/react';
-import { ReadFileContents } from '../../wailsjs/go/main/App';
+import Editor from '@monaco-editor/react';
+import { ReadFileContents, WriteFileContents, FormatFile, RunOnSave } from '../../wailsjs/go/main/App';
 import type { editor } from 'monaco-editor';
+import * as monaco from 'monaco-editor';
 import { useStore, zoomFactorFor, BASE_FONT_SIZE } from '../store';
+import { ensureServer, didOpen, didChange, didSave, didClose, getLSPLanguage, setMonacoInstance } from '../lib/lspClient';
 
 interface MonacoEditorProps {
   filePath: string;
   language: string;
   visible: boolean;
   line?: number;
+  column?: number;
 }
 
-export default function MonacoEditor({ filePath, language, visible, line }: MonacoEditorProps) {
+type EditorNavLocation = {
+  filePath: string;
+  language: string;
+  line?: number;
+  column?: number;
+};
+
+const MAX_NAV_HISTORY = 100;
+const navBackStack: EditorNavLocation[] = [];
+const navForwardStack: EditorNavLocation[] = [];
+
+function languageForPath(filePath: string): string {
+  const ext = '.' + filePath.split('.').pop()?.toLowerCase();
+  const langMap: Record<string, string> = {
+    '.ts': 'typescript', '.tsx': 'typescriptreact', '.js': 'javascript', '.jsx': 'javascriptreact',
+    '.go': 'go', '.rb': 'ruby', '.css': 'css', '.html': 'html', '.json': 'json',
+    '.py': 'python', '.rs': 'rust', '.md': 'markdown', '.yaml': 'yaml', '.yml': 'yaml',
+    '.toml': 'toml', '.sh': 'shell', '.scss': 'scss',
+  };
+  return langMap[ext] || 'plaintext';
+}
+
+function sameLocation(a: EditorNavLocation, b: EditorNavLocation): boolean {
+  return a.filePath === b.filePath && a.line === b.line && a.column === b.column;
+}
+
+function pushLocation(stack: EditorNavLocation[], location: EditorNavLocation) {
+  const last = stack[stack.length - 1];
+  if (last && sameLocation(last, location)) return;
+  stack.push(location);
+  if (stack.length > MAX_NAV_HISTORY) {
+    stack.splice(0, stack.length - MAX_NAV_HISTORY);
+  }
+}
+
+function currentLocation(
+  ed: editor.IStandaloneCodeEditor,
+  fallbackPath: string,
+  fallbackLanguage: string,
+): EditorNavLocation {
+  const modelPath = ed.getModel()?.uri?.path || fallbackPath;
+  const position = ed.getPosition();
+  return {
+    filePath: modelPath,
+    language: modelPath ? languageForPath(modelPath) : fallbackLanguage,
+    line: position?.lineNumber,
+    column: position?.column,
+  };
+}
+
+export default function MonacoEditor({ filePath, language, visible, line, column }: MonacoEditorProps) {
   const [content, setContent] = useState<string | null>(null);
+  const [savedContent, setSavedContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const lspInitialized = useRef(false);
+  const changeTimer = useRef<ReturnType<typeof setTimeout>>();
   const zoomLevel = useStore((s) => s.zoomLevel);
   const searchInFileQuery = useStore((s) => s.searchInFileQuery);
   const setSearchInFileQuery = useStore((s) => s.setSearchInFileQuery);
+  const markDirty = useStore((s) => s.markDirty);
+  const markClean = useStore((s) => s.markClean);
+  const project = useStore((s) => s.project);
+  const activeWorkspacePath = useStore((s) => s.activeWorkspacePath);
+  const openFile = useStore((s) => s.openFile);
   const fontSize = Math.round(BASE_FONT_SIZE * zoomFactorFor(zoomLevel));
+  const modelPath = monaco.Uri.file(filePath).toString();
+
+  const configureMonaco = (monacoInstance: any) => {
+    setMonacoInstance(monacoInstance);
+    // LSP owns project-aware diagnostics. Monaco's built-in TS worker does not
+    // know repo tsconfig path aliases in this embedded setup, so it produces
+    // false "cannot find module" squiggles for imports that the LSP resolves.
+    monacoInstance.languages.typescript?.typescriptDefaults?.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: false,
+    });
+    monacoInstance.languages.typescript?.javascriptDefaults?.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: false,
+    });
+  };
 
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize });
@@ -29,30 +107,168 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       try {
         const data = await ReadFileContents(filePath);
         setContent(data);
+        setSavedContent(data);
         setError(null);
+        markClean(filePath);
       } catch (err: any) {
         setError(err?.message || 'Failed to read file');
         setContent(null);
+        setSavedContent(null);
       }
     })();
+  }, [filePath, markClean]);
+
+  // Initialize LSP when file is loaded
+  useEffect(() => {
+    if (content === null || !project || !activeWorkspacePath) return;
+    if (lspInitialized.current) return;
+
+    const lspLanguage = getLSPLanguage(filePath);
+    if (!lspLanguage) return;
+
+    (async () => {
+      const ready = await ensureServer(project.root, lspLanguage, activeWorkspacePath);
+      if (ready) {
+        lspInitialized.current = true;
+        await didOpen(filePath, lspLanguage, content);
+      }
+    })();
+  }, [content, filePath, project, activeWorkspacePath]);
+
+  // Clean up LSP document on unmount
+  useEffect(() => {
+    return () => {
+      const lspLanguage = getLSPLanguage(filePath);
+      if (lspLanguage && lspInitialized.current) {
+        void didClose(filePath, lspLanguage);
+      }
+    };
   }, [filePath]);
 
   // Scroll to line when it changes
   useEffect(() => {
-    if (line && editorRef.current) {
+    if (line !== undefined && editorRef.current) {
       editorRef.current.revealLineInCenter(line);
-      editorRef.current.setPosition({ lineNumber: line, column: 1 });
+      editorRef.current.setPosition({ lineNumber: line, column: column ?? 1 });
     }
-  }, [line]);
+  }, [line, column]);
 
-  const handleEditorMount = (editor: editor.IStandaloneCodeEditor) => {
-    editorRef.current = editor;
-    if (line) {
-      editor.revealLineInCenter(line);
-      editor.setPosition({ lineNumber: line, column: 1 });
+  const saveRef = useRef<() => Promise<void>>();
+  saveRef.current = async () => {
+    if (!editorRef.current || saving) return;
+    let currentContent = editorRef.current.getValue();
+    setSaving(true);
+    try {
+      // Format on save if a formatter is available
+      if (project) {
+        try {
+          const result = await FormatFile(project.root, filePath, currentContent);
+          if (result?.formatted && result.content) {
+            currentContent = result.content;
+            // Update the editor content with formatted version
+            const ed = editorRef.current;
+            const pos = ed.getPosition();
+            ed.setValue(currentContent);
+            if (pos) ed.setPosition(pos);
+          }
+        } catch {
+          // Formatting failed — save without formatting
+        }
+      }
+
+      await WriteFileContents(filePath, currentContent);
+      setSavedContent(currentContent);
+      setContent(currentContent);
+      markClean(filePath);
+
+      // Run on-save hooks
+      if (project) {
+        RunOnSave(project.root, filePath).catch(() => {});
+      }
+
+      // Notify LSP about save
+      const lspLanguage = getLSPLanguage(filePath);
+      if (lspLanguage && lspInitialized.current) {
+        await didSave(filePath, lspLanguage, currentContent);
+      }
+    } catch (err: any) {
+      console.error('Failed to save file:', err);
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const handleEditorMount = (ed: editor.IStandaloneCodeEditor, monacoInstance?: any) => {
+    if (monacoInstance) configureMonaco(monacoInstance);
+    editorRef.current = ed;
+    if (line !== undefined) {
+      ed.revealLineInCenter(line);
+      ed.setPosition({ lineNumber: line, column: column ?? 1 });
+    }
+
+    // Add Cmd+S keybinding for save (uses ref to avoid stale closure)
+    ed.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+      () => { void saveRef.current?.(); }
+    );
+
+    // JetBrains-style editor navigation: Cmd+B for definition, Cmd+[ / Cmd+] for history.
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => {
+      void ed.getAction('editor.action.revealDefinition')?.run();
+    });
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.BracketLeft, () => {
+      const previous = navBackStack.pop();
+      if (!previous) return;
+      pushLocation(navForwardStack, currentLocation(ed, filePath, language));
+      openFile(previous.filePath, previous.language, previous.line, previous.column);
+    });
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.BracketRight, () => {
+      const next = navForwardStack.pop();
+      if (!next) return;
+      pushLocation(navBackStack, currentLocation(ed, filePath, language));
+      openFile(next.filePath, next.language, next.line, next.column);
+    });
+
+    // Handle go-to-definition: when Monaco resolves a definition to a file,
+    // intercept navigation to open it in a new Orion editor tab
+    const editorService = (ed as any)._codeEditorService;
+    if (editorService) {
+      editorService.openCodeEditor = async (input: any, source?: editor.IStandaloneCodeEditor) => {
+        const targetPath = input?.resource?.path;
+        if (targetPath) {
+          const sourceEditor = source || ed;
+          pushLocation(navBackStack, currentLocation(sourceEditor, filePath, language));
+          navForwardStack.length = 0;
+          const lang = languageForPath(targetPath);
+          const targetLine = input?.options?.selection?.startLineNumber;
+          const targetColumn = input?.options?.selection?.startColumn;
+          openFile(targetPath, lang, targetLine, targetColumn);
+        }
+        return null;
+      };
+    }
+
     // Focus immediately so Cmd+F works right away
-    editor.focus();
+    ed.focus();
+  };
+
+  const handleEditorChange = (value: string | undefined) => {
+    if (value === undefined) return;
+    setContent(value);
+    if (value !== savedContent) {
+      markDirty(filePath);
+    } else {
+      markClean(filePath);
+    }
+
+    // Debounce LSP didChange notifications (300ms)
+    if (changeTimer.current) clearTimeout(changeTimer.current);
+    changeTimer.current = setTimeout(() => {
+      const lspLanguage = getLSPLanguage(filePath);
+      if (lspLanguage && lspInitialized.current) {
+        void didChange(filePath, lspLanguage, value);
+      }
+    }, 300);
   };
 
   // Re-focus editor when tab becomes visible
@@ -68,9 +284,7 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
       const ed = editorRef.current;
       setTimeout(() => {
         ed.focus();
-        // Set the search string and open the find widget
         ed.getAction('actions.find')?.run();
-        // After the find widget opens, set its value
         setTimeout(() => {
           const findController = (ed as any).getContribution('editor.contrib.findController');
           if (findController) {
@@ -123,10 +337,13 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
     <Editor
       value={content}
       language={language}
+      path={modelPath}
       theme="orion-dark"
+      beforeMount={configureMonaco}
       onMount={handleEditorMount}
+      onChange={handleEditorChange}
       options={{
-        readOnly: true,
+        readOnly: false,
         minimap: { enabled: false },
         fontSize,
         fontFamily: "'JetBrains Mono', 'Menlo', 'Monaco', monospace",
@@ -136,13 +353,20 @@ export default function MonacoEditor({ filePath, language, visible, line }: Mona
         wordWrap: 'off',
         renderWhitespace: 'none',
         folding: true,
-        glyphMargin: false,
+        glyphMargin: true,
         overviewRulerBorder: false,
         hideCursorInOverviewRuler: true,
         scrollbar: {
           verticalScrollbarSize: 6,
           horizontalScrollbarSize: 6,
         },
+        tabSize: 2,
+        insertSpaces: true,
+        bracketPairColorization: { enabled: true },
+        guides: { bracketPairs: true },
+        suggestOnTriggerCharacters: true,
+        quickSuggestions: true,
+        parameterHints: { enabled: true },
       }}
     />
   );

@@ -13,6 +13,7 @@ export interface PaneLeaf {
   filePath?: string;    // for editor & diff
   language?: string;    // Monaco language id
   line?: number;        // line to scroll to on open
+  column?: number;      // column to place the cursor on open
 }
 
 export interface PaneSplit {
@@ -104,7 +105,7 @@ interface OrionState {
   setWorkspaceActive: (path: string, tier: number) => void;
 
   // File/editor operations
-  openFile: (filePath: string, language: string, line?: number) => void;
+  openFile: (filePath: string, language: string, line?: number, column?: number) => void;
   searchInFileQuery: string;
   setSearchInFileQuery: (q: string) => void;
 
@@ -125,6 +126,12 @@ interface OrionState {
   zoomIn: () => void;
   zoomOut: () => void;
   zoomReset: () => void;
+
+  // Dirty file tracking (files with unsaved changes)
+  dirtyFiles: Set<string>;
+  markDirty: (filePath: string) => void;
+  markClean: (filePath: string) => void;
+  isDirty: (filePath: string) => boolean;
 
   // Helpers
   getAllTerminalIds: (tab: Tab) => string[];
@@ -649,7 +656,7 @@ export const useStore = create<OrionState>((set, get) => ({
     }),
 
   // File/editor operations
-  openFile: (filePath, language, line) => {
+  openFile: (filePath, language, line, column) => {
     const state = get();
     // Check if file is already open in a tab
     const existingTab = state.tabs.find((t) => {
@@ -657,21 +664,21 @@ export const useStore = create<OrionState>((set, get) => ({
       return leaves.some((l) => l.type === 'editor' && l.filePath === filePath);
     });
     if (existingTab) {
-      // Update the line number on the existing pane if provided
-      if (line) {
-        const updateLine = (p: Pane): Pane => {
+      // Update the cursor location on the existing pane if provided
+      if (line !== undefined || column !== undefined) {
+        const updateLocation = (p: Pane): Pane => {
           if (isLeaf(p) && p.type === 'editor' && p.filePath === filePath) {
-            return { ...p, line };
+            return { ...p, line, column };
           }
           if (isSplit(p)) {
-            return { ...p, children: (p as PaneSplit).children.map(updateLine) } as Pane;
+            return { ...p, children: (p as PaneSplit).children.map(updateLocation) } as Pane;
           }
           return p;
         };
         set((s) => ({
           activeTabId: existingTab.id,
           tabs: s.tabs.map((t) =>
-            t.id === existingTab.id ? { ...t, rootPane: updateLine(t.rootPane) } : t
+            t.id === existingTab.id ? { ...t, rootPane: updateLocation(t.rootPane) } : t
           ),
         }));
       } else {
@@ -686,6 +693,7 @@ export const useStore = create<OrionState>((set, get) => ({
       filePath,
       language,
       line,
+      column,
     };
     const fileName = filePath.split('/').pop() || filePath;
     const tab: Tab = {
@@ -770,6 +778,21 @@ export const useStore = create<OrionState>((set, get) => ({
   setActiveServerTab: (id) => set({ activeServerTabId: id }),
   setServerPaneVisible: (v) => set({ serverPaneVisible: v }),
   setServerPaneHeight: (h) => set({ serverPaneHeight: Math.max(15, Math.min(60, h)) }),
+
+  dirtyFiles: new Set<string>(),
+  markDirty: (filePath) => set((s) => {
+    if (s.dirtyFiles.has(filePath)) return s;
+    const next = new Set(s.dirtyFiles);
+    next.add(filePath);
+    return { dirtyFiles: next };
+  }),
+  markClean: (filePath) => set((s) => {
+    if (!s.dirtyFiles.has(filePath)) return s;
+    const next = new Set(s.dirtyFiles);
+    next.delete(filePath);
+    return { dirtyFiles: next };
+  }),
+  isDirty: (filePath) => get().dirtyFiles.has(filePath),
 
   getAllTerminalIds: (tab) => collectLeaves(tab.rootPane).filter((l) => l.type === 'terminal' && l.terminalId).map((l) => l.terminalId!),
 

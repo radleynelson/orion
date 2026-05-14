@@ -2,72 +2,199 @@ import { loader } from '@monaco-editor/react';
 
 export function configureMonacoTheme() {
   loader.init().then((monaco) => {
-    // Theme with comprehensive token rules matching Cursor/GitHub Dark style
+    // Comprehensive Orion dark theme — VS Code Dark+-style editor palette
+    // with Orion chrome colors around the editor surface.
     monaco.editor.defineTheme('orion-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        // Ruby tokens
-        { token: 'keyword.ruby', foreground: 'ff7b72' },
-        { token: 'keyword.def.ruby', foreground: 'ff7b72' },
-        { token: 'keyword.class.ruby', foreground: 'ff7b72' },
-        { token: 'keyword.module.ruby', foreground: 'ff7b72' },
-        { token: 'type.ruby', foreground: '7ee787' },
-        { token: 'class.name.ruby', foreground: '7ee787', fontStyle: 'bold' },
-        { token: 'module.name.ruby', foreground: '7ee787', fontStyle: 'bold' },
-        { token: 'method.ruby', foreground: 'd2a8ff' },
-        { token: 'method.call.ruby', foreground: 'd2a8ff' },
-        { token: 'variable.instance.ruby', foreground: 'ffa657' },
-        { token: 'variable.class.ruby', foreground: 'ffa657', fontStyle: 'bold' },
-        { token: 'variable.global.ruby', foreground: 'ffa657' },
-        { token: 'constant.ruby', foreground: '79c0ff', fontStyle: 'bold' },
-        { token: 'symbol.ruby', foreground: '79c0ff' },
-        { token: 'string.ruby', foreground: 'a5d6ff' },
-        { token: 'string.escape.ruby', foreground: '79c0ff' },
+        // === General tokens (fallbacks for all languages) ===
+        { token: 'keyword', foreground: '569cd6' },
+        { token: 'keyword.control', foreground: 'c586c0' },
+        { token: 'keyword.operator', foreground: 'd4d4d4' },
+        { token: 'string', foreground: 'ce9178' },
+        { token: 'string.escape', foreground: 'd7ba7d' },
+        { token: 'comment', foreground: '6a9955', fontStyle: 'italic' },
+        { token: 'number', foreground: 'b5cea8' },
+        { token: 'number.float', foreground: 'b5cea8' },
+        { token: 'number.hex', foreground: 'b5cea8' },
+        { token: 'type', foreground: '4ec9b0' },
+        { token: 'type.identifier', foreground: '4ec9b0' },
+        { token: 'function', foreground: 'dcdcaa' },
+        { token: 'function.declaration', foreground: 'dcdcaa' },
+        { token: 'variable', foreground: '9cdcfe' },
+        { token: 'variable.predefined', foreground: '4fc1ff' },
+        { token: 'constant', foreground: '4fc1ff' },
+        { token: 'operator', foreground: 'd4d4d4' },
+        { token: 'delimiter', foreground: 'd4d4d4' },
+        { token: 'delimiter.bracket', foreground: 'd4d4d4' },
+        { token: 'delimiter.parenthesis', foreground: 'd4d4d4' },
+        { token: 'delimiter.square', foreground: 'd4d4d4' },
+        { token: 'delimiter.curly', foreground: 'd4d4d4' },
+        { token: 'tag', foreground: '569cd6' },
+        { token: 'attribute.name', foreground: '9cdcfe' },
+        { token: 'attribute.value', foreground: 'ce9178' },
+        { token: 'annotation', foreground: 'dcdcaa' },
+        { token: 'regexp', foreground: 'd16969' },
+        { token: 'meta', foreground: 'dcdcaa' },
+        { token: 'identifier', foreground: 'd4d4d4' },
+
+        // === TypeScript / JavaScript ===
+        { token: 'keyword.ts', foreground: '569cd6' },
+        { token: 'keyword.tsx', foreground: '569cd6' },
+        { token: 'type.identifier.ts', foreground: '4ec9b0' },
+        { token: 'type.identifier.tsx', foreground: '4ec9b0' },
+
+        // === Ruby ===
+        { token: 'keyword.ruby', foreground: '569cd6' },
+        { token: 'keyword.def.ruby', foreground: '569cd6' },
+        { token: 'keyword.class.ruby', foreground: '569cd6' },
+        { token: 'keyword.module.ruby', foreground: '569cd6' },
+        { token: 'type.ruby', foreground: '4ec9b0' },
+        { token: 'class.name.ruby', foreground: '4ec9b0' },
+        { token: 'module.name.ruby', foreground: '4ec9b0' },
+        { token: 'method.ruby', foreground: 'dcdcaa' },
+        { token: 'method.call.ruby', foreground: 'dcdcaa' },
+        { token: 'variable.instance.ruby', foreground: '9cdcfe' },
+        { token: 'variable.class.ruby', foreground: '9cdcfe' },
+        { token: 'variable.global.ruby', foreground: '9cdcfe' },
+        { token: 'constant.ruby', foreground: '4ec9b0' },
+        { token: 'symbol.ruby', foreground: '4fc1ff' },
+        { token: 'string.ruby', foreground: 'ce9178' },
+        { token: 'string.escape.ruby', foreground: 'd7ba7d' },
         { token: 'string.interpolation.ruby', foreground: 'd4d4d4' },
-        { token: 'comment.ruby', foreground: '8b949e', fontStyle: 'italic' },
-        { token: 'number.ruby', foreground: '79c0ff' },
-        { token: 'regexp.ruby', foreground: 'a5d6ff' },
-        { token: 'operator.ruby', foreground: 'ff7b72' },
+        { token: 'string.interpolation', foreground: '569cd6' },
+        { token: 'comment.ruby', foreground: '6a9955', fontStyle: 'italic' },
+        { token: 'number.ruby', foreground: 'b5cea8' },
+        { token: 'regexp.ruby', foreground: 'd16969' },
+        { token: 'operator.ruby', foreground: 'd4d4d4' },
         { token: 'delimiter.ruby', foreground: 'd4d4d4' },
-        // General fallbacks
-        { token: 'keyword', foreground: 'ff7b72' },
-        { token: 'string', foreground: 'a5d6ff' },
-        { token: 'comment', foreground: '8b949e', fontStyle: 'italic' },
-        { token: 'number', foreground: '79c0ff' },
-        { token: 'type', foreground: '7ee787' },
-        { token: 'function', foreground: 'd2a8ff' },
-        { token: 'variable', foreground: 'ffa657' },
-        { token: 'constant', foreground: '79c0ff' },
-        { token: 'operator', foreground: 'ff7b72' },
-        { token: 'tag', foreground: '7ee787' },
-        { token: 'attribute.name', foreground: '79c0ff' },
-        { token: 'attribute.value', foreground: 'a5d6ff' },
+        { token: 'identifier.ruby', foreground: 'd4d4d4' },
+
+        // === Go ===
+        { token: 'keyword.go', foreground: '569cd6' },
+        { token: 'type.go', foreground: '4ec9b0' },
+        { token: 'comment.go', foreground: '6a9955', fontStyle: 'italic' },
+        { token: 'string.go', foreground: 'ce9178' },
+        { token: 'number.go', foreground: 'b5cea8' },
+        { token: 'variable.go', foreground: 'd4d4d4' },
+        { token: 'function.go', foreground: 'dcdcaa' },
+        { token: 'constant.go', foreground: '4fc1ff' },
+
+        // === CSS / SCSS ===
+        { token: 'tag.css', foreground: 'd7ba7d' },
+        { token: 'attribute.name.css', foreground: '9cdcfe' },
+        { token: 'attribute.value.css', foreground: 'ce9178' },
+        { token: 'attribute.value.number.css', foreground: 'b5cea8' },
+        { token: 'attribute.value.unit.css', foreground: 'b5cea8' },
+        { token: 'attribute.value.hex.css', foreground: 'ce9178' },
+        { token: 'keyword.css', foreground: '569cd6' },
+        { token: 'string.css', foreground: 'ce9178' },
+        { token: 'variable.css', foreground: '9cdcfe' },
+
+        // === HTML ===
+        { token: 'tag.html', foreground: '569cd6' },
+        { token: 'attribute.name.html', foreground: '9cdcfe' },
+        { token: 'attribute.value.html', foreground: 'ce9178' },
+        { token: 'comment.html', foreground: '6a9955', fontStyle: 'italic' },
+        { token: 'string.html', foreground: 'ce9178' },
+
+        // === JSON ===
+        { token: 'string.key.json', foreground: '9cdcfe' },
+        { token: 'string.value.json', foreground: 'ce9178' },
+        { token: 'number.json', foreground: 'b5cea8' },
+        { token: 'keyword.json', foreground: '569cd6' },
+
+        // === YAML ===
+        { token: 'type.yaml', foreground: '9cdcfe' },
+        { token: 'string.yaml', foreground: 'ce9178' },
+        { token: 'number.yaml', foreground: 'b5cea8' },
+        { token: 'keyword.yaml', foreground: '569cd6' },
+        { token: 'comment.yaml', foreground: '6a9955', fontStyle: 'italic' },
+
+        // === Markdown ===
+        { token: 'keyword.md', foreground: '569cd6', fontStyle: 'bold' },
+        { token: 'string.md', foreground: 'ce9178' },
+        { token: 'comment.md', foreground: '6a9955' },
+        { token: 'string.link.md', foreground: '4fc1ff' },
+        { token: 'variable.md', foreground: '9cdcfe' },
+
+        // === ERB ===
+        { token: 'delimiter.erb', foreground: '569cd6', fontStyle: 'bold' },
+        { token: 'comment.erb', foreground: '6a9955', fontStyle: 'italic' },
+        { token: 'method.call.ruby', foreground: 'dcdcaa' },
+
+        // === Semantic token types (from LSP) ===
+        { token: 'namespace', foreground: '4ec9b0' },
+        { token: 'class', foreground: '4ec9b0' },
+        { token: 'enum', foreground: '4ec9b0' },
+        { token: 'interface', foreground: '4ec9b0' },
+        { token: 'struct', foreground: '4ec9b0' },
+        { token: 'typeParameter', foreground: '4ec9b0' },
+        { token: 'parameter', foreground: '9cdcfe' },
+        { token: 'property', foreground: '9cdcfe' },
+        { token: 'enumMember', foreground: '4fc1ff' },
+        { token: 'event', foreground: '4fc1ff' },
+        { token: 'method', foreground: 'dcdcaa' },
+        { token: 'macro', foreground: 'dcdcaa' },
+        { token: 'label', foreground: 'd7ba7d' },
+        { token: 'decorator', foreground: 'dcdcaa' },
       ],
       colors: {
         'editor.background': '#1e1e1e',
         'editor.foreground': '#d4d4d4',
-        'editor.selectionBackground': 'rgba(108, 182, 255, 0.3)',
+        'editor.selectionBackground': '#264f78',
+        'editor.inactiveSelectionBackground': '#3a3d41',
+        'editor.selectionHighlightBackground': '#add6ff26',
         'editor.lineHighlightBackground': '#252525',
+        'editor.findMatchBackground': '#264f78',
+        'editor.findMatchHighlightBackground': '#3a3d41',
+        'editor.wordHighlightBackground': '#57575766',
+        'editor.wordHighlightStrongBackground': '#57575799',
+        'editor.wordHighlightTextBackground': '#57575766',
         'editorGutter.background': '#1e1e1e',
         'editorLineNumber.foreground': '#5a5a5a',
         'editorLineNumber.activeForeground': '#b0b0b0',
         'editorCursor.foreground': '#d4d4d4',
+        'editorBracketMatch.background': 'rgba(108, 182, 255, 0.2)',
+        'editorBracketMatch.border': '#3794ff60',
+        'editorIndentGuide.background': '#2d2d2d',
+        'editorIndentGuide.activeBackground': '#4a4a4a',
+        'editorError.foreground': '#f14c4c',
+        'editorWarning.foreground': '#cca700',
+        'editorInfo.foreground': '#3794ff',
+        'editorHint.foreground': '#89d185',
         'scrollbar.shadow': '#00000000',
         'scrollbarSlider.background': '#3d3d3d80',
         'scrollbarSlider.hoverBackground': '#4a4a4a',
         'scrollbarSlider.activeBackground': '#5a5a5a',
         'editorWidget.background': '#252525',
         'editorWidget.border': '#3d3d3d',
-        'diffEditor.insertedTextBackground': '#7ee78720',
-        'diffEditor.removedTextBackground': '#ff7b7220',
-        'diffEditor.insertedLineBackground': '#7ee78710',
-        'diffEditor.removedLineBackground': '#ff7b7210',
+        'editorSuggestWidget.background': '#252525',
+        'editorSuggestWidget.border': '#3d3d3d',
+        'editorSuggestWidget.selectedBackground': '#3d3d3d',
+        'editorSuggestWidget.highlightForeground': '3794ff',
+        'editorHoverWidget.background': '#252525',
+        'editorHoverWidget.border': '#3d3d3d',
+        'peekView.border': '#3794ff40',
+        'peekViewEditor.background': '#1e1e1e',
+        'peekViewResult.background': '#252525',
+        'peekViewTitle.background': '#252525',
+        'diffEditor.insertedTextBackground': '#487e0220',
+        'diffEditor.removedTextBackground': '#f14c4c20',
+        'diffEditor.insertedLineBackground': '#487e0210',
+        'diffEditor.removedLineBackground': '#f14c4c10',
+        // Bracket pair colorization
+        'editorBracketHighlight.foreground1': '#ffd700',
+        'editorBracketHighlight.foreground2': '#da70d6',
+        'editorBracketHighlight.foreground3': '#179fff',
+        'editorBracketHighlight.foreground4': '#ffd700',
+        'editorBracketHighlight.foreground5': '#da70d6',
+        'editorBracketHighlight.foreground6': '#179fff',
       },
     });
 
     // Override Monaco's built-in Ruby with a better Monarch tokenizer
-    // Must dispose existing provider first
     monaco.languages.setMonarchTokensProvider('ruby', {
       defaultToken: '',
       tokenPostfix: '.ruby',
@@ -120,86 +247,42 @@ export function configureMonacoTheme() {
 
       tokenizer: {
         root: [
-          // Whitespace
           [/\s+/, ''],
-
-          // Comments
           [/#.*$/, 'comment'],
           [/=begin/, 'comment', '@blockComment'],
-
-          // Class definition: class Name < Parent
           [/\b(class)\b(\s+)([A-Z]\w*)/, ['keyword.class', '', 'class.name']],
-          // Module definition
           [/\b(module)\b(\s+)([A-Z]\w*)/, ['keyword.module', '', 'module.name']],
-          // Method definition
           [/\b(def)\b(\s+)(self\.)(\w+[!?=]?)/, ['keyword.def', '', 'keyword', 'method']],
           [/\b(def)\b(\s+)(\w+[!?=]?)/, ['keyword.def', '', 'method']],
-
-          // Constants (ALL_CAPS)
           [/\b[A-Z][A-Z_0-9]{2,}\b/, 'constant'],
-
-          // Type names (CamelCase)
           [/\b[A-Z]\w+\b/, 'type'],
-
-          // Instance variables
           [/@{1,2}[a-zA-Z_]\w*/, 'variable.instance'],
-
-          // Global variables
           [/\$[a-zA-Z_]\w*/, 'variable.global'],
-
-          // Symbols
           [/:[a-zA-Z_]\w*[!?]?/, 'symbol'],
-
-          // Rails/Ruby method calls (known methods)
           [/\b(has_one|has_many|belongs_to|has_and_belongs_to_many|validates|validate|before_action|after_action|around_action|before_save|after_save|before_create|after_create|before_update|after_update|before_destroy|after_destroy|before_validation|after_validation|scope|delegate|enum|render|redirect_to|respond_to|include|extend|prepend|require|require_relative|attr_reader|attr_writer|attr_accessor|raise|fail|puts|print|p|pp|freeze|lambda|proc|publish_events_on|chats_with|liquid_context_key|serialize|has_secure_password)\b/, 'method.call'],
-
-          // Strings
           [/"/, 'string', '@doubleString'],
           [/'/, 'string', '@singleString'],
           [/%[qQwWiI]?[{(\[]/, 'string', '@percentString'],
-
-          // Regexp
           [/\/(?=[^/\s])/, 'regexp', '@regexp'],
-
-          // Numbers
           [/\b\d[\d_]*\.[\d_]+([eE][+-]?\d+)?\b/, 'number'],
           [/\b0[xX][0-9a-fA-F_]+\b/, 'number'],
           [/\b0[bB][01_]+\b/, 'number'],
           [/\b0[oO]?[0-7_]+\b/, 'number'],
           [/\b\d[\d_]*\b/, 'number'],
-
-          // Method calls after dot
           [/\.(\s*)([a-z_]\w*[!?]?)/, ['delimiter', 'method.call']],
-
-          // Keywords (must be before identifier rules)
           [/\b(BEGIN|END|alias|and|begin|break|case|class|def|defined\?|do|else|elsif|end|ensure|false|for|if|in|module|next|nil|not|or|redo|rescue|retry|return|self|super|then|true|undef|unless|until|when|while|yield)\b/, 'keyword'],
-
-          // Public/private/protected
           [/\b(public|private|protected)\b/, 'keyword'],
-
-          // Standalone method calls: identifier followed by ( or !
-          // e.g., update_columns(...), becomes(...), transaction, reload
           [/\b([a-z_]\w*[!?]?)(\s*\()/, ['method.call', 'delimiter']],
-
-          // Operators
           [/@symbols/, 'operator'],
-
-          // Delimiters
           [/[{}()\[\]]/, 'delimiter'],
           [/[;,.]/, 'delimiter'],
-
-          // Block params
           [/\|/, 'delimiter'],
-
-          // Regular identifiers (local variables, etc.)
           [/[a-z_]\w*[!?]?/, 'identifier'],
         ],
-
         blockComment: [
           [/=end/, 'comment', '@pop'],
           [/.*/, 'comment'],
         ],
-
         doubleString: [
           [/#\{/, 'string.interpolation', '@interpolation'],
           [/\\[\\nrt"#\$]/, 'string.escape'],
@@ -207,25 +290,21 @@ export function configureMonacoTheme() {
           [/[^"\\#]+/, 'string'],
           [/./, 'string'],
         ],
-
         singleString: [
           [/\\./, 'string.escape'],
           [/'/, 'string', '@pop'],
           [/[^'\\]+/, 'string'],
           [/./, 'string'],
         ],
-
         percentString: [
           [/#\{/, 'string.interpolation', '@interpolation'],
           [/[}\])]/, 'string', '@pop'],
           [/./, 'string'],
         ],
-
         interpolation: [
           [/\}/, 'string.interpolation', '@pop'],
           { include: 'root' },
         ],
-
         regexp: [
           [/\\[\\\/]/, 'regexp'],
           [/\/[imxouesn]*/, 'regexp', '@pop'],
@@ -240,22 +319,14 @@ export function configureMonacoTheme() {
     monaco.languages.setMonarchTokensProvider('erb', {
       defaultToken: '',
       tokenPostfix: '.erb',
-      // ERB is HTML with <% %> and <%= %> Ruby blocks
       tokenizer: {
         root: [
-          // ERB output tag <%= ... %>
           [/<%=/, { token: 'delimiter.erb', next: '@erbOutput' }],
-          // ERB execution tag <% ... %>
           [/<%/, { token: 'delimiter.erb', next: '@erbCode' }],
-          // ERB comment <%# ... %>
           [/<%#/, { token: 'comment.erb', next: '@erbComment' }],
-          // HTML comments
           [/<!--/, 'comment.html', '@htmlComment'],
-          // HTML tags
           [/<\/?[\w-]+/, { token: 'tag.html', next: '@htmlTag' }],
-          // HTML entities
           [/&\w+;/, 'string.html'],
-          // Plain text
           [/[^<&%]+/, ''],
           [/./, ''],
         ],
@@ -315,66 +386,76 @@ export function configureMonacoTheme() {
       },
     } as any);
 
-    // Add ERB-specific theme rules
-    monaco.editor.defineTheme('orion-dark', {
-      ...monaco.editor.defineTheme as any, // keep existing
-      base: 'vs-dark',
-      inherit: true,
-      rules: [
-        // Existing rules are already defined above, these add ERB-specific ones
-        { token: 'delimiter.erb', foreground: 'ff7b72', fontStyle: 'bold' },
-        { token: 'comment.erb', foreground: '8b949e', fontStyle: 'italic' },
-        { token: 'tag.html', foreground: '7ee787' },
-        { token: 'attribute.name.html', foreground: '79c0ff' },
-        { token: 'attribute.value.html', foreground: 'a5d6ff' },
-        { token: 'comment.html', foreground: '8b949e', fontStyle: 'italic' },
-        { token: 'string.html', foreground: 'a5d6ff' },
-        // Ruby tokens inherited from ruby theme rules above
-        { token: 'keyword.ruby', foreground: 'ff7b72' },
-        { token: 'type.ruby', foreground: '7ee787' },
-        { token: 'method.call.ruby', foreground: 'd2a8ff' },
-        { token: 'method.ruby', foreground: 'd2a8ff' },
-        { token: 'variable.instance.ruby', foreground: 'ffa657' },
-        { token: 'symbol.ruby', foreground: '79c0ff' },
-        { token: 'string.ruby', foreground: 'a5d6ff' },
-        { token: 'string.interpolation', foreground: 'ff7b72' },
-        { token: 'number.ruby', foreground: '79c0ff' },
-        { token: 'operator.ruby', foreground: 'ff7b72' },
-        { token: 'constant.ruby', foreground: '79c0ff', fontStyle: 'bold' },
-        { token: 'identifier.ruby', foreground: 'd4d4d4' },
-        { token: 'keyword', foreground: 'ff7b72' },
-        { token: 'string', foreground: 'a5d6ff' },
-        { token: 'comment', foreground: '8b949e', fontStyle: 'italic' },
-        { token: 'number', foreground: '79c0ff' },
-        { token: 'type', foreground: '7ee787' },
-        { token: 'function', foreground: 'd2a8ff' },
-        { token: 'variable', foreground: 'ffa657' },
-        { token: 'constant', foreground: '79c0ff' },
-        { token: 'operator', foreground: 'ff7b72' },
-        { token: 'tag', foreground: '7ee787' },
-        { token: 'attribute.name', foreground: '79c0ff' },
-        { token: 'attribute.value', foreground: 'a5d6ff' },
-      ],
-      colors: {
-        'editor.background': '#1e1e1e',
-        'editor.foreground': '#d4d4d4',
-        'editor.selectionBackground': 'rgba(108, 182, 255, 0.3)',
-        'editor.lineHighlightBackground': '#252525',
-        'editorGutter.background': '#1e1e1e',
-        'editorLineNumber.foreground': '#5a5a5a',
-        'editorLineNumber.activeForeground': '#b0b0b0',
-        'editorCursor.foreground': '#d4d4d4',
-        'scrollbar.shadow': '#00000000',
-        'scrollbarSlider.background': '#3d3d3d80',
-        'scrollbarSlider.hoverBackground': '#4a4a4a',
-        'scrollbarSlider.activeBackground': '#5a5a5a',
-        'editorWidget.background': '#252525',
-        'editorWidget.border': '#3d3d3d',
-        'diffEditor.insertedTextBackground': '#7ee78720',
-        'diffEditor.removedTextBackground': '#ff7b7220',
-        'diffEditor.insertedLineBackground': '#7ee78710',
-        'diffEditor.removedLineBackground': '#ff7b7210',
+    // Register TOML language with Monarch tokenizer
+    monaco.languages.register({ id: 'toml' });
+    monaco.languages.setMonarchTokensProvider('toml', {
+      defaultToken: '',
+      tokenPostfix: '.toml',
+      tokenizer: {
+        root: [
+          [/#.*$/, 'comment'],
+          [/\[\[[^\]]+\]\]/, 'keyword'], // array of tables
+          [/\[[^\]]+\]/, 'keyword'],     // table header
+          [/([\w.-]+)(\s*=)/, ['type', 'operator']],
+          [/"""/, 'string', '@multilineString'],
+          [/"/, 'string', '@string'],
+          [/'''/, 'string', '@multilineLiteralString'],
+          [/'/, 'string', '@literalString'],
+          [/\b(true|false)\b/, 'keyword'],
+          [/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/, 'number'],
+          [/\b\d+\.?\d*([eE][+-]?\d+)?\b/, 'number'],
+          [/\b0[xX][0-9a-fA-F]+\b/, 'number'],
+          [/[{}()\[\],]/, 'delimiter'],
+          [/\s+/, ''],
+        ],
+        string: [
+          [/\\./, 'string.escape'],
+          [/"/, 'string', '@pop'],
+          [/[^"\\]+/, 'string'],
+        ],
+        literalString: [
+          [/'/, 'string', '@pop'],
+          [/[^']+/, 'string'],
+        ],
+        multilineString: [
+          [/\\./, 'string.escape'],
+          [/"""/, 'string', '@pop'],
+          [/./, 'string'],
+        ],
+        multilineLiteralString: [
+          [/'''/, 'string', '@pop'],
+          [/./, 'string'],
+        ],
       },
-    });
+    } as any);
+
+    // Register Dockerfile language
+    monaco.languages.register({ id: 'dockerfile' });
+    monaco.languages.setMonarchTokensProvider('dockerfile', {
+      defaultToken: '',
+      tokenPostfix: '.dockerfile',
+      tokenizer: {
+        root: [
+          [/#.*$/, 'comment'],
+          [/\b(FROM|RUN|CMD|LABEL|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ARG|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL|MAINTAINER)\b/i, 'keyword'],
+          [/\b(AS)\b/i, 'keyword'],
+          [/\$\{?[\w]+\}?/, 'variable'],
+          [/"/, 'string', '@string'],
+          [/'/, 'string', '@stringS'],
+          [/\d+/, 'number'],
+          [/[=:]/, 'operator'],
+          [/\\$/, 'delimiter'],
+        ],
+        string: [
+          [/\\./, 'string.escape'],
+          [/"/, 'string', '@pop'],
+          [/[^"\\]+/, 'string'],
+        ],
+        stringS: [
+          [/'/, 'string', '@pop'],
+          [/[^']+/, 'string'],
+        ],
+      },
+    } as any);
   });
 }

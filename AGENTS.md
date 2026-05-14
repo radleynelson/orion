@@ -52,11 +52,12 @@ orion/
 │   │   │   ├── GitPanel.tsx             # Git changes list with status badges
 │   │   │   ├── GlobalSearch.tsx         # Content search sidebar (ripgrep-powered)
 │   │   │   ├── SearchEverywhere.tsx     # Fuzzy file finder modal (double-tap Shift)
-│   │   │   ├── MonacoEditor.tsx         # Read-only file viewer (Monaco Editor)
+│   │   │   ├── MonacoEditor.tsx         # Editable Monaco code editor with LSP support
 │   │   │   └── DiffViewer.tsx           # Side-by-side git diff viewer (Monaco DiffEditor)
 │   │   ├── store/index.ts              # Zustand state: project, workspaces, tabs, panes, sidebar mode
 │   │   └── lib/
 │   │       ├── terminal.ts             # xterm.js setup, theme, event wiring, Unicode support
+│   │       ├── lspClient.ts            # Monaco ↔ Wails ↔ Go LSP client bridge
 │   │       ├── monacoTheme.ts          # Orion dark theme + enhanced Ruby tokenizer for Monaco
 │   │       └── languages.ts            # File extension → Monaco language mapping
 │   └── wailsjs/                        # Auto-generated Go bindings (DO NOT EDIT)
@@ -66,6 +67,8 @@ orion/
 │   ├── config/config.go                 # .orion.toml parser (falls back to .radconfig)
 │   ├── port/manager.go                  # Random port allocation, persistence to ~/.orion/ports.json
 │   ├── server/manager.go               # Server process lifecycle, port injection, env template resolution
+│   ├── lsp/manager.go                  # Language server process lifecycle and JSON-RPC stdio bridge
+│   ├── plugin/manager.go               # Formatters, linters, and on-save hooks
 │   ├── state/state.go                   # Per-project state persistence, tmux session recovery
 │   ├── files/manager.go                 # File listing, reading, fuzzy search, content search (ripgrep)
 │   └── git/manager.go                   # Git status, file diff for Monaco DiffEditor
@@ -131,7 +134,19 @@ Priority: `.orion.toml` > `.radconfig` > built-in defaults. The config defines:
 - `[credentials]` — files to copy into new worktrees (supports globs like `*.key`)
 - `[servers.*]` — server commands, ports, env vars, working dirs
 - `[agents.*]` — agent commands (dynamic buttons generated from this)
+- `[lsp.*]` — optional language server command overrides
+- `[plugins.formatters.*]`, `[plugins.linters.*]`, and `[[plugins.on_save]]` — editor save-time tooling
 - `[hooks.worktree_created]` / `[hooks.worktree_deleting]` — shell callbacks around worktree lifecycle events
+
+### LSP Support
+
+Orion starts language servers lazily from the editable Monaco editor. `frontend/src/lib/lspClient.ts` registers Monaco providers for diagnostics, completions, hover, definition, references, signature help, document symbols, and semantic tokens. It sends `textDocument/didOpen`, `didChange`, `didSave`, and `didClose` notifications through Wails-bound methods on `App`.
+
+The Go side lives in `internal/lsp/manager.go`. It launches the language server as a stdio process, writes JSON-RPC messages with `Content-Length` framing, matches request responses by ID, and emits server notifications back to the frontend as `lsp:message:<language>` Wails events.
+
+Built-in defaults cover TypeScript/JavaScript, Go, Ruby, CSS, HTML, and JSON. TypeScript resolution prefers `<worktree>/frontend/node_modules/.bin/typescript-language-server`, then `<worktree>/node_modules/.bin/typescript-language-server`, then `typescript-language-server` on `PATH`. This keeps Orion lightweight: apps can provide their own language servers as dev dependencies.
+
+Custom `[lsp.<language>]` commands are parsed as an executable plus args, not run through a shell. Use a wrapper script if a server needs shell setup. LSP processes run with the active worktree as `cwd` and `rootUri`, so module resolution follows the worktree being edited.
 
 ### Workspace Lifecycle Hooks
 
@@ -215,11 +230,13 @@ open build/bin/Orion.app
 - `Cmd+W` — Close focused pane (closes tab if last pane)
 - `Cmd+D` — Split focused pane right (vertical split)
 - `Cmd+Shift+D` — Split focused pane down (horizontal split)
-- `Cmd+[` — Navigate to previous pane
-- `Cmd+]` — Navigate to next pane
+- `Cmd+[` — Editor back when Monaco is focused; otherwise navigate to previous pane
+- `Cmd+]` — Editor forward when Monaco is focused; otherwise navigate to next pane
 - `Cmd+Shift+[` — Swap focused pane with previous
 - `Cmd+Shift+]` — Swap focused pane with next
-- `Cmd+1-9` — Switch to tab N
+- `Cmd+B` — Go to definition in the editor
+- `Cmd+Left/Right` — Cycle tabs
+- `Cmd+1` — Toggle workspace sidebar
 - `Cmd+\` — Toggle sidebar
 - `Cmd+Shift+B` — Open browser for active workspace
 

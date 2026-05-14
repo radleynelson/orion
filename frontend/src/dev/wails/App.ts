@@ -60,6 +60,15 @@ type ChatMessage = {
 const terminalSessions = new Map<string, string>();
 const serverStatuses = new Map<string, ServerStatus[]>();
 const chatMessages = new Map<string, ChatMessage[]>();
+const mockFileContents = new Map<string, string>();
+const runningLSPServers = new Set<string>();
+const openLSPDocuments = new Map<string, { language: string; text: string; version: number }>();
+
+function recordMockLSP(event: string, detail: Record<string, unknown> = {}): void {
+  const target = window as unknown as { __orionPreviewLSPLog?: Array<Record<string, unknown>> };
+  target.__orionPreviewLSPLog ||= [];
+  target.__orionPreviewLSPLog.push({ event, ...detail });
+}
 
 let workspaces: Workspace[] = [
   { name: 'orion', path: MAIN_WORKSPACE, branch: 'main', isMain: true, hasAgent: false },
@@ -690,12 +699,204 @@ export async function ListDirectory(path: string, _depth: number) {
 }
 
 export async function ReadFileContents(path: string): Promise<string> {
+  const existing = mockFileContents.get(path);
+  if (existing !== undefined) return existing;
+
   return [
     `// ${rel(path)}`,
     '// Browser preview fixture content.',
     'export const preview = true;',
+    'preview.toString();',
     '',
   ].join('\n');
+}
+
+export async function WriteFileContents(path: string, content: string): Promise<void> {
+  mockFileContents.set(path, content);
+  emitDevEvent('git:files-changed');
+}
+
+export async function FormatFile(_repoRoot: string, _filePath: string, content: string): Promise<{ formatted: boolean; content: string; error?: string }> {
+  const formatted = content.endsWith('\n') ? content : `${content}\n`;
+  return { formatted: formatted !== content, content: formatted };
+}
+
+export async function RunOnSave(_repoRoot: string, _filePath: string): Promise<string[]> {
+  return [];
+}
+
+export async function LintFile(_repoRoot: string, _filePath: string): Promise<{ output: string; error?: string }> {
+  return { output: '' };
+}
+
+export async function GetFormatOnSaveExtensions(_repoRoot: string): Promise<string[]> {
+  return ['.ts', '.tsx', '.js', '.jsx', '.go', '.rb', '.css', '.scss', '.json', '.html'];
+}
+
+export async function StartLSP(_repoRoot: string, language: string, _workspacePath: string): Promise<void> {
+  runningLSPServers.add(language);
+  recordMockLSP('start', { language });
+}
+
+export async function StopLSP(language: string): Promise<void> {
+  runningLSPServers.delete(language);
+  recordMockLSP('stop', { language });
+}
+
+export async function IsLSPRunning(language: string): Promise<boolean> {
+  return runningLSPServers.has(language);
+}
+
+export async function ListLSPServers(): Promise<string[]> {
+  return [...runningLSPServers];
+}
+
+export async function SendLSPMessage(language: string, message: string): Promise<void> {
+  const parsed = JSON.parse(message);
+  recordMockLSP('message', { language, method: parsed?.method });
+  const doc = parsed?.params?.textDocument;
+  if (parsed.method === 'textDocument/didOpen' && doc?.uri) {
+    openLSPDocuments.set(doc.uri, {
+      language: doc.languageId || language,
+      text: doc.text || '',
+      version: doc.version || 1,
+    });
+    emitMockDiagnostics(language, doc.uri, doc.text || '');
+  } else if (parsed.method === 'textDocument/didChange' && doc?.uri) {
+    const text = parsed.params?.contentChanges?.[0]?.text || '';
+    openLSPDocuments.set(doc.uri, {
+      language,
+      text,
+      version: doc.version || 1,
+    });
+    emitMockDiagnostics(language, doc.uri, text);
+  } else if (parsed.method === 'textDocument/didSave' && doc?.uri) {
+    const current = openLSPDocuments.get(doc.uri);
+    if (current) mockFileContents.set(doc.uri.replace('file://', ''), current.text);
+  } else if (parsed.method === 'textDocument/didClose' && doc?.uri) {
+    openLSPDocuments.delete(doc.uri);
+  }
+}
+
+export async function SendLSPRequest(language: string, method: string, paramsJSON: string): Promise<string> {
+  runningLSPServers.add(language);
+  recordMockLSP('request', { language, method });
+  const params = paramsJSON ? JSON.parse(paramsJSON) : {};
+  const uri = params?.textDocument?.uri || '';
+  const doc = uri ? openLSPDocuments.get(uri) : undefined;
+
+  let result: unknown = null;
+  switch (method) {
+    case 'initialize':
+      result = {
+        capabilities: {
+          textDocumentSync: { openClose: true, change: 1, save: { includeText: true } },
+          completionProvider: { triggerCharacters: ['.', ':', '<', '"', "'", '/', '@', '#'] },
+          hoverProvider: true,
+          definitionProvider: true,
+          referencesProvider: true,
+          documentSymbolProvider: true,
+          signatureHelpProvider: { triggerCharacters: ['(', ','] },
+          semanticTokensProvider: {
+            legend: {
+              tokenTypes: ['namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter', 'parameter', 'variable', 'property', 'enumMember', 'event', 'function', 'method', 'macro', 'keyword', 'modifier', 'comment', 'string', 'number', 'regexp', 'operator', 'decorator'],
+              tokenModifiers: ['declaration', 'definition', 'readonly', 'static', 'deprecated', 'abstract', 'async', 'modification', 'documentation', 'defaultLibrary'],
+            },
+            full: true,
+          },
+        },
+      };
+      break;
+    case 'textDocument/completion':
+      result = {
+        isIncomplete: false,
+        items: [
+          { label: 'preview', kind: 6, detail: 'browser-preview const', insertText: 'preview' },
+          { label: 'toString', kind: 2, detail: 'mock LSP method', insertText: 'toString()' },
+        ],
+      };
+      break;
+    case 'textDocument/hover':
+      result = {
+        contents: {
+          kind: 'markdown',
+          value: `Mock ${language} hover for \`${uri.split('/').pop() || 'file'}\``,
+        },
+      };
+      break;
+    case 'textDocument/definition':
+      result = [{
+        uri,
+        range: {
+          start: { line: 2, character: 13 },
+          end: { line: 2, character: 20 },
+        },
+      }];
+      break;
+    case 'textDocument/references':
+      result = [{
+        uri,
+        range: {
+          start: { line: 2, character: 13 },
+          end: { line: 2, character: 20 },
+        },
+      }];
+      break;
+    case 'textDocument/documentSymbol':
+      result = [{
+        name: uri.split('/').pop() || 'PreviewFile',
+        kind: 2,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: Math.max(0, (doc?.text || '').split('\n').length - 1), character: 0 },
+        },
+        selectionRange: {
+          start: { line: 2, character: 13 },
+          end: { line: 2, character: 20 },
+        },
+        children: [],
+      }];
+      break;
+    case 'textDocument/signatureHelp':
+      result = {
+        signatures: [{
+          label: 'toString(): string',
+          documentation: 'Mock browser-preview signature help',
+          parameters: [],
+        }],
+        activeSignature: 0,
+        activeParameter: 0,
+      };
+      break;
+    case 'textDocument/semanticTokens/full':
+      result = { data: [] };
+      break;
+  }
+
+  return JSON.stringify({ jsonrpc: '2.0', id: Date.now(), result });
+}
+
+function emitMockDiagnostics(language: string, uri: string, text: string): void {
+  const diagnostics = text.includes('preview')
+    ? [{
+        range: {
+          start: { line: 1, character: 3 },
+          end: { line: 1, character: 18 },
+        },
+        severity: 3,
+        source: 'browser-preview',
+        message: 'Mock LSP diagnostics are wired.',
+      }]
+    : [];
+
+  window.setTimeout(() => {
+    recordMockLSP('diagnostics', { language, uri, count: diagnostics.length });
+    emitDevEvent(`lsp:message:${language}`, JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'textDocument/publishDiagnostics',
+      params: { uri, diagnostics },
+    }));
+  }, 25);
 }
 
 export async function SearchContents(_workspacePath: string, query: string) {

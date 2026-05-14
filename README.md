@@ -14,8 +14,9 @@ Built with Go + React + xterm.js on [Wails](https://wails.io).
 - **Credential copying** — Automatically copies .env files, API keys, and credentials into new worktrees
 - **Session persistence** — Close and reopen Orion; running tmux sessions reconnect automatically
 - **Browser integration** — One click opens Chrome at the right frontend URL for any workspace
+- **Integrated code editor** — Monaco editor with LSP-backed completions, diagnostics, hover, definition navigation, and save-time formatting hooks
 - **Dynamic agent buttons** — Define custom agents in config; they appear as sidebar buttons
-- **Keyboard-driven** — Cmd+T, Cmd+W, Cmd+1-9, Cmd+\, Cmd+Shift+B
+- **Keyboard-driven** — Cmd+T, Cmd+W, Cmd+B, Cmd+1, Cmd+\, Cmd+Shift+B
 
 ## Quick Start
 
@@ -111,6 +112,12 @@ command = "claude --dangerously-skip-permissions --prompt 'Review code changes f
 label = "Tests"
 icon = "test"
 command = "./scripts/watch-tests.sh"
+
+# Optional LSP override. Without this, Orion uses built-in defaults for
+# TypeScript/JavaScript, Go, Ruby, CSS, HTML, and JSON.
+[lsp.typescript]
+command = "frontend/node_modules/.bin/typescript-language-server --stdio"
+extensions = [".ts", ".tsx", ".js", ".jsx"]
 ```
 
 ### Agent Providers
@@ -130,6 +137,16 @@ If you omit `provider`, Orion infers it only for agents named `claude` or `codex
 Model is optional. Leave `model` out to let Claude Code or Codex use their current default model; set it only when you intentionally want to pin a specific model for that project or agent.
 
 Agent icons are optional. If an agent has `provider = "claude"` or `provider = "codex"` and no `icon`, Orion shows the provider icon. Set `icon` to use a custom role icon instead. Current role icons: `reviewer`, `scribe`, `plan`, `test`, `debug`, `deploy`, `ops`, `data`, `design`, `security`, `browser`, `automate`, `branch`, `docs`, `clean`, `shell`, `server`, `editor`, `diagnostics`.
+
+### LSP Support
+
+Orion starts language servers lazily when an editable file is opened in Monaco. The frontend keeps Monaco models on real `file://` URIs, sends `didOpen` / `didChange` / `didSave` / `didClose` notifications through Wails-bound Go methods, and the Go `internal/lsp` manager talks to the language server over stdio. Server responses flow back to Monaco through Wails events.
+
+LSP support can provide diagnostics, completions, hover, go to definition, references, signature help, document symbols, and semantic highlighting when the language server supports those capabilities. In the editor, `Cmd+B` goes to definition and `Cmd+[` / `Cmd+]` navigate editor history.
+
+Built-in defaults cover TypeScript/JavaScript, Go, Ruby, CSS, HTML, and JSON. Orion does not bundle language servers; it resolves project or system tools. For TypeScript, Orion first looks for `frontend/node_modules/.bin/typescript-language-server` in the active worktree, then `node_modules/.bin/typescript-language-server`, then `typescript-language-server` on `PATH`. Installing language servers as project dev dependencies keeps Orion lightweight and makes worktrees behave like the app itself.
+
+You can override a language server in `.orion.toml` with `[lsp.<language>]`. `command` is parsed as an executable plus args, not as a shell command; use a wrapper script when you need shell features.
 
 ### Workspace Callbacks
 
@@ -201,11 +218,13 @@ This file is **automatically sourced** in every new shell and agent session, so 
 | `Cmd+W` | Close focused pane (closes tab if last pane) |
 | `Cmd+D` | Split pane right (vertical) |
 | `Cmd+Shift+D` | Split pane down (horizontal) |
-| `Cmd+[` | Focus previous pane |
-| `Cmd+]` | Focus next pane |
+| `Cmd+[` | Editor back when Monaco is focused; otherwise focus previous pane |
+| `Cmd+]` | Editor forward when Monaco is focused; otherwise focus next pane |
 | `Cmd+Shift+[` | Swap pane with previous |
 | `Cmd+Shift+]` | Swap pane with next |
-| `Cmd+1-9` | Switch to tab N |
+| `Cmd+B` | Go to definition in the editor |
+| `Cmd+Left/Right` | Cycle tabs |
+| `Cmd+1` | Toggle workspace sidebar |
 | Drag tab → tab | Merge tabs into split view |
 | `Cmd+\` | Toggle sidebar |
 | `Cmd+Shift+B` | Open browser for active workspace |

@@ -99,6 +99,18 @@ function codexOptionsForAgent(agent?: main.AgentTypeInfo) {
   };
 }
 
+function isInsideMonacoEditor(target: EventTarget | null): boolean {
+  if (!(target instanceof Node)) return false;
+  const element = target instanceof Element ? target : target.parentElement;
+  return Boolean(element?.closest('.monaco-editor'));
+}
+
+function shouldLetMonacoHandleShortcut(e: KeyboardEvent): boolean {
+  if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
+  if (!isInsideMonacoEditor(e.target)) return false;
+  return e.key.toLowerCase() === 'b' || e.key === '[' || e.key === ']';
+}
+
 function App() {
   const [tabsHydrated, setTabsHydrated] = useState(false);
   const {
@@ -146,6 +158,7 @@ function App() {
     zoomIn,
     zoomOut,
     zoomReset,
+    dirtyFiles,
   } = useStore();
 
   // Refit terminals after code review pane opens/closes
@@ -887,6 +900,24 @@ function App() {
   const handleCloseTab = useCallback(async (tabId: string) => {
     const tab = useStore.getState().tabs.find((t) => t.id === tabId);
     if (!tab) return;
+
+    // Check for unsaved editor changes
+    if (tab.tabType === 'editor') {
+      const leaves = collectLeavesFromPane(tab.rootPane);
+      const dirtyLeaf = leaves.find((l) => l.type === 'editor' && l.filePath && useStore.getState().dirtyFiles.has(l.filePath));
+      if (dirtyLeaf) {
+        setCloseConfirm({
+          label: 'Unsaved Changes',
+          detail: `"${tab.label}" has unsaved changes. Close without saving?`,
+          onConfirm: () => {
+            if (dirtyLeaf.filePath) useStore.getState().markClean(dirtyLeaf.filePath);
+            removeTab(tabId);
+          },
+        });
+        return;
+      }
+    }
+
     const termIds = getAllTerminalIds(tab);
     const fallbackKind = tab.tabType === 'claude-chat' ? 'claude' : 'codex';
     const chatSessions = getChatSessions(tab.rootPane, fallbackKind);
@@ -1233,6 +1264,9 @@ function App() {
         setCommandPaletteVisible(false);
         return;
       }
+      if (shouldLetMonacoHandleShortcut(e)) {
+        return;
+      }
       // Cmd+K / Cmd+Shift+P: command palette
       if (e.metaKey && ((!e.shiftKey && e.key.toLowerCase() === 'k') || (e.shiftKey && e.key.toLowerCase() === 'p'))) {
         e.preventDefault();
@@ -1359,8 +1393,8 @@ function App() {
         e.preventDefault();
         zoomReset();
       }
-      // Cmd+B: toggle sidebar
-      if (e.metaKey && !e.shiftKey && e.key === 'b') {
+      // Cmd+1: toggle sidebar
+      if (e.metaKey && !e.shiftKey && e.key === '1') {
         e.preventDefault();
         setSidebarMode(sidebarMode ? null : 'workspaces');
       }
@@ -1703,7 +1737,7 @@ function App() {
         subtitle: 'Open the left workspace dashboard',
         group: 'View',
         icon: 'editor',
-        shortcut: '⌘B',
+        shortcut: '⌘1',
         keywords: ['sidebar'],
         run: () => setSidebarMode('workspaces'),
       },
@@ -1962,7 +1996,11 @@ function App() {
                         setRenameValue(tab.label);
                       }}
                     >
-                      {tab.label}
+                      {tab.tabType === 'editor' && (() => {
+                        const leaves = collectLeavesFromPane(tab.rootPane);
+                        const editorLeaf = leaves.find((l) => l.type === 'editor' && l.filePath);
+                        return editorLeaf?.filePath && dirtyFiles.has(editorLeaf.filePath) ? '● ' : '';
+                      })()}{tab.label}
                     </span>
                   )}
                   {(tab.tabType === 'claude' || tab.tabType === 'codex' || tab.tabType === 'claude-chat' || tab.tabType === 'codex-chat') && (
@@ -2522,6 +2560,16 @@ function parseChatMetadata(msg: any): { threadId?: string; model?: string; reaso
   } catch {
     return {};
   }
+}
+
+function collectLeavesFromPane(pane: Pane): PaneLeaf[] {
+  if (pane.type === 'terminal' || pane.type === 'editor' || pane.type === 'chat' || pane.type === 'diagnostics') {
+    return [pane as PaneLeaf];
+  }
+  if ('children' in pane) {
+    return pane.children.flatMap(collectLeavesFromPane);
+  }
+  return [];
 }
 
 function findPaneById(pane: Pane, paneId: string): Pane | null {

@@ -110,6 +110,10 @@ export function EmitWorkspaceDeleted(arg1, arg2) {
   return window['go']['main']['App']['EmitWorkspaceDeleted'](arg1, arg2);
 }
 
+export function FormatFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['FormatFile'](arg1, arg2, arg3);
+}
+
 export function GetAgentNames(arg1) {
   return window['go']['main']['App']['GetAgentNames'](arg1);
 }
@@ -144,6 +148,10 @@ export function GetConfig(arg1) {
 
 export function GetFileDiff(arg1, arg2) {
   return window['go']['main']['App']['GetFileDiff'](arg1, arg2);
+}
+
+export function GetFormatOnSaveExtensions(arg1) {
+  return window['go']['main']['App']['GetFormatOnSaveExtensions'](arg1);
 }
 
 export function GetGitStatus(arg1) {
@@ -210,6 +218,10 @@ export function GitPush(arg1) {
   return window['go']['main']['App']['GitPush'](arg1);
 }
 
+export function IsLSPRunning(arg1) {
+  return window['go']['main']['App']['IsLSPRunning'](arg1);
+}
+
 export function IsTerminalBusy(arg1) {
   return window['go']['main']['App']['IsTerminalBusy'](arg1);
 }
@@ -242,6 +254,10 @@ export function LaunchShell(arg1, arg2) {
   return window['go']['main']['App']['LaunchShell'](arg1, arg2);
 }
 
+export function LintFile(arg1, arg2) {
+  return window['go']['main']['App']['LintFile'](arg1, arg2);
+}
+
 export function ListClaudeChatHistory(arg1, arg2) {
   return window['go']['main']['App']['ListClaudeChatHistory'](arg1, arg2);
 }
@@ -260,6 +276,10 @@ export function ListCodexChatSessions(arg1) {
 
 export function ListDirectory(arg1, arg2) {
   return window['go']['main']['App']['ListDirectory'](arg1, arg2);
+}
+
+export function ListLSPServers() {
+  return window['go']['main']['App']['ListLSPServers']();
 }
 
 export function ListTerminals() {
@@ -326,6 +346,10 @@ export function RevealInFinder(arg1) {
   return window['go']['main']['App']['RevealInFinder'](arg1);
 }
 
+export function RunOnSave(arg1, arg2) {
+  return window['go']['main']['App']['RunOnSave'](arg1, arg2);
+}
+
 export function SaveTabs(arg1) {
   return window['go']['main']['App']['SaveTabs'](arg1);
 }
@@ -350,12 +374,24 @@ export function SendCodexChatMessage(arg1, arg2, arg3) {
   return window['go']['main']['App']['SendCodexChatMessage'](arg1, arg2, arg3);
 }
 
+export function SendLSPMessage(arg1, arg2) {
+  return window['go']['main']['App']['SendLSPMessage'](arg1, arg2);
+}
+
+export function SendLSPRequest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SendLSPRequest'](arg1, arg2, arg3);
+}
+
 export function SetActiveProject(arg1) {
   return window['go']['main']['App']['SetActiveProject'](arg1);
 }
 
 export function SetClipboard(arg1) {
   return window['go']['main']['App']['SetClipboard'](arg1);
+}
+
+export function StartLSP(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartLSP'](arg1, arg2, arg3);
 }
 
 export function StartServers(arg1, arg2, arg3) {
@@ -370,10 +406,18 @@ export function StopCodexChat(arg1) {
   return window['go']['main']['App']['StopCodexChat'](arg1);
 }
 
+export function StopLSP(arg1) {
+  return window['go']['main']['App']['StopLSP'](arg1);
+}
+
 export function StopServers(arg1) {
   return window['go']['main']['App']['StopServers'](arg1);
 }
 
 export function WatchWorkspace(arg1) {
   return window['go']['main']['App']['WatchWorkspace'](arg1);
+}
+
+export function WriteFileContents(arg1, arg2) {
+  return window['go']['main']['App']['WriteFileContents'](arg1, arg2);
 }
