@@ -10,10 +10,29 @@ struct ContentView: View {
 
 struct MainView: View {
     @Environment(AppState.self) private var state
+    @State private var chatBackSwipeOffset: CGFloat = 0
+    @State private var homeRefreshRequest = 0
+    @State private var isHomeRefreshing = false
+
+    private var showingChatSession: Bool {
+        !state.showHome && state.activeSession != nil && state.activeSessionShowsChat
+    }
+
+    private var chatBackSwipeProgress: CGFloat {
+        guard showingChatSession else { return 0 }
+        let screenWidth = max(UIScreen.main.bounds.width, 1)
+        return min(max(chatBackSwipeOffset / screenWidth, 0), 1)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HeaderBar()
-            if !state.showHome && (state.activeWorkspace != nil || !state.visibleTabs.isEmpty) { TabStrip() }
+            if !showingChatSession {
+                HeaderBar(
+                    onRefreshHome: state.showHome ? { homeRefreshRequest += 1 } : nil,
+                    isHomeRefreshing: isHomeRefreshing
+                )
+                if !state.showHome && (state.activeWorkspace != nil || !state.visibleTabs.isEmpty) { TabStrip() }
+            }
             if state.isReconnecting {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini).tint(OrionTheme.accentYellow)
@@ -33,11 +52,26 @@ struct MainView: View {
             }
             ZStack {
                 OrionTheme.bgTerminal.ignoresSafeArea()
-                if let activeSession = state.activeSession,
+                if state.showHome {
+                    MobileHomeView(refreshRequest: homeRefreshRequest, isRefreshing: $isHomeRefreshing)
+                } else if let activeSession = state.activeSession,
                    state.activeSessionShowsChat,
                    let connection = state.activeChatConnection,
-                   connection.sessionId == activeSession.chatConnectionId {
-                    CodexChatView(connection: connection)
+                    connection.sessionId == activeSession.chatConnectionId {
+                    VStack(spacing: 0) {
+                        HeaderBar(
+                            onRefreshHome: { homeRefreshRequest += 1 },
+                            isHomeRefreshing: isHomeRefreshing
+                        )
+                        MobileHomeView(refreshRequest: homeRefreshRequest, isRefreshing: $isHomeRefreshing)
+                    }
+                    .offset(x: -28 * (1 - chatBackSwipeProgress))
+                    .scaleEffect(0.985 + (chatBackSwipeProgress * 0.015), anchor: .leading)
+                    .opacity(0.72 + (chatBackSwipeProgress * 0.28))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    CodexChatView(connection: connection, backSwipeOffset: $chatBackSwipeOffset)
+                        .zIndex(1)
                     if connection.connectionState == .failed {
                         VStack(spacing: 10) {
                             Image(systemName: "wifi.exclamationmark")
@@ -128,6 +162,11 @@ struct MainView: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
+        .onChange(of: showingChatSession) { _, isShowing in
+            if !isShowing {
+                chatBackSwipeOffset = 0
+            }
+        }
     }
 
 }
@@ -136,6 +175,8 @@ struct MainView: View {
 
 struct HeaderBar: View {
     @Environment(AppState.self) private var state
+    var onRefreshHome: (() -> Void)?
+    var isHomeRefreshing = false
     @State private var serverStatuses: [ServerStatus] = []
     @State private var isChangingServers = false
     @State private var diffStats: DiffStats?
@@ -148,11 +189,11 @@ struct HeaderBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Button {
-                state.showWorkspaces = true
+                state.showHome = true
             } label: {
-                Image(systemName: "sidebar.left")
+                Image(systemName: state.showHome ? "folder.fill" : "folder")
                     .font(.system(size: 18))
-                    .foregroundStyle(OrionTheme.textSecondary)
+                    .foregroundStyle(state.showHome ? OrionTheme.textPrimary : OrionTheme.textSecondary)
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
@@ -181,6 +222,26 @@ struct HeaderBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isChangingServers)
+            }
+
+            if let onRefreshHome {
+                Button {
+                    onRefreshHome()
+                } label: {
+                    if isHomeRefreshing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(OrionTheme.textSecondary)
+                            .frame(width: 30, height: 30)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                            .frame(width: 30, height: 30)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isHomeRefreshing)
             }
 
             Button { state.showSettings = true } label: {
@@ -418,19 +479,14 @@ private struct WorkspaceEmptyView: View {
 
 private struct MobileHomeView: View {
     @Environment(AppState.self) private var state
+    let refreshRequest: Int
+    @Binding var isRefreshing: Bool
     @State private var serverStatusesByWorkspace: [String: [ServerStatus]] = [:]
     @State private var changedFiles: [GitChangedFile] = []
-    @State private var loadingHome = false
     @State private var showQuickAsk = false
     @State private var detailWorkspace: Workspace?
-
-    private var projectSubtitle: String {
-        let projectCount = state.workspaces.count
-        let projectRoot = state.projectInfo?.root ?? state.selectedProject ?? ""
-        let folder = (projectRoot as NSString).lastPathComponent
-        if folder.isEmpty { return "\(projectCount) workspace\(projectCount == 1 ? "" : "s")" }
-        return "\(folder) · \(projectCount) workspace\(projectCount == 1 ? "" : "s")"
-    }
+    @State private var expandedWorkspacePaths: Set<String> = []
+    @State private var didInitializeExpandedWorkspaces = false
 
     private var featuredSession: SessionInfo? {
         if let active = state.activeSession, active.isChat { return active }
@@ -443,13 +499,11 @@ private struct MobileHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                homeHero
-                readyCard
+            VStack(alignment: .leading, spacing: 16) {
                 workspaceList
             }
             .padding(.horizontal, 16)
-            .padding(.top, 18)
+            .padding(.top, 14)
             .padding(.bottom, 96)
         }
         .background(OrionTheme.bgTerminal)
@@ -459,6 +513,9 @@ private struct MobileHomeView: View {
         }
         .task { await loadHome() }
         .onChange(of: state.activeWorkspacePath) { _, _ in
+            Task { await loadHome() }
+        }
+        .onChange(of: refreshRequest) { _, _ in
             Task { await loadHome() }
         }
         .sheet(isPresented: $showQuickAsk) {
@@ -484,68 +541,9 @@ private struct MobileHomeView: View {
         }
     }
 
-    private var homeHero: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(state.isConnected ? OrionTheme.accentGreen : OrionTheme.accentRed)
-                    .frame(width: 7, height: 7)
-                Text(state.isConnected ? "Connected" : "Offline")
-                    .font(.system(size: 13))
-                    .foregroundStyle(OrionTheme.textDim)
-                Spacer()
-                Button {
-                    Task { await loadHome() }
-                } label: {
-                    if loadingHome {
-                        ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(OrionTheme.textDim)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(alignment: .center, spacing: 14) {
-                OrionMarkView(size: 46)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("orion")
-                        .font(.system(size: 31, weight: .bold))
-                        .foregroundStyle(OrionTheme.textPrimary)
-                    Text(projectSubtitle)
-                        .font(.system(size: 14, design: .monospaced))
-                        .foregroundStyle(OrionTheme.textDim)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Menu {
-                    Button { state.showWorkspaces = true } label: {
-                        Label("Workspaces", systemImage: "sidebar.left")
-                    }
-                    Button { state.showDiffReview = true } label: {
-                        Label("Review diff", systemImage: "doc.text.magnifyingglass")
-                    }
-                    Button { showQuickAsk = true } label: {
-                        Label("Ask agent", systemImage: "paperplane")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(OrionTheme.textSecondary)
-                        .frame(width: 42, height: 42)
-                        .background(OrionTheme.bgSurface)
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
     private var readyCard: some View {
         let session = featuredSession
-        let label = session?.label ?? "Codex"
+        let label = session.map(sessionDisplayLabel) ?? "Codex"
         return HStack(spacing: 12) {
             AgentSigilView(sessionIconID(session), size: 38)
             VStack(alignment: .leading, spacing: 4) {
@@ -597,14 +595,14 @@ private struct MobileHomeView: View {
     }
 
     private var workspaceList: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Workspaces")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(OrionTheme.textDim)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(OrionTheme.textPrimary)
                 Spacer()
                 Text("\(state.workspaces.count)")
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundStyle(OrionTheme.textDim)
             }
             ForEach(state.workspaces) { workspace in
@@ -612,9 +610,21 @@ private struct MobileHomeView: View {
                     workspace: workspace,
                     sessions: state.sessions.filter { $0.workspacePath == workspace.path && $0.type != "server" },
                     servers: serverStatusesByWorkspace[workspace.path] ?? [],
+                    isExpanded: expandedWorkspacePaths.contains(workspace.path),
+                    onToggleExpanded: { toggleWorkspace(workspace.path) },
                     onOpenDetail: { detailWorkspace = workspace },
                     onRefresh: { await loadHome() }
                 )
+            }
+        }
+    }
+
+    private func toggleWorkspace(_ path: String) {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            if expandedWorkspacePaths.contains(path) {
+                expandedWorkspacePaths.remove(path)
+            } else {
+                expandedWorkspacePaths.insert(path)
             }
         }
     }
@@ -651,8 +661,8 @@ private struct MobileHomeView: View {
     }
 
     private func loadHome() async {
-        loadingHome = true
-        defer { loadingHome = false }
+        isRefreshing = true
+        defer { isRefreshing = false }
 
         await state.refreshSessions()
         var statuses: [String: [ServerStatus]] = [:]
@@ -666,6 +676,14 @@ private struct MobileHomeView: View {
         } catch {
             changedFiles = []
         }
+
+        let workspacePaths = Set(state.workspaces.map(\.path))
+        if !didInitializeExpandedWorkspaces {
+            expandedWorkspacePaths = workspacePaths
+            didInitializeExpandedWorkspaces = true
+        } else {
+            expandedWorkspacePaths.formIntersection(workspacePaths)
+        }
     }
 
     private func workspaceName(for path: String) -> String {
@@ -678,6 +696,8 @@ private struct MobileWorkspaceCard: View {
     let workspace: Workspace
     let sessions: [SessionInfo]
     let servers: [ServerStatus]
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
     let onOpenDetail: () -> Void
     let onRefresh: () async -> Void
     @State private var showingCodexOptions = false
@@ -689,15 +709,15 @@ private struct MobileWorkspaceCard: View {
     private var runningServers: [ServerStatus] { servers.filter(\.running) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             Button {
-                onOpenDetail()
+                onToggleExpanded()
             } label: {
                 HStack(alignment: .center, spacing: 10) {
-                    Circle()
-                        .fill(statusDotColor)
-                        .frame(width: 9, height: 9)
-                        .shadow(color: statusDotColor.opacity(isActiveWorkspace ? 0.55 : 0), radius: 5)
+                    Image(systemName: isExpanded ? "folder.fill" : "folder")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(isActiveWorkspace ? OrionTheme.accentBlue : OrionTheme.textSecondary)
+                        .frame(width: 24)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 7) {
                             Text(workspace.name)
@@ -720,137 +740,162 @@ private struct MobileWorkspaceCard: View {
                             .lineLimit(1)
                     }
                     Spacer()
-                    Text(statusText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(statusDotColor)
+                    if hasTurnCue {
+                        HStack(spacing: 5) {
+                            Circle().fill(OrionTheme.accentBlue).frame(width: 6, height: 6)
+                            Text("Your turn")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OrionTheme.accentBlue)
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                        .background(OrionTheme.accentBlue.opacity(0.1))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(OrionTheme.accentBlue.opacity(0.25), lineWidth: 0.6))
+                    } else {
+                        Text(statusText)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(statusDotColor)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            if sessions.isEmpty {
-                HStack(spacing: 9) {
-                    AgentSigilView("codex-chat", size: 25)
-                    Text("No live sessions")
-                        .font(.system(size: 13))
-                        .foregroundStyle(OrionTheme.textDim)
-                    Spacer()
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    if sessions.isEmpty {
+                        HStack(spacing: 9) {
+                            AgentSigilView("codex-chat", size: 25)
+                            Text("No live sessions")
+                                .font(.system(size: 13))
+                                .foregroundStyle(OrionTheme.textDim)
+                            Spacer()
+                        }
+                        .padding(.vertical, 10)
+                    } else {
+                        ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                            SwipeDeleteSessionRow(
+                                session: session,
+                                isActive: state.activeSession?.id == session.id,
+                                onOpen: {
+                                    Task {
+                                        do { try await state.activateSession(session) }
+                                        catch { state.showTransientError("Failed to open session: \(error.localizedDescription)") }
+                                    }
+                                },
+                                onDelete: {
+                                    Task { await state.killSession(session) }
+                                }
+                            ) {
+                                HomeSessionRow(
+                                    session: session,
+                                    isActive: state.activeSession?.id == session.id
+                                )
+                            }
+                            .overlay(alignment: .bottom) {
+                                if index < sessions.count - 1 {
+                                    OrionTheme.borderDim.frame(height: 0.5)
+                                }
+                            }
+                        }
+                    }
                 }
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(Array(sessions.prefix(3))) { session in
+                .padding(.leading, 3)
+            }
+
+            if isExpanded {
+                HStack(spacing: 10) {
+                    Menu {
+                        if !state.agentTypes.isEmpty {
+                            ForEach(state.agentTypes) { agent in
+                                Button {
+                                    Task {
+                                        do {
+                                            _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
+                                            await onRefresh()
+                                        } catch {
+                                            state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
+                                        }
+                                    }
+                                } label: {
+                                    Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
+                                }
+                            }
+                            Divider()
+                        }
                         Button {
                             Task {
-                                do { try await state.activateSession(session) }
-                                catch { state.showTransientError("Failed to open session: \(error.localizedDescription)") }
+                                do {
+                                    try await state.launchShell(workspacePath: workspace.path)
+                                    await onRefresh()
+                                } catch {
+                                    state.showTransientError("Failed to start shell: \(error.localizedDescription)")
+                                }
                             }
                         } label: {
-                            HomeSessionRow(
-                                session: session,
-                                isActive: state.activeSession?.id == session.id
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if sessions.count > 3 {
-                        Text("+ \(sessions.count - 3) more session\(sessions.count - 3 == 1 ? "" : "s")")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(OrionTheme.textDim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-
-            if !runningServers.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(runningServers) { server in
-                            HStack(spacing: 5) {
-                                Circle().fill(OrionTheme.accentGreen).frame(width: 6, height: 6)
-                                Text("\(server.name):\(server.port)")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(OrionTheme.textDim)
-                            }
-                        }
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                Menu {
-                    if !state.agentTypes.isEmpty {
-                        ForEach(state.agentTypes) { agent in
-                            Button {
-                                Task {
-                                    do {
-                                        _ = try await state.launchPreferredAgent(workspacePath: workspace.path, agent: agent)
-                                        await onRefresh()
-                                    } catch {
-                                        state.showTransientError("Failed to start \(agent.label): \(error.localizedDescription)")
-                                    }
-                                }
-                            } label: {
-                                Label(agent.label, systemImage: agentIcon(agent.provider ?? agent.name))
-                            }
-                        }
-                        Divider()
-                    }
-                    Button {
-                        Task {
-                            do {
-                                try await state.launchShell(workspacePath: workspace.path)
-                                await onRefresh()
-                            } catch {
-                                state.showTransientError("Failed to start shell: \(error.localizedDescription)")
-                            }
+                            Label("Shell", systemImage: "terminal")
                         }
                     } label: {
-                        Label("Shell", systemImage: "terminal")
-                    }
-                } label: {
-                    Label("New", systemImage: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(OrionTheme.textPrimary)
-                        .padding(.horizontal, 11)
-                        .frame(height: 32)
-                        .background(OrionTheme.bgActive)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                if !servers.isEmpty {
-                    Button {
-                        Task {
-                            serverBusy = true
-                            if runningServers.isEmpty {
-                                await state.startServers(workspace: workspace)
-                            } else {
-                                await state.stopServers(workspace: workspace)
-                            }
-                            await onRefresh()
-                            serverBusy = false
-                        }
-                    } label: {
-                        if serverBusy {
-                            ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
-                        } else {
-                            Label(runningServers.isEmpty ? "Servers" : "Stop", systemImage: runningServers.isEmpty ? "play.fill" : "stop.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(runningServers.isEmpty ? OrionTheme.accentGreen : OrionTheme.accentRed)
-                        }
+                        Label("New", systemImage: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textPrimary)
+                            .padding(.horizontal, 11)
+                            .frame(height: 32)
+                            .background(OrionTheme.bgActive)
+                            .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .disabled(serverBusy)
+
+                    Button(action: onOpenDetail) {
+                        Label("Details", systemImage: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    if !servers.isEmpty {
+                        Button {
+                            Task {
+                                serverBusy = true
+                                if runningServers.isEmpty {
+                                    await state.startServers(workspace: workspace)
+                                } else {
+                                    await state.stopServers(workspace: workspace)
+                                }
+                                await onRefresh()
+                                serverBusy = false
+                            }
+                        } label: {
+                            if serverBusy {
+                                ProgressView().controlSize(.mini).tint(OrionTheme.textSecondary)
+                            } else {
+                                Label(runningServers.isEmpty ? "Servers" : "Stop", systemImage: runningServers.isEmpty ? "play.fill" : "stop.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(runningServers.isEmpty ? OrionTheme.accentGreen : OrionTheme.accentRed)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(serverBusy)
+                    }
                 }
+                .padding(.top, 4)
             }
         }
-        .padding(14)
-        .background(isActiveWorkspace ? OrionTheme.bgSurface : OrionTheme.bgSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 2)
+        .padding(.vertical, 10)
+        .background(Color.clear)
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isActiveWorkspace ? OrionTheme.accentBlue.opacity(0.22) : OrionTheme.borderDim, lineWidth: 0.8)
+            Rectangle()
+                .fill(OrionTheme.borderDim)
+                .frame(height: 0.5),
+            alignment: .bottom
         )
         .sheet(isPresented: $showingCodexOptions) {
             CodexLaunchOptionsSheet(
@@ -876,6 +921,8 @@ private struct MobileWorkspaceCard: View {
     }
 
     private var statusText: String {
+        if hasTurnCue { return "Your turn" }
+        if hasWorkingCue { return "Working" }
         if activeSessionInWorkspace { return "Open" }
         if !sessions.isEmpty { return "\(sessions.count) session\(sessions.count == 1 ? "" : "s")" }
         if !runningServers.isEmpty { return "Servers" }
@@ -883,7 +930,17 @@ private struct MobileWorkspaceCard: View {
         return "Idle"
     }
 
+    private var hasTurnCue: Bool {
+        sessions.contains(where: sessionNeedsInput)
+    }
+
+    private var hasWorkingCue: Bool {
+        sessions.contains(where: sessionIsWorking)
+    }
+
     private var statusDotColor: Color {
+        if hasTurnCue { return OrionTheme.accentBlue }
+        if hasWorkingCue { return OrionTheme.accentYellow }
         if activeSessionInWorkspace { return OrionTheme.accentBlue }
         if !sessions.isEmpty || !runningServers.isEmpty { return OrionTheme.accentGreen }
         if isActiveWorkspace { return OrionTheme.accentBlue }
@@ -899,7 +956,7 @@ private struct HomeSessionRow: View {
         HStack(spacing: 9) {
             AgentSigilView(sessionIconID(session), size: 25)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.label)
+                Text(sessionDisplayLabel(session))
                     .font(.system(size: 13.5, weight: .medium))
                     .foregroundStyle(OrionTheme.textSecondary)
                     .lineLimit(1)
@@ -917,10 +974,128 @@ private struct HomeSessionRow: View {
                 .lineLimit(1)
             }
             Spacer()
-            Circle()
-                .fill(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
-                .frame(width: 7, height: 7)
-                .opacity(isActive ? 1 : 0.7)
+            if sessionNeedsInput(session) {
+                HStack(spacing: 5) {
+                    Circle().fill(OrionTheme.accentBlue).frame(width: 6, height: 6)
+                    Text("Your turn")
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(OrionTheme.accentBlue)
+            } else if sessionIsWorking(session) {
+                HStack(spacing: 5) {
+                    Circle().fill(OrionTheme.accentYellow).frame(width: 6, height: 6)
+                    Text("Working")
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(OrionTheme.accentYellow)
+            } else {
+                Circle()
+                    .fill(isActive ? OrionTheme.accentBlue : OrionTheme.textDim)
+                    .frame(width: 7, height: 7)
+                    .opacity(isActive ? 1 : 0.7)
+            }
+        }
+    }
+}
+
+private struct SwipeDeleteSessionRow<Content: View>: View {
+    let session: SessionInfo
+    let isActive: Bool
+    let onOpen: () -> Void
+    let onDelete: () -> Void
+    private let content: Content
+
+    @State private var offset: CGFloat = 0
+    @State private var dragStartOffset: CGFloat?
+    @State private var isDeleting = false
+
+    private let actionWidth: CGFloat = 86
+
+    init(
+        session: SessionInfo,
+        isActive: Bool,
+        onOpen: @escaping () -> Void,
+        onDelete: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.session = session
+        self.isActive = isActive
+        self.onOpen = onOpen
+        self.onDelete = onDelete
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(role: .destructive) {
+                guard !isDeleting else { return }
+                isDeleting = true
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.88)) {
+                    offset = 0
+                }
+                onDelete()
+            } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "trash.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Delete")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: actionWidth)
+                .frame(maxHeight: .infinity)
+            }
+            .buttonStyle(.plain)
+            .background(OrionTheme.accentRed)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            Button {
+                if offset < 0 {
+                    close()
+                } else {
+                    onOpen()
+                }
+            } label: {
+                content
+                    .padding(.vertical, 11)
+                    .padding(.horizontal, 1)
+                    .background(OrionTheme.bgTerminal)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .offset(x: offset)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                    .onChanged { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        let base = dragStartOffset ?? offset
+                        dragStartOffset = base
+                        let next = base + value.translation.width
+                        offset = min(0, max(-actionWidth, next))
+                    }
+                    .onEnded { value in
+                        dragStartOffset = nil
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        if value.translation.width < -actionWidth * 0.42 || value.predictedEndTranslation.width < -actionWidth {
+                            open()
+                        } else {
+                            close()
+                        }
+                    }
+            )
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func open() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+            offset = -actionWidth
+        }
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+            offset = 0
         }
     }
 }
@@ -958,8 +1133,8 @@ private struct QuickAskSheet: View {
 
                 Section("Agent") {
                     Picker("Agent", selection: $provider) {
-                        Text("Codex Chat").tag("codex-chat")
-                        Text("Claude Chat").tag("claude-chat")
+                        Text("Codex").tag("codex-chat")
+                        Text("Claude").tag("claude-chat")
                     }
                     .pickerStyle(.segmented)
                     if provider == "codex-chat" {
@@ -1698,7 +1873,7 @@ private struct DetailSessionRow: View {
         HStack(spacing: 11) {
             AgentSigilView(sessionIconID(session), size: 30)
             VStack(alignment: .leading, spacing: 3) {
-                Text(session.label)
+                Text(sessionDisplayLabel(session))
                     .font(.system(size: 14.5, weight: .semibold))
                     .foregroundStyle(OrionTheme.textPrimary)
                     .lineLimit(1)
@@ -1991,8 +2166,8 @@ struct WorkspaceSection: View {
                     HStack(spacing: 10) {
                         AgentSigilView(sessionIconID(session), size: 26)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(session.label).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
-                            Text(session.type.replacingOccurrences(of: "-chat", with: " chat"))
+                            Text(sessionDisplayLabel(session)).font(.system(size: 14, weight: .medium)).foregroundStyle(OrionTheme.textPrimary)
+                            Text(sessionLabel(session.type))
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(OrionTheme.textDim)
                         }
@@ -2156,10 +2331,8 @@ private struct NewWorktreeSheet: View {
     @State private var draft: NewWorktreeDraft
 
     private let starts = [
-        ("codex-chat", "Codex Chat"),
-        ("claude-chat", "Claude Chat"),
-        ("codex", "Codex CLI"),
-        ("claude", "Claude CLI"),
+        ("codex-chat", "Codex"),
+        ("claude-chat", "Claude"),
         ("shell", "Shell"),
         ("none", "Nothing")
     ]
@@ -2552,7 +2725,7 @@ private struct CodexLaunchOptionsSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(OrionTheme.bgPrimary)
-            .navigationTitle("Codex Chat")
+            .navigationTitle("Codex")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -2703,7 +2876,7 @@ struct TabPill: View {
             Button { state.activateTab(tab.id) } label: {
                 HStack(spacing: 7) {
                     AgentSigilView(tab.icon ?? tab.type, size: 20)
-                    Text(tab.label)
+                    Text(tabDisplayLabel(tab))
                         .font(.system(size: 12, weight: isActive ? .medium : .regular))
                         .foregroundStyle(isActive ? OrionTheme.textPrimary : OrionTheme.textDim)
                         .lineLimit(1)
@@ -2714,7 +2887,21 @@ struct TabPill: View {
                 .frame(height: 30)
             }
             .buttonStyle(.plain)
-            if isConvertibleSession(tab.type) {
+            if let session = state.sessions.first(where: { $0.id == tab.id || $0.tmuxName == tab.tmuxSession }),
+               state.isTranscriptChatCapable(session) {
+                Button {
+                    Task {
+                        do { try await state.showChatView(for: session) }
+                        catch { state.showTransientError("Failed to open chat: \(error.localizedDescription)") }
+                    }
+                } label: {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .frame(width: 22, height: 30)
+                }
+                .buttonStyle(.plain)
+            } else if isConvertibleSession(tab.type) {
                 Button {
                     if let session = state.sessions.first(where: { $0.id == tab.id || $0.tmuxName == tab.tmuxSession }) {
                         Task { await state.convertSession(session) }
@@ -2758,13 +2945,43 @@ func sessionIcon(_ type: String) -> String {
 
 func sessionLabel(_ type: String) -> String {
     switch type {
-    case "claude": return "Claude CLI"
-    case "claude-chat": return "Claude chat"
-    case "codex-chat": return "Codex chat"
-    case "codex": return "Codex CLI"
+    case "claude", "claude-chat": return "Claude"
+    case "codex", "codex-chat": return "Codex"
     case "server": return "Server"
     case "shell": return "Shell"
     default: return type.replacingOccurrences(of: "-", with: " ")
+    }
+}
+
+func sessionDisplayLabel(_ session: SessionInfo) -> String {
+    let label = session.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch label.lowercased() {
+    case "claude cli", "claude chat":
+        return "Claude"
+    case "codex cli", "codex chat":
+        return "Codex"
+    default:
+        return label.isEmpty ? sessionLabel(session.type) : label
+    }
+}
+
+func sessionNeedsInput(_ session: SessionInfo) -> Bool {
+    session.status == "waiting_input"
+}
+
+func sessionIsWorking(_ session: SessionInfo) -> Bool {
+    session.status == "running" || session.status == "starting"
+}
+
+func tabDisplayLabel(_ tab: TerminalTab) -> String {
+    let label = tab.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch label.lowercased() {
+    case "claude cli", "claude chat":
+        return "Claude"
+    case "codex cli", "codex chat":
+        return "Codex"
+    default:
+        return label.isEmpty ? sessionLabel(tab.type) : label
     }
 }
 
@@ -2949,6 +3166,30 @@ private struct CodexChatRow: Identifiable {
     var answerText: String? = nil
 }
 
+private struct ToolRunGroup: Identifiable {
+    let id: String
+    let rows: [CodexChatRow]
+}
+
+private struct RunActivityGroup: Identifiable {
+    let id: String
+    let rows: [CodexChatRow]
+}
+
+private enum ChatRenderItem: Identifiable {
+    case row(CodexChatRow)
+    case toolGroup(ToolRunGroup)
+    case runActivity(RunActivityGroup)
+
+    var id: String {
+        switch self {
+        case .row(let row): return row.id
+        case .toolGroup(let group): return group.id
+        case .runActivity(let group): return group.id
+        }
+    }
+}
+
 private struct StructuredQuestionPayload: Decodable {
     let questions: [StructuredQuestion]
 }
@@ -3066,6 +3307,59 @@ private struct MarkdownChatText: View {
     }
 }
 
+private struct AgentCompletionTrigger {
+    let symbol: String
+    let query: String
+    let kind: String
+}
+
+private struct AgentCompletionMenu: View {
+    let items: [AgentCompletion]
+    let onSelect: (AgentCompletion) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(items) { item in
+                Button {
+                    onSelect(item)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: item.kind == "slash-command" ? "terminal" : "sparkles")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(OrionTheme.textDim)
+                            .frame(width: 22, height: 26)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(OrionTheme.textPrimary)
+                                .lineLimit(1)
+                            if let description = item.description, !description.isEmpty {
+                                Text(description)
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(OrionTheme.textDim)
+                                    .lineLimit(2)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        Text(item.kind == "slash-command" ? "Command" : "Skill")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OrionTheme.textSecondary)
+                    }
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(OrionTheme.bgSurface.opacity(0.98))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+        .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+    }
+}
+
 private struct MobileCopyButton: View {
     let text: String
 
@@ -3129,79 +3423,56 @@ private struct MobileToolActivityRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            AgentSigilView(sessionIcon, size: 24)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(complete ? "Tool finished" : "Tool running")
-                    .font(.system(size: 11))
-                    .foregroundStyle(OrionTheme.textDim)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.14)) {
-                            expanded.toggle()
-                        }
-                    } label: {
-                        toolHeader
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(row.label.isEmpty ? "Tool" : row.label)
-                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-
-                    if expanded {
-                        toolBody
-                            .transition(.opacity)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    expanded.toggle()
                 }
-                .frame(width: cardWidth, alignment: .leading)
-                .background(OrionTheme.bgSurface)
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.accentGreen.opacity(0.24), lineWidth: 0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            } label: {
+                toolHeader
             }
-            Spacer(minLength: 22)
+            .buttonStyle(.plain)
+            .accessibilityLabel(row.label.isEmpty ? "Tool" : row.label)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+
+            if expanded {
+                toolBody
+                    .transition(.opacity)
+            }
         }
+        .padding(.vertical, 2)
+        .background(Color.clear)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var toolHeader: some View {
-        HStack(spacing: 10) {
-            Text(toolIcon(row.label))
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundStyle(OrionTheme.accentGreen)
-                .frame(width: 28, height: 28)
-                .background(OrionTheme.accentGreen.opacity(0.13))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(OrionTheme.accentGreen.opacity(0.28), lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.label.isEmpty ? "Tool" : row.label)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(OrionTheme.textPrimary)
-                    .lineLimit(1)
-                if let toolUseId = row.toolUseId {
-                    Text(shortID(toolUseId))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(OrionTheme.textDim)
-                        .lineLimit(1)
-                }
-            }
-
+        HStack(spacing: 8) {
+            Circle()
+                .fill(complete ? OrionTheme.accentGreen : OrionTheme.accentBlue)
+                .frame(width: 6, height: 6)
+                .shadow(color: (complete ? OrionTheme.accentGreen : OrionTheme.accentBlue).opacity(0.35), radius: 4)
+            Text(toolSummary)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(OrionTheme.textDim)
+                .lineLimit(1)
             Spacer(minLength: 8)
-
-            Text(complete ? "complete" : "running")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(complete ? OrionTheme.accentGreen : OrionTheme.accentBlue)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .overlay(Capsule().stroke((complete ? OrionTheme.accentGreen : OrionTheme.accentBlue).opacity(0.42), lineWidth: 0.5))
-
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(OrionTheme.textDim)
                 .rotationEffect(.degrees(expanded ? 90 : 0))
         }
         .contentShape(Rectangle())
-        .padding(12)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
+    }
+
+    private var toolSummary: String {
+        let name = row.label.isEmpty ? "tool" : row.label
+        if commandLike {
+            if complete { return "Ran \(name)" }
+            return "Running \(name)"
+        }
+        return complete ? "\(name) finished" : "Using \(name)"
     }
 
     @ViewBuilder
@@ -3257,7 +3528,7 @@ private struct MobileToolActivityRow: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(shaded ? OrionTheme.bgTerminal.opacity(0.72) : Color.clear)
+        .background(shaded ? OrionTheme.bgSurface.opacity(0.64) : Color.clear)
         .overlay(alignment: .top) { OrionTheme.borderDim.frame(height: 0.5) }
     }
 }
@@ -3397,6 +3668,7 @@ private extension Theme {
 struct CodexChatView: View {
     @Environment(AppState.self) private var state
     let connection: CodexChatConnection
+    @Binding var backSwipeOffset: CGFloat
     @State private var input = ""
     @State private var answers: [String: String] = [:]
     @State private var submittedAnswers: [String: String] = [:]
@@ -3408,6 +3680,11 @@ struct CodexChatView: View {
     @State private var dismissedKeyboardDuringDrag = false
     @State private var chatIsNearBottom = true
     @State private var didInitialChatScroll = false
+    @State private var expandedPreviousMessages = false
+    @State private var expandedToolGroups: Set<String> = []
+    @State private var expandedRunGroups: Set<String> = []
+    @State private var expandedTaskLists: Set<String> = []
+    @State private var agentCompletions: [AgentCompletion] = []
     @FocusState private var composerFocused: Bool
 
     private let chatBottomID = "chat-bottom"
@@ -3415,14 +3692,23 @@ struct CodexChatView: View {
     private var assistantName: String { connection.displayName }
     private var assistantColor: Color { sessionColor(connection.sessionType) }
     private var sessionMetadata: ChatSessionMetadata? { chatSessionMetadata(connection.messages) }
+    private var effectiveEdgeBackSwipeOffset: CGFloat {
+        backSwipeOffset
+    }
+    private var completionProvider: String {
+        connection.sessionType.contains("claude") ? "claude" : "codex"
+    }
+    private var completionLoadKey: String {
+        "\(completionProvider)|\(connection.workspacePath)"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            compactHeader
+            chatHeader
                 .padding(.horizontal, 12)
-                .frame(height: 42)
-            .background(OrionTheme.bgSecondary)
-            .overlay(alignment: .bottom) { OrionTheme.border.frame(height: 0.5) }
+                .padding(.top, 6)
+                .padding(.bottom, 8)
+                .background(OrionTheme.bgTerminal)
 
             ScrollViewReader { proxy in
                 GeometryReader { scrollGeometry in
@@ -3436,10 +3722,12 @@ struct CodexChatView: View {
                                         .frame(maxWidth: .infinity)
                                         .padding(.top, 120)
                                 }
-                                ForEach(chatRows) { row in
-                                    chatRow(row)
-                                        .id(row.id)
-                                }
+                                chatRowsSection(
+                                    chatRows,
+                                    namespace: "transcript",
+                                    groupCompletedTools: true,
+                                    collapseCompletedRun: true
+                                )
                                 GeometryReader { bottomProxy in
                                     Color.clear
                                         .preference(
@@ -3457,7 +3745,12 @@ struct CodexChatView: View {
                         .simultaneousGesture(keyboardDismissGesture)
                         .background(OrionTheme.bgTerminal)
                         .safeAreaInset(edge: .bottom, spacing: 0) {
-                            composer
+                            VStack(spacing: 0) {
+                                if let plan = waitingPlanRow {
+                                    planApprovalBanner(plan)
+                                }
+                                composer
+                            }
                         }
                         .onPreferenceChange(ChatBottomPreferenceKey.self) { bottomY in
                             let viewportBottom = scrollGeometry.size.height
@@ -3500,6 +3793,13 @@ struct CodexChatView: View {
                 }
             }
         }
+        .offset(x: effectiveEdgeBackSwipeOffset)
+        .shadow(
+            color: .black.opacity(effectiveEdgeBackSwipeOffset > 0 ? 0.32 : 0),
+            radius: effectiveEdgeBackSwipeOffset > 0 ? 18 : 0,
+            x: -8,
+            y: 0
+        )
         .fullScreenCover(item: $expandedPlan) { plan in
             PlanReviewView(
                 plan: plan,
@@ -3518,50 +3818,92 @@ struct CodexChatView: View {
             )
         }
         .onAppear {
+            backSwipeOffset = 0
             connection.reconnectOrProbe()
         }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await loadPhotoAttachments(items) }
         }
+        .task(id: completionLoadKey) {
+            await loadAgentCompletions()
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(edgeBackSwipeGesture)
     }
 
-    private var compactHeader: some View {
-        HStack(spacing: 8) {
-            AgentSigilView(connection.sessionIcon, size: 24, strong: true)
-            Text(assistantName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OrionTheme.textPrimary)
-                .lineLimit(1)
-
-            if let mode = compactModeLabel(sessionMetadata) {
-                CompactChatChip(title: mode, tint: mode == "plan" ? OrionTheme.accentBlue : OrionTheme.textDim)
+    private var chatHeader: some View {
+        HStack(spacing: 10) {
+            Button {
+                state.showHome = true
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .frame(width: 42, height: 42)
+                    .background(OrionTheme.bgSurface.opacity(0.92))
+                    .clipShape(Circle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to sessions")
 
-            if let activity = liveActivityItems.first {
-                CompactChatChip(
-                    title: activity.value.map { "\(activity.label) \($0)" } ?? activity.label,
-                    tint: liveActivityColor(activity.kind)
-                )
-            } else {
-                Text(statusLabel)
-                    .font(.system(size: 11))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(chatTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .lineLimit(1)
+                Text(chatSubtitle)
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(OrionTheme.textDim)
                     .lineLimit(1)
             }
+            .padding(.horizontal, 14)
+            .frame(height: 46)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(OrionTheme.bgSurface.opacity(0.72))
+            .overlay(Capsule().stroke(OrionTheme.borderDim, lineWidth: 0.7))
+            .clipShape(Capsule())
 
-            Spacer(minLength: 6)
-
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(connectionBadgeColor)
-                    .frame(width: 6, height: 6)
-                Text(connectionBadgeText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(connectionBadgeForeground)
-                    .lineLimit(1)
+            Menu {
+                Button {
+                    state.showDiffReview = true
+                } label: {
+                    Label("Review diff", systemImage: "doc.text.magnifyingglass")
+                }
+                if let active = state.activeSession {
+                    Button {
+                        Task { await state.showTerminalView(for: active) }
+                    } label: {
+                        Label("Show terminal", systemImage: "terminal")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                    .frame(width: 42, height: 42)
+                    .background(OrionTheme.bgSurface.opacity(0.92))
+                    .clipShape(Circle())
             }
+            .buttonStyle(.plain)
         }
+    }
+
+    private var chatTitle: String {
+        let firstUser = chatRows.first { $0.type == "user" }?.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let firstUser, !firstUser.isEmpty {
+            return firstUser
+        }
+        return state.activeSession?.label ?? assistantName
+    }
+
+    private var chatSubtitle: String {
+        let workspace = state.activeSession?.workspacePath
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? "workspace"
+        let project = state.projectInfo?.name ?? "orion"
+        return "\(project) · \(workspace)"
     }
 
     private var statusLabel: String {
@@ -3611,6 +3953,20 @@ struct CodexChatView: View {
 
     private var liveActivityItems: [MobileLiveActivityItem] {
         liveChatActivityItems(messages: connection.messages, rows: chatRows, assistantName: assistantName)
+    }
+
+    private var waitingPlanRow: CodexChatRow? {
+        chatRows.last { $0.type == "plan" && $0.planState != "approved" }
+    }
+
+    private var chatIsActivelyRunning: Bool {
+        if chatRows.contains(where: { $0.type == "tool" && $0.toolStatus != "complete" }) {
+            return true
+        }
+        guard let status = connection.messages.reversed().first(where: { $0.type == "status" && $0.status != nil })?.status else {
+            return false
+        }
+        return status == "running" || status == "starting"
     }
 
     private func compactModeLabel(_ metadata: ChatSessionMetadata?) -> String? {
@@ -3692,10 +4048,325 @@ struct CodexChatView: View {
         }
     }
 
+    private func chatRowsSection(_ rows: [CodexChatRow], namespace: String, groupCompletedTools: Bool, collapseCompletedRun: Bool) -> some View {
+        ForEach(renderItems(for: rows, namespace: namespace, groupCompletedTools: groupCompletedTools, collapseCompletedRun: collapseCompletedRun)) { item in
+            chatRenderItem(item)
+                .id(item.id)
+        }
+    }
+
+    private func renderItems(for rows: [CodexChatRow], namespace: String, groupCompletedTools: Bool, collapseCompletedRun: Bool) -> [ChatRenderItem] {
+        let baseItems = collapseCompletedRun
+            ? collapseRunActivity(rows, namespace: namespace)
+            : rows.map { ChatRenderItem.row($0) }
+
+        guard groupCompletedTools else {
+            return baseItems
+        }
+
+        var items: [ChatRenderItem] = []
+        var pendingTools: [CodexChatRow] = []
+
+        func flushTools() {
+            guard !pendingTools.isEmpty else { return }
+            if pendingTools.count >= 2 {
+                let id = "\(namespace)-tools-\(pendingTools.first?.id ?? "first")-\(pendingTools.last?.id ?? "last")"
+                items.append(.toolGroup(ToolRunGroup(id: id, rows: pendingTools)))
+            } else if let row = pendingTools.first {
+                items.append(.row(row))
+            }
+            pendingTools.removeAll()
+        }
+
+        for item in baseItems {
+            guard case .row(let row) = item else {
+                flushTools()
+                items.append(item)
+                continue
+            }
+            if row.type == "tool", row.toolStatus == "complete" {
+                pendingTools.append(row)
+            } else {
+                flushTools()
+                items.append(.row(row))
+            }
+        }
+
+        flushTools()
+        return items
+    }
+
+    private func collapseRunActivity(_ rows: [CodexChatRow], namespace: String) -> [ChatRenderItem] {
+        var items: [ChatRenderItem] = []
+        var index = rows.startIndex
+        while index < rows.endIndex {
+            if rows[index].type == "user" {
+                items.append(.row(rows[index]))
+                let segmentStart = rows.index(after: index)
+                let segmentEnd = nextUserIndex(in: rows, after: segmentStart) ?? rows.endIndex
+                items.append(contentsOf: collapsedTurnItems(
+                    rows,
+                    range: segmentStart..<segmentEnd,
+                    namespace: "\(namespace)-turn-\(rows[index].id)"
+                ))
+                index = segmentEnd
+            } else {
+                let segmentEnd = nextUserIndex(in: rows, after: rows.index(after: index)) ?? rows.endIndex
+                items.append(contentsOf: collapsedTurnItems(
+                    rows,
+                    range: index..<segmentEnd,
+                    namespace: "\(namespace)-preamble-\(rows[index].id)"
+                ))
+                index = segmentEnd
+            }
+        }
+        return items
+    }
+
+    private func nextUserIndex(in rows: [CodexChatRow], after start: Array<CodexChatRow>.Index) -> Array<CodexChatRow>.Index? {
+        guard start < rows.endIndex else { return nil }
+        return rows[start..<rows.endIndex].firstIndex { $0.type == "user" }
+    }
+
+    private func collapsedTurnItems(_ rows: [CodexChatRow], range: Range<Array<CodexChatRow>.Index>, namespace: String) -> [ChatRenderItem] {
+        guard !range.isEmpty,
+              let finalAnswerIndex = rows[range].indices.last(where: { isFinalAnswerRow(rows[$0]) }),
+              range.lowerBound < finalAnswerIndex else {
+            return rows[range].map { .row($0) }
+        }
+
+        let activityRows = rows[range.lowerBound..<finalAnswerIndex].filter(isCollapsibleRunActivity)
+        guard !activityRows.isEmpty else {
+            return rows[range].map { .row($0) }
+        }
+
+        var items: [ChatRenderItem] = []
+        var insertedActivity = false
+        let groupID = "\(namespace)-activity-\(activityRows.first?.id ?? "start")-\(activityRows.last?.id ?? "end")"
+        for index in range {
+            let row = rows[index]
+            if index < finalAnswerIndex && isCollapsibleRunActivity(row) {
+                if !insertedActivity {
+                    items.append(.runActivity(RunActivityGroup(id: groupID, rows: activityRows)))
+                    insertedActivity = true
+                }
+                continue
+            }
+            items.append(.row(row))
+        }
+        return items
+    }
+
+    private func isFinalAnswerRow(_ row: CodexChatRow) -> Bool {
+        row.type == "assistant" && !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func isCollapsibleRunActivity(_ row: CodexChatRow) -> Bool {
+        switch row.type {
+        case "assistant", "tool", "thinking_delta", "loading", "task_list", "result":
+            return true
+        default:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private func chatRenderItem(_ item: ChatRenderItem) -> some View {
+        switch item {
+        case .row(let row):
+            chatRow(row)
+        case .toolGroup(let group):
+            toolRunGroupRow(group)
+        case .runActivity(let group):
+            runActivityRow(group)
+        }
+    }
+
+    private func previousMessagesDisclosure(count: Int) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                expandedPreviousMessages.toggle()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text("\(count) previous messages")
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                Image(systemName: expandedPreviousMessages ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .overlay(alignment: .bottom) { OrionTheme.borderDim.frame(height: 0.6) }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count) previous messages")
+        .accessibilityValue(expandedPreviousMessages ? "Expanded" : "Collapsed")
+    }
+
+    private func toolRunGroupRow(_ group: ToolRunGroup) -> some View {
+        let expanded = expandedToolGroups.contains(group.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    if expanded {
+                        expandedToolGroups.remove(group.id)
+                    } else {
+                        expandedToolGroups.insert(group.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(OrionTheme.accentGreen)
+                        .frame(width: 6, height: 6)
+                        .shadow(color: OrionTheme.accentGreen.opacity(0.35), radius: 4)
+                    Text(toolRunGroupTitle(group.rows))
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(toolRunGroupTitle(group.rows))
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(group.rows) { row in
+                        MobileToolActivityRow(row: row, sessionIcon: connection.sessionIcon)
+                            .padding(.leading, 14)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toolRunGroupTitle(_ rows: [CodexChatRow]) -> String {
+        let count = rows.count
+        let commandCount = rows.filter { toolLooksLikeCommand($0.label) }.count
+        if commandCount >= max(1, count - 1) {
+            return count == 1 ? "Ran 1 command" : "Ran \(count) commands"
+        }
+        return count == 1 ? "Used 1 tool" : "Used \(count) tools"
+    }
+
+    private func runActivityRow(_ group: RunActivityGroup) -> some View {
+        let expanded = expandedRunGroups.contains(group.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    if expanded {
+                        expandedRunGroups.remove(group.id)
+                    } else {
+                        expandedRunGroups.insert(group.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(runActivityTitle(group.rows))
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(runActivityTitle(group.rows))
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(renderItems(
+                        for: group.rows,
+                        namespace: "\(group.id)-expanded",
+                        groupCompletedTools: shouldGroupToolsInsideRunActivity(group.rows),
+                        collapseCompletedRun: false
+                    )) { item in
+                        expandedActivityRenderItem(item)
+                            .padding(.leading, renderItemNeedsActivityIndent(item) ? 12 : 0)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func shouldGroupToolsInsideRunActivity(_ rows: [CodexChatRow]) -> Bool {
+        let toolCount = rows.filter { $0.type == "tool" }.count
+        return toolCount > 0 && toolCount < rows.count
+    }
+
+    private func runActivityTitle(_ rows: [CodexChatRow]) -> String {
+        let commandCount = rows.filter { $0.type == "tool" && toolLooksLikeCommand($0.label) }.count
+        let toolCount = rows.filter { $0.type == "tool" }.count
+        let taskListCount = rows.filter { $0.type == "task_list" }.count
+        if toolCount > 0 && rows.count > toolCount {
+            return rows.count == 1 ? "1 previous message" : "\(rows.count) previous messages"
+        }
+        if commandCount > 0 && commandCount == toolCount {
+            return commandCount == 1 ? "Ran 1 command" : "Ran \(commandCount) commands"
+        }
+        if toolCount > 0 {
+            return toolCount == 1 ? "Used 1 tool" : "Used \(toolCount) tools"
+        }
+        if taskListCount > 0 {
+            return "Updated tasks"
+        }
+        return rows.count == 1 ? "1 previous message" : "\(rows.count) previous messages"
+    }
+
+    private func renderItemNeedsActivityIndent(_ item: ChatRenderItem) -> Bool {
+        switch item {
+        case .row(let row):
+            return row.type != "assistant"
+        case .toolGroup, .runActivity:
+            return true
+        }
+    }
+
+    @ViewBuilder
+    private func expandedActivityRenderItem(_ item: ChatRenderItem) -> some View {
+        switch item {
+        case .row(let row):
+            chatRow(row)
+        case .toolGroup(let group):
+            toolRunGroupRow(group)
+        case .runActivity:
+            EmptyView()
+        }
+    }
+
     @ViewBuilder
     private func chatRow(_ row: CodexChatRow) -> some View {
         if row.type == "plan" {
             planRow(row)
+        } else if row.type == "task_list" {
+            taskListRow(row)
         } else if row.type == "loading" {
             loadingRow(row)
         } else if row.type == "tool" {
@@ -3709,27 +4380,136 @@ struct CodexChatView: View {
         } else if row.type == "user" {
             HStack {
                 Spacer(minLength: 46)
-                VStack(alignment: .trailing, spacing: 5) {
-                    Text("You")
-                        .font(.system(size: 11))
-                        .foregroundStyle(OrionTheme.textDim)
-                    messageBubble(row)
-                }
+                messageBubble(row)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
-            HStack(alignment: .bottom, spacing: 8) {
-                AgentSigilView(connection.sessionIcon, size: 24)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(row.type == "permission_request" ? "\(assistantName) needs an answer" : assistantName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(OrionTheme.textDim)
-                    messageBubble(row)
-                }
-                Spacer(minLength: 46)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            assistantStreamRow(row)
         }
+    }
+
+    private func assistantStreamRow(_ row: CodexChatRow) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !row.attachments.isEmpty {
+                attachmentList(row.attachments)
+            }
+            if !row.text.isEmpty {
+                MarkdownChatText(text: row.text, type: row.type)
+            }
+            if let details = row.details, !details.isEmpty {
+                detailsView(details)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func taskListRow(_ row: CodexChatRow) -> some View {
+        let tasks = taskItems(from: row)
+        let completed = tasks.filter { taskStatusIsCompleted($0.status) }.count
+        let expanded = expandedTaskLists.contains(row.id) || chatIsActivelyRunning
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    if expandedTaskLists.contains(row.id) {
+                        expandedTaskLists.remove(row.id)
+                    } else {
+                        expandedTaskLists.insert(row.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(OrionTheme.textSecondary)
+                    Text(tasks.isEmpty ? "Tasks updated" : "\(completed) of \(tasks.count) tasks completed")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OrionTheme.textDim)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 9) {
+                    if tasks.isEmpty {
+                        MarkdownChatText(text: row.details ?? row.text, type: "assistant")
+                    } else {
+                        ForEach(Array(tasks.enumerated()), id: \.offset) { index, task in
+                            HStack(alignment: .top, spacing: 10) {
+                                taskStatusIcon(task.status)
+                                    .frame(width: 18, height: 20)
+                                Text("\(index + 1).")
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundStyle(OrionTheme.textDim)
+                                    .frame(width: 22, alignment: .trailing)
+                                Text(task.text)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(taskStatusIsCompleted(task.status) ? OrionTheme.textDim : OrionTheme.textSecondary)
+                                    .strikethrough(taskStatusIsCompleted(task.status), color: OrionTheme.textDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+                .transition(.opacity)
+            }
+        }
+        .background(OrionTheme.bgSurface.opacity(0.82))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(OrionTheme.borderDim, lineWidth: 0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func taskItems(from row: CodexChatRow) -> [(status: String, text: String)] {
+        let source = row.details ?? row.text
+        return source
+            .components(separatedBy: .newlines)
+            .compactMap { rawLine -> (status: String, text: String)? in
+                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard line.range(of: #"^\d+\.\s+"#, options: .regularExpression) != nil else { return nil }
+                var value = cleanPlanPreviewLine(line)
+                var status = "pending"
+                if value.hasPrefix("["),
+                   let end = value.firstIndex(of: "]") {
+                    status = String(value[value.index(after: value.startIndex)..<end])
+                    value = String(value[value.index(after: end)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                guard !value.isEmpty else { return nil }
+                return (status, value)
+            }
+    }
+
+    @ViewBuilder
+    private func taskStatusIcon(_ status: String) -> some View {
+        if taskStatusIsCompleted(status) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OrionTheme.accentGreen)
+        } else if status.lowercased().contains("progress") {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(OrionTheme.textSecondary)
+        } else {
+            Image(systemName: "circle")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OrionTheme.textDim)
+        }
+    }
+
+    private func taskStatusIsCompleted(_ status: String) -> Bool {
+        let value = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value == "completed" || value == "complete" || value == "done" || value == "success"
     }
 
     private func planRow(_ row: CodexChatRow) -> some View {
@@ -3829,6 +4609,48 @@ struct CodexChatView: View {
             Spacer(minLength: 22)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func planApprovalBanner(_ row: CodexChatRow) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(OrionTheme.accentYellow)
+                .frame(width: 7, height: 7)
+                .shadow(color: OrionTheme.accentYellow.opacity(0.35), radius: 5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Plan ready · awaiting approval")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OrionTheme.textPrimary)
+                Text(planApprovalSummary(row))
+                    .font(.system(size: 11))
+                    .foregroundStyle(OrionTheme.textDim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button("Approve") {
+                chatIsNearBottom = true
+                connection.approvePlan()
+            }
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(Color(hex: 0x1A1500))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(OrionTheme.accentYellow)
+            .clipShape(Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(OrionTheme.accentYellow.opacity(0.08))
+        .overlay(alignment: .top) { OrionTheme.accentYellow.opacity(0.18).frame(height: 0.5) }
+    }
+
+    private func planApprovalSummary(_ row: CodexChatRow) -> String {
+        let markdown = row.details ?? row.text
+        let insights = planInsights(markdown)
+        if insights.sections > 0 {
+            return "\(insights.sections) sections · run with current permissions"
+        }
+        return "Review or approve to continue"
     }
 
     private func loadingRow(_ row: CodexChatRow) -> some View {
@@ -4201,6 +5023,8 @@ struct CodexChatView: View {
                 }
             }
 
+            completionMenu
+
             VStack(alignment: .leading, spacing: 7) {
                 TextField("Message \(assistantName)...", text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -4256,8 +5080,74 @@ struct CodexChatView: View {
         .simultaneousGesture(keyboardDismissGesture)
     }
 
+    @ViewBuilder
+    private var completionMenu: some View {
+        if let trigger = activeCompletionTrigger {
+            let suggestions = filteredAgentCompletions(for: trigger)
+            if !suggestions.isEmpty {
+                AgentCompletionMenu(items: suggestions) { item in
+                    applyAgentCompletion(item)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
     private var canSend: Bool {
         !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty
+    }
+
+    private var activeCompletionTrigger: AgentCompletionTrigger? {
+        guard let token = trailingCompletionToken(in: input), token.count <= 64 else { return nil }
+        if token.hasPrefix("$") {
+            let rawQuery = String(token.dropFirst())
+            return AgentCompletionTrigger(symbol: "$", query: normalizedCompletionQuery(rawQuery), kind: "skill")
+        }
+        if token.hasPrefix("/") {
+            return AgentCompletionTrigger(symbol: "/", query: normalizedCompletionQuery(String(token.dropFirst())), kind: "slash-command")
+        }
+        return nil
+    }
+
+    private func filteredAgentCompletions(for trigger: AgentCompletionTrigger) -> [AgentCompletion] {
+        let query = normalizedCompletionText(trigger.query)
+        let filtered = agentCompletions.filter { item in
+            guard item.kind == trigger.kind else { return false }
+            guard !query.isEmpty else { return true }
+            let title = normalizedCompletionText(item.title)
+            let insert = normalizedCompletionText(item.insertText)
+            let description = normalizedCompletionText(item.description ?? "")
+            return title.contains(query) || insert.contains(query) || description.contains(query)
+        }
+        return Array(filtered.sorted { lhs, rhs in
+            completionRank(lhs, query: query) < completionRank(rhs, query: query)
+        }.prefix(6))
+    }
+
+    private func completionRank(_ item: AgentCompletion, query: String) -> String {
+        let title = normalizedCompletionText(item.title)
+        if !query.isEmpty && title.hasPrefix(query) {
+            return "0-\(title)"
+        }
+        if item.scope == "workspace" {
+            return "1-\(title)"
+        }
+        if item.scope == "global" {
+            return "2-\(title)"
+        }
+        return "3-\(title)"
+    }
+
+    private func applyAgentCompletion(_ item: AgentCompletion) {
+        guard let range = trailingCompletionTokenRange(in: input) else { return }
+        input.replaceSubrange(range, with: item.insertText + " ")
+        composerFocused = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func loadAgentCompletions() async {
+        let workspacePath = connection.workspacePath.isEmpty ? (state.activeSession?.workspacePath ?? "") : connection.workspacePath
+        agentCompletions = await state.agentCompletions(provider: completionProvider, workspacePath: workspacePath)
     }
 
     private var keyboardDismissGesture: some Gesture {
@@ -4272,6 +5162,58 @@ struct CodexChatView: View {
             .onEnded { _ in
                 dismissedKeyboardDuringDrag = false
             }
+    }
+
+    private var edgeBackSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                let offset = edgeBackSwipeVisualOffset(for: value)
+                guard offset > 0 || backSwipeOffset > 0 else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    backSwipeOffset = offset
+                }
+            }
+            .onEnded { value in
+                let screenWidth = max(UIScreen.main.bounds.width, 1)
+                let horizontal = value.translation.width
+                let predictedHorizontal = value.predictedEndTranslation.width
+                let vertical = abs(value.translation.height)
+                let isHorizontalSwipe = horizontal > max(12, vertical * 1.1) || predictedHorizontal > vertical * 1.35
+                let shouldCommit = value.startLocation.x <= 36
+                    && isHorizontalSwipe
+                    && (horizontal > screenWidth * 0.28 || predictedHorizontal > screenWidth * 0.42)
+
+                if shouldCommit {
+                    dismissKeyboard()
+                    withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.88)) {
+                        backSwipeOffset = screenWidth
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        state.showHome = true
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            backSwipeOffset = 0
+                        }
+                    }
+                } else {
+                    withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.9)) {
+                        backSwipeOffset = 0
+                    }
+                }
+            }
+    }
+
+    private func edgeBackSwipeVisualOffset(for value: DragGesture.Value) -> CGFloat {
+        let screenWidth = max(UIScreen.main.bounds.width, 1)
+        let horizontal = value.translation.width
+        let vertical = abs(value.translation.height)
+        guard value.startLocation.x <= 36 else { return 0 }
+        guard horizontal > 0 else { return 0 }
+        if vertical > 8 && vertical > horizontal * 1.4 { return 0 }
+        return min(horizontal, screenWidth)
     }
 
     private func dismissKeyboard() {
@@ -4494,12 +5436,12 @@ struct CodexChatView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 320, alignment: .leading)
+        .padding(.horizontal, row.type == "user" ? 16 : 12)
+        .padding(.vertical, row.type == "user" ? 11 : 10)
+        .frame(maxWidth: row.type == "user" ? 310 : .infinity, alignment: .leading)
         .background(rowBackground(row.type))
-        .overlay(RoundedRectangle(cornerRadius: row.type == "user" ? 18 : 14, style: .continuous).stroke(rowBorder(row.type), lineWidth: 0.5))
-        .clipShape(RoundedRectangle(cornerRadius: row.type == "user" ? 18 : 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: row.type == "user" ? 22 : 14, style: .continuous).stroke(rowBorder(row.type), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: row.type == "user" ? 22 : 14, style: .continuous))
     }
 
     private func attachmentList(_ attachments: [ChatAttachmentPayload]) -> some View {
@@ -4580,7 +5522,7 @@ struct CodexChatView: View {
 
     private func rowBackground(_ type: String) -> Color {
         switch type {
-        case "user": return OrionTheme.accentBlue
+        case "user": return OrionTheme.textPrimary
         case "permission_request": return OrionTheme.accentYellow.opacity(0.08)
         default: return OrionTheme.bgSurface
         }
@@ -5288,6 +6230,44 @@ private func liveActivityColor(_ kind: String) -> Color {
     case "plan", "question": return OrionTheme.accentYellow
     default: return OrionTheme.accentBlue
     }
+}
+
+private func trailingCompletionToken(in text: String) -> String? {
+    guard let range = trailingCompletionTokenRange(in: text) else { return nil }
+    return String(text[range])
+}
+
+private func trailingCompletionTokenRange(in text: String) -> Range<String.Index>? {
+    guard let last = text.last, !completionCharacterIsWhitespace(last) else { return nil }
+    var start = text.endIndex
+    while start > text.startIndex {
+        let previous = text.index(before: start)
+        if completionCharacterIsWhitespace(text[previous]) {
+            break
+        }
+        start = previous
+    }
+    let token = String(text[start..<text.endIndex])
+    guard token.hasPrefix("$") || token.hasPrefix("/") else { return nil }
+    return start..<text.endIndex
+}
+
+private func completionCharacterIsWhitespace(_ character: Character) -> Bool {
+    character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+}
+
+private func normalizedCompletionQuery(_ value: String) -> String {
+    value.trimmingCharacters(in: CharacterSet(charactersIn: "$/"))
+}
+
+private func normalizedCompletionText(_ value: String) -> String {
+    value
+        .lowercased()
+        .replacingOccurrences(of: "$", with: "")
+        .replacingOccurrences(of: "/", with: "")
+        .replacingOccurrences(of: "-", with: "")
+        .replacingOccurrences(of: "_", with: "")
+        .replacingOccurrences(of: " ", with: "")
 }
 
 private func approvalLabel(_ value: String?) -> String? {

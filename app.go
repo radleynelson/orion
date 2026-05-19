@@ -380,6 +380,11 @@ func (a *App) ConvertChatToTerminalWithOptions(repoRoot string, workspacePath st
 		agentName, agent := a.agentForProvider(repoRoot, "claude")
 		var threadID string
 		if session, ok := a.claudeMgr.Get(sessionID); ok {
+			if session.IsTmuxAttached() {
+				tmuxSession := session.TmuxSession()
+				session.Detach()
+				return tmuxSession, nil
+			}
 			info := session.Info()
 			threadID = strings.TrimSpace(info.ThreadID)
 			model = firstNonEmpty(model, info.Model)
@@ -398,6 +403,11 @@ func (a *App) ConvertChatToTerminalWithOptions(repoRoot string, workspacePath st
 		agentName, _ := a.agentForProvider(repoRoot, "codex")
 		var threadID string
 		if session, ok := a.codexMgr.Get(sessionID); ok {
+			if session.IsTmuxAttached() {
+				tmuxSession := session.TmuxSession()
+				session.Detach()
+				return tmuxSession, nil
+			}
 			info := session.Info()
 			threadID = strings.TrimSpace(info.ThreadID)
 			model = firstNonEmpty(model, info.Model)
@@ -492,11 +502,13 @@ func (a *App) ConvertTerminalToClaudeChatWithOptions(repoRoot string, workspaceP
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
 	}
-	threadID, err := claudechat.ResolveThreadIDForTmux(tmuxSession, workspacePath)
-	if err != nil {
-		return nil, err
+	_, agent := a.agentForProvider(repoRoot, "claude")
+	info, err := a.claudeMgr.Attach(tmuxSession, workspacePath, chatLabel(agent, "Claude Chat"))
+	if info != nil {
+		info.Icon = firstNonEmpty(agent.Icon, "claude")
+		a.claudeMgr.SetIcon(info.ID, info.Icon)
 	}
-	return a.ResumeClaudeChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, permissionMode)
+	return info, err
 }
 
 func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -511,6 +523,7 @@ func (a *App) ListClaudeChatSessions(workspacePaths []string) []state.SessionInf
 			Provider:         "claude",
 			Icon:             firstNonEmpty(info.Icon, "claude"),
 			ViewMode:         "chat",
+			Status:           info.Status,
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
 			Model:            info.Model,
@@ -631,11 +644,13 @@ func (a *App) ConvertTerminalToCodexChatWithOptions(repoRoot string, workspacePa
 	if tmuxSession == "" {
 		return nil, fmt.Errorf("tmuxSession required")
 	}
-	threadID, err := codexchat.ResolveThreadIDForTmux(tmuxSession, workspacePath)
-	if err != nil {
-		return nil, err
+	_, agent := a.agentForProvider(repoRoot, "codex")
+	info, err := a.codexMgr.Attach(tmuxSession, workspacePath, chatLabel(agent, "Codex Chat"))
+	if info != nil {
+		info.Icon = firstNonEmpty(agent.Icon, codexchat.Provider)
+		a.codexMgr.SetIcon(info.ID, info.Icon)
 	}
-	return a.ResumeCodexChatWithOptions(repoRoot, workspacePath, threadID, model, reasoningEffort, approvalPolicy, sandboxMode, collaborationMode)
+	return info, err
 }
 
 func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo {
@@ -650,6 +665,7 @@ func (a *App) ListCodexChatSessions(workspacePaths []string) []state.SessionInfo
 			Provider:          codexchat.Provider,
 			Icon:              firstNonEmpty(info.Icon, codexchat.Provider),
 			ViewMode:          codexchat.ViewModeChat,
+			Status:            info.Status,
 			RuntimeSessionID:  info.ID,
 			ThreadID:          info.ThreadID,
 			Model:             info.Model,
@@ -873,6 +889,7 @@ func (a *App) EmitSessionCreatedInfo(session state.SessionInfo) {
 		"provider":          session.Provider,
 		"icon":              session.Icon,
 		"viewMode":          session.ViewMode,
+		"status":            session.Status,
 		"runtimeSessionId":  session.RuntimeSessionID,
 		"threadId":          session.ThreadID,
 		"model":             session.Model,

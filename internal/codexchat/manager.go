@@ -59,6 +59,7 @@ type Message struct {
 	ToolUseID   string                       `json:"toolUseId,omitempty"`
 	ToolName    string                       `json:"toolName,omitempty"`
 	Details     string                       `json:"details,omitempty"`
+	PlanPath    string                       `json:"planPath,omitempty"`
 	Attachments []chatattachments.Attachment `json:"attachments,omitempty"`
 	CreatedAt   string                       `json:"createdAt"`
 }
@@ -107,6 +108,89 @@ func (m *Manager) SetListener(listener Listener) {
 
 func (m *Manager) Start(workspacePath string, label string) (*SessionInfo, error) {
 	return m.StartWithOptions(StartOptions{WorkspacePath: workspacePath, Label: label})
+}
+
+func (m *Manager) Attach(tmuxSession string, workspacePath string, label string) (*SessionInfo, error) {
+	return m.AttachSince(tmuxSession, workspacePath, label, time.Time{})
+}
+
+func (m *Manager) AttachSince(tmuxSession string, workspacePath string, label string, transcriptNotBefore time.Time) (*SessionInfo, error) {
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	workspacePath = strings.TrimSpace(workspacePath)
+	if tmuxSession == "" {
+		return nil, errors.New("tmuxSession required")
+	}
+	if strings.TrimSpace(label) == "" {
+		label = "Codex"
+	}
+	if !hasTmuxSession(tmuxSession) {
+		return nil, fmt.Errorf("tmux session not found: %s", tmuxSession)
+	}
+	if workspacePath == "" {
+		workspacePath = tmuxCurrentPath(tmuxSession)
+	}
+	if transcriptNotBefore.IsZero() {
+		transcriptNotBefore = tmuxSessionStartTime(tmuxSession)
+	}
+
+	threadID := ThreadIDForTmux(tmuxSession, workspacePath)
+	options := codexSessionMeta{}
+	if threadID != "" {
+		options = ThreadOptions(threadID)
+	}
+
+	m.mu.Lock()
+	if existing, ok := m.sessions[tmuxSession]; ok {
+		existing.messagesMu.Lock()
+		if workspacePath != "" {
+			existing.workspacePath = workspacePath
+		}
+		if !transcriptNotBefore.IsZero() {
+			existing.transcriptNotBefore = transcriptNotBefore
+		}
+		existing.label = label
+		if threadID != "" {
+			existing.threadID = threadID
+		}
+		mergeTranscriptOptions(existing, options)
+		existing.messagesMu.Unlock()
+		info := existing.Info()
+		m.mu.Unlock()
+		_ = existing.Sync()
+		return &info, nil
+	}
+
+	ctx, cancel := context.WithCancel(m.ctx)
+	session := &Session{
+		manager:             m,
+		ctx:                 ctx,
+		cancel:              cancel,
+		id:                  tmuxSession,
+		label:               label,
+		workspacePath:       workspacePath,
+		threadID:            threadID,
+		status:              "idle",
+		tmuxSession:         tmuxSession,
+		transcriptNotBefore: transcriptNotBefore,
+		pending:             make(map[string]chan rpcResponse),
+		pendingInputs:       make(map[string]pendingInput),
+		subscribers:         make(map[chan Message]struct{}),
+		agentDeltaItems:     make(map[string]bool),
+		model:               options.Model,
+		reasoningEffort:     firstNonEmptyString(options.ReasoningEffort, defaultReasoningEffort),
+		approvalPolicy:      defaultApprovalPolicy,
+		sandboxMode:         defaultSandboxMode,
+		collaborationMode:   firstNonEmptyString(options.CollaborationMode, defaultCollabMode),
+		seen:                make(map[string]bool),
+	}
+	m.sessions[tmuxSession] = session
+	m.mu.Unlock()
+
+	go session.pollLoop()
+	_ = session.Sync()
+
+	info := session.Info()
+	return &info, nil
 }
 
 func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
@@ -256,15 +340,31 @@ func (m *Manager) List(workspacePaths []string) []SessionInfo {
 		}
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	var infos []SessionInfo
-	for _, session := range m.sessions {
+	var stale []string
+	m.mu.RLock()
+	for id, session := range m.sessions {
+		if session.IsTmuxAttached() && !hasTmuxSession(session.TmuxSession()) {
+			stale = append(stale, id)
+			continue
+		}
 		info := session.Info()
 		if len(pathSet) > 0 && !pathSet[info.WorkspacePath] {
 			continue
 		}
 		infos = append(infos, info)
+	}
+	m.mu.RUnlock()
+
+	if len(stale) > 0 {
+		m.mu.Lock()
+		for _, id := range stale {
+			if session, ok := m.sessions[id]; ok && session.IsTmuxAttached() && !hasTmuxSession(session.TmuxSession()) {
+				session.detach()
+				delete(m.sessions, id)
+			}
+		}
+		m.mu.Unlock()
 	}
 	return infos
 }
@@ -312,6 +412,12 @@ type Session struct {
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
 
+	tmuxSession         string
+	transcriptPath      string
+	transcriptNotBefore time.Time
+	transcriptHints     []transcriptHint
+	seen                map[string]bool
+
 	writeMu sync.Mutex
 	sendMu  sync.Mutex
 
@@ -338,6 +444,11 @@ type pendingInput struct {
 	toolUseID      string
 	questionIDs    []string
 	submitted      bool
+}
+
+type transcriptHint struct {
+	Text  string
+	After time.Time
 }
 
 type rpcResponse struct {
@@ -392,10 +503,25 @@ func (s *Session) Subscribe() (<-chan Message, func()) {
 }
 
 func (s *Session) Send(text string, attachments []chatattachments.Attachment) error {
+	if s.IsTmuxAttached() {
+		return s.sendToTmux(text, attachments)
+	}
 	return s.send(text, attachments, s.collaborationMode)
 }
 
 func (s *Session) ApprovePlan() error {
+	if s.IsTmuxAttached() {
+		if strings.TrimSpace(s.tmuxSession) == "" {
+			return errors.New("tmux session required")
+		}
+		s.setStatus("running")
+		if out, err := exec.Command("tmux", "send-keys", "-t", s.tmuxSession, "Enter").CombinedOutput(); err != nil {
+			s.setStatus("waiting_input")
+			return fmt.Errorf("tmux approve plan failed: %v %s", err, strings.TrimSpace(string(out)))
+		}
+		s.emit(Message{Type: "plan_resolved", Text: "Plan approved"})
+		return nil
+	}
 	if err := s.send("Approved. Continue with the approved plan and implement it now.", nil, defaultCollabMode); err != nil {
 		return err
 	}
@@ -477,6 +603,18 @@ func (s *Session) send(text string, attachments []chatattachments.Attachment, co
 }
 
 func (s *Session) Answer(toolUseID string, result string) error {
+	if s.IsTmuxAttached() {
+		result = strings.TrimSpace(result)
+		if result == "" {
+			return nil
+		}
+		s.emit(Message{Type: "permission_submitted", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: result})
+		if err := s.sendToTmux(result, nil); err != nil {
+			return err
+		}
+		s.emit(Message{Type: "permission_resolved", ToolUseID: toolUseID, ToolName: "AskUserQuestion", Text: "Answered"})
+		return nil
+	}
 	toolUseID = strings.TrimSpace(toolUseID)
 	if toolUseID == "" {
 		return errors.New("toolUseId required")
@@ -522,12 +660,190 @@ func (s *Session) Answer(toolUseID string, result string) error {
 
 func (s *Session) Stop() error {
 	s.cancel()
-	_ = s.stdin.Close()
+	if s.stdin != nil {
+		_ = s.stdin.Close()
+	}
+	if s.IsTmuxAttached() {
+		_ = exec.Command("tmux", "kill-session", "-t", s.tmuxSession).Run()
+		s.setStatus("stopped")
+		s.manager.remove(s.id)
+		return nil
+	}
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
 	s.setStatus("stopped")
 	s.manager.remove(s.id)
+	return nil
+}
+
+func (s *Session) IsTmuxAttached() bool {
+	return strings.TrimSpace(s.tmuxSession) != "" && s.cmd == nil
+}
+
+func (s *Session) TmuxSession() string {
+	s.messagesMu.Lock()
+	defer s.messagesMu.Unlock()
+	return s.tmuxSession
+}
+
+func (s *Session) Detach() {
+	s.detach()
+	s.setStatus("stopped")
+	s.manager.remove(s.id)
+}
+
+func (s *Session) detach() {
+	s.cancel()
+}
+
+func (s *Session) pollLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			_ = s.Sync()
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Session) Sync() error {
+	if !s.IsTmuxAttached() {
+		return nil
+	}
+
+	s.messagesMu.Lock()
+	workspacePath := s.workspacePath
+	transcriptPath := s.transcriptPath
+	transcriptNotBefore := s.transcriptNotBefore
+	threadID := s.threadID
+	s.messagesMu.Unlock()
+
+	if workspacePath == "" {
+		workspacePath = tmuxCurrentPath(s.tmuxSession)
+		if workspacePath != "" {
+			s.messagesMu.Lock()
+			s.workspacePath = workspacePath
+			s.messagesMu.Unlock()
+		}
+	}
+
+	if threadID == "" {
+		threadID = ThreadIDForTmux(s.tmuxSession, workspacePath)
+		if threadID != "" {
+			s.messagesMu.Lock()
+			s.threadID = threadID
+			s.messagesMu.Unlock()
+		}
+	}
+	if transcriptPath == "" {
+		if path := validStampedTranscriptPath(tmuxOption(s.tmuxSession, "@orion_transcript_path"), workspacePath); path != "" {
+			transcriptPath = path
+		}
+	}
+	if transcriptPath == "" {
+		if threadID != "" {
+			transcriptPath = FindSessionFile(threadID)
+		}
+		if transcriptPath == "" {
+			if path := transcriptMatchingPrompt(workspacePath, s.transcriptHintsSnapshot()); path != "" {
+				transcriptPath = path
+				s.clearTranscriptHints()
+			} else if path := firstTranscriptForWorkspace(workspacePath, transcriptNotBefore); path != "" {
+				transcriptPath = path
+			} else if path := latestTranscriptForWorkspace(workspacePath, transcriptNotBefore); path != "" {
+				transcriptPath = path
+			}
+		}
+	}
+	if transcriptPath == "" {
+		return nil
+	}
+	s.messagesMu.Lock()
+	s.transcriptPath = transcriptPath
+	s.messagesMu.Unlock()
+
+	messages, meta, err := parseCodexTranscript(transcriptPath, workspacePath, s.id)
+	if err != nil {
+		return err
+	}
+	s.messagesMu.Lock()
+	if meta.ID != "" {
+		s.threadID = meta.ID
+	}
+	mergeTranscriptOptions(s, meta)
+	resolvedThreadID := s.threadID
+	resolvedWorkspacePath := s.workspacePath
+	s.messagesMu.Unlock()
+	stampTmuxTranscript(s.tmuxSession, resolvedWorkspacePath, resolvedThreadID, transcriptPath)
+
+	for _, msg := range messages {
+		if s.markSeen(msg.ID) {
+			s.emit(msg)
+		}
+	}
+	if s.hasOpenPlan() {
+		s.setStatus("waiting_input")
+	}
+	return nil
+}
+
+func (s *Session) markSeen(id string) bool {
+	s.messagesMu.Lock()
+	defer s.messagesMu.Unlock()
+	if s.seen == nil {
+		s.seen = make(map[string]bool)
+	}
+	if s.seen[id] {
+		return false
+	}
+	s.seen[id] = true
+	return true
+}
+
+func (s *Session) addTranscriptHint(text string, after time.Time) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.messagesMu.Lock()
+	s.transcriptHints = append(s.transcriptHints, transcriptHint{Text: text, After: after})
+	if len(s.transcriptHints) > 8 {
+		s.transcriptHints = s.transcriptHints[len(s.transcriptHints)-8:]
+	}
+	s.messagesMu.Unlock()
+}
+
+func (s *Session) transcriptHintsSnapshot() []transcriptHint {
+	s.messagesMu.Lock()
+	defer s.messagesMu.Unlock()
+	out := make([]transcriptHint, len(s.transcriptHints))
+	copy(out, s.transcriptHints)
+	return out
+}
+
+func (s *Session) clearTranscriptHints() {
+	s.messagesMu.Lock()
+	s.transcriptHints = nil
+	s.messagesMu.Unlock()
+}
+
+func (s *Session) sendToTmux(text string, attachments []chatattachments.Attachment) error {
+	text = strings.TrimSpace(text)
+	if text == "" && len(attachments) == 0 {
+		return nil
+	}
+	text = codexPromptWithAttachments(text, attachments)
+	s.addTranscriptHint(text, time.Now().Add(-2*time.Second))
+	s.setStatus("running")
+	if err := sendTextToTmux(s.tmuxSession, text); err != nil {
+		s.emit(Message{Type: "error", Text: err.Error()})
+		s.setStatus("idle")
+		return err
+	}
 	return nil
 }
 
@@ -1066,7 +1382,9 @@ func (s *Session) emit(msg Message) {
 	if msg.ThreadID == "" {
 		msg.ThreadID = s.threadID
 	}
-	msg.CreatedAt = now
+	if msg.CreatedAt == "" {
+		msg.CreatedAt = now
+	}
 
 	s.messagesMu.Lock()
 	if msg.Type == "status" && msg.Status != "" {

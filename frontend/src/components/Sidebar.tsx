@@ -75,6 +75,14 @@ function agentIcon(agent?: main.AgentTypeInfo): string | undefined {
   return agent?.icon || agentProvider(agent);
 }
 
+function tabNeedsInput(tab: { status?: string }): boolean {
+  return tab.status === 'waiting_input';
+}
+
+function tabIsWorking(tab: { status?: string }): boolean {
+  return tab.status === 'running' || tab.status === 'starting';
+}
+
 function codexOptionsForAgent(agent?: main.AgentTypeInfo): CodexLaunchOptions {
   return {
     model: agent?.model || DEFAULT_CODEX_OPTIONS.model,
@@ -215,7 +223,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       const statuses = serverStatuses[ws.path] || [];
       const hasServers = statuses.some((s) => s.running);
       const hasAgent = tabs.some(
-        (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex'),
+        (t) => t.workspacePath === ws.path && (t.tabType === 'claude' || t.tabType === 'codex' || t.tabType === 'claude-chat' || t.tabType === 'codex-chat'),
       );
       const tier = hasServers ? 0 : hasAgent ? 1 : 2;
       setWorkspaceActive(ws.path, tier);
@@ -424,6 +432,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         icon: 'codex',
         provider: 'codex',
         viewMode: 'chat',
+        status: session.status,
         runtimeSessionId: session.id,
         threadId: session.threadId,
         model: session.model,
@@ -455,6 +464,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
         icon: 'claude',
         provider: 'claude',
         viewMode: 'chat',
+        status: session.status,
         runtimeSessionId: session.id,
         threadId: session.threadId,
         model: session.model,
@@ -699,6 +709,8 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
             (t.tabType === 'claude' || t.tabType === 'codex' || t.tabType === 'claude-chat' || t.tabType === 'codex-chat'),
           );
           const wsHasAgent = wsAgentTabs.length > 0;
+          const wsNeedsInput = wsAgentTabs.some(tabNeedsInput);
+          const wsIsWorking = !wsNeedsInput && wsAgentTabs.some(tabIsWorking);
           const active = ws.path === activeWorkspacePath;
 
           return (
@@ -738,10 +750,12 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
                   if (project) AllocatePorts(project.root, ws.path, ws.isMain).catch(() => {});
                 }}
               >
-                <span className={`icon ${wsHasServers ? '' : wsHasAgent ? 'agent-only' : 'inactive'}`}>
+                <span className={`icon ${wsNeedsInput ? 'needs-input' : wsHasServers ? '' : wsHasAgent ? 'agent-only' : 'inactive'}`}>
                   {ws.isMain ? '◉' : wsHasAgent || wsHasServers ? '●' : '○'}
                 </span>
                 <span className="label">{ws.isMain ? 'main' : (project ? ws.name.replace(project.name + '-', '') : ws.name)}</span>
+                {wsNeedsInput && <span className="workspace-turn-badge">Your turn</span>}
+                {wsIsWorking && <span className="workspace-working-dot" title="Agent is working" />}
                 <WorkspaceActivityBadges tabs={wsAgentTabs} />
                 <button
                   type="button"

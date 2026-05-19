@@ -19,6 +19,7 @@ type SessionInfo struct {
 	Provider          string `json:"provider,omitempty"`
 	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
+	Status            string `json:"status,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	ThreadID          string `json:"threadId,omitempty"`
 	Model             string `json:"model,omitempty"`
@@ -38,6 +39,7 @@ type SavedTab struct {
 	Provider          string `json:"provider,omitempty"`
 	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
+	Status            string `json:"status,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	ThreadID          string `json:"threadId,omitempty"`
 	Model             string `json:"model,omitempty"`

@@ -254,6 +254,7 @@ final class CodexChatConnection {
     var messages: [CodexChatMessage] = []
     var onPermanentFailure: (() -> Void)?
     var onAssistantVoiceText: ((String) -> Void)?
+    var onStatusChange: ((String) -> Void)?
 
     private var host: String?
     private var token: String?
@@ -414,6 +415,9 @@ final class CodexChatConnection {
             DispatchQueue.main.async {
                 if !self.messages.contains(where: { $0.id == chatMessage.id }) {
                     self.messages.append(chatMessage)
+                    if chatMessage.type == "status", let status = chatMessage.status {
+                        self.onStatusChange?(status)
+                    }
                     self.publishAssistantVoiceTextIfNeeded(chatMessage)
                 }
             }

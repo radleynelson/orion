@@ -56,6 +56,7 @@ struct SessionInfo: Codable, Identifiable {
     let provider: String?
     let icon: String?
     let viewMode: String?
+    let status: String?
     let runtimeSessionId: String?
     let threadId: String?
     let model: String?
@@ -67,7 +68,12 @@ struct SessionInfo: Codable, Identifiable {
 
     var isChat: Bool { type == "codex-chat" || type == "claude-chat" }
     var isClaude: Bool { type == "claude" || type == "claude-chat" }
-    var chatConnectionId: String { runtimeSessionId ?? threadId ?? tmuxName }
+    var chatConnectionId: String {
+        if type == "codex" || type == "claude" {
+            return tmuxName
+        }
+        return runtimeSessionId ?? threadId ?? tmuxName
+    }
     var terminalTmuxSession: String { tmuxName }
 
     init(
@@ -78,6 +84,7 @@ struct SessionInfo: Codable, Identifiable {
         provider: String? = nil,
         icon: String? = nil,
         viewMode: String? = nil,
+        status: String? = nil,
         runtimeSessionId: String? = nil,
         threadId: String? = nil,
         model: String? = nil,
@@ -94,6 +101,7 @@ struct SessionInfo: Codable, Identifiable {
         self.provider = provider
         self.icon = icon
         self.viewMode = viewMode
+        self.status = status
         self.runtimeSessionId = runtimeSessionId
         self.threadId = threadId
         self.model = model
@@ -102,6 +110,29 @@ struct SessionInfo: Codable, Identifiable {
         self.sandboxMode = sandboxMode
         self.permissionMode = permissionMode
         self.collaborationMode = collaborationMode
+    }
+}
+
+extension SessionInfo {
+    func withStatus(_ status: String?) -> SessionInfo {
+        SessionInfo(
+            tmuxName: tmuxName,
+            type: type,
+            label: label,
+            workspacePath: workspacePath,
+            provider: provider,
+            icon: icon,
+            viewMode: viewMode,
+            status: status,
+            runtimeSessionId: runtimeSessionId,
+            threadId: threadId,
+            model: model,
+            reasoningEffort: reasoningEffort,
+            approvalPolicy: approvalPolicy,
+            sandboxMode: sandboxMode,
+            permissionMode: permissionMode,
+            collaborationMode: collaborationMode
+        )
     }
 }
 
@@ -259,6 +290,17 @@ struct GitActionRequest: Codable {
 
 struct AppConfig: Codable {
     let openaiApiKey: String?
+}
+
+struct AgentCompletion: Codable, Identifiable {
+    let id: String
+    let title: String
+    let description: String?
+    let kind: String
+    let provider: String
+    let scope: String
+    let source: String?
+    let insertText: String
 }
 
 // MARK: - WebSocket Message Types

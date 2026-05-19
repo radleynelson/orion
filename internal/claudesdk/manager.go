@@ -103,6 +103,11 @@ type bridgeCommand struct {
 	Attachments  []chatattachments.Attachment `json:"attachments,omitempty"`
 }
 
+type claudeTranscriptHint struct {
+	Text  string
+	After time.Time
+}
+
 type Manager struct {
 	ctx context.Context
 
@@ -144,18 +149,75 @@ func (m *Manager) Resume(workspacePath string, label string, threadID string) (*
 }
 
 func (m *Manager) Attach(tmuxSession string, workspacePath string, label string) (*SessionInfo, error) {
+	return m.AttachSince(tmuxSession, workspacePath, label, time.Time{})
+}
+
+func (m *Manager) AttachSince(tmuxSession string, workspacePath string, label string, transcriptNotBefore time.Time) (*SessionInfo, error) {
 	tmuxSession = strings.TrimSpace(tmuxSession)
 	if tmuxSession == "" {
 		return nil, errors.New("tmuxSession required")
 	}
+	if strings.TrimSpace(label) == "" {
+		label = "Claude Chat"
+	}
+	if !hasTmuxSession(tmuxSession) {
+		return nil, fmt.Errorf("tmux session not found: %s", tmuxSession)
+	}
 	if workspacePath == "" {
 		workspacePath = tmuxCurrentPath(tmuxSession)
 	}
-	threadID, err := ResolveThreadIDForTmux(tmuxSession, workspacePath)
-	if err != nil {
-		return nil, err
+	if transcriptNotBefore.IsZero() {
+		transcriptNotBefore = tmuxSessionStartTime(tmuxSession)
 	}
-	return m.Resume(workspacePath, label, threadID)
+	threadID := ThreadIDForTmux(tmuxSession, workspacePath)
+
+	m.mu.Lock()
+	if existing, ok := m.sessions[tmuxSession]; ok {
+		existing.mu.Lock()
+		if workspacePath != "" {
+			existing.workspacePath = workspacePath
+		}
+		if threadID != "" {
+			existing.threadID = threadID
+		}
+		existing.label = label
+		existing.tmuxSession = tmuxSession
+		if !transcriptNotBefore.IsZero() {
+			existing.transcriptNotBefore = transcriptNotBefore
+		}
+		existing.mu.Unlock()
+		info := existing.Info()
+		m.mu.Unlock()
+		_ = existing.Sync()
+		return &info, nil
+	}
+
+	ctx, cancel := context.WithCancel(m.ctx)
+	session := &Session{
+		manager:             m,
+		ctx:                 ctx,
+		cancel:              cancel,
+		id:                  tmuxSession,
+		label:               label,
+		workspacePath:       workspacePath,
+		threadID:            threadID,
+		status:              "idle",
+		permissionMode:      defaultPermissionMode,
+		tmuxSession:         tmuxSession,
+		transcriptNotBefore: transcriptNotBefore,
+		ready:               make(chan struct{}),
+		exited:              make(chan error, 1),
+		subscribers:         make(map[chan Message]struct{}),
+		seen:                make(map[string]bool),
+		metadataEmitted:     true,
+	}
+	m.sessions[tmuxSession] = session
+	m.mu.Unlock()
+
+	go session.pollLoop()
+	_ = session.Sync()
+	info := session.Info()
+	return &info, nil
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {
@@ -401,6 +463,12 @@ type Session struct {
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
 
+	tmuxSession         string
+	transcriptPath      string
+	transcriptNotBefore time.Time
+	transcriptHints     []claudeTranscriptHint
+	seen                map[string]bool
+
 	writeMu sync.Mutex
 
 	ready     chan struct{}
@@ -461,6 +529,9 @@ func (s *Session) Subscribe() (<-chan Message, func()) {
 }
 
 func (s *Session) Send(text string, attachments []chatattachments.Attachment) error {
+	if s.IsTmuxAttached() {
+		return s.sendToTmux(text, attachments)
+	}
 	return s.sendBridgeCommand(bridgeCommand{
 		Type:        "input",
 		Text:        text,
@@ -473,6 +544,14 @@ func (s *Session) Answer(toolUseID string, result string) error {
 	if result == "" {
 		return nil
 	}
+	if s.IsTmuxAttached() {
+		s.emit(Message{Type: "permission_submitted", ToolUseID: strings.TrimSpace(toolUseID), ToolName: "AskUserQuestion", Text: result})
+		if err := s.sendToTmux(result, nil); err != nil {
+			return err
+		}
+		s.emit(Message{Type: "permission_resolved", ToolUseID: strings.TrimSpace(toolUseID), ToolName: "AskUserQuestion", Text: "Answered"})
+		return nil
+	}
 	return s.sendBridgeCommand(bridgeCommand{
 		Type:      "answer",
 		ToolUseID: strings.TrimSpace(toolUseID),
@@ -481,6 +560,18 @@ func (s *Session) Answer(toolUseID string, result string) error {
 }
 
 func (s *Session) ApprovePlan() error {
+	if s.IsTmuxAttached() {
+		if strings.TrimSpace(s.tmuxSession) == "" {
+			return errors.New("tmux session required")
+		}
+		s.setStatus("running", "Claude is thinking")
+		if out, err := exec.Command("tmux", "send-keys", "-t", s.tmuxSession, "Enter").CombinedOutput(); err != nil {
+			s.setStatus("waiting_input", "Waiting for plan approval")
+			return fmt.Errorf("tmux approve plan failed: %v %s", err, strings.TrimSpace(string(out)))
+		}
+		s.emit(Message{Type: "plan_resolved", Text: "Plan approved"})
+		return nil
+	}
 	if err := s.sendBridgeCommand(bridgeCommand{
 		Type:         "continue",
 		Text:         "Approved. Continue with the plan.",
@@ -493,10 +584,18 @@ func (s *Session) ApprovePlan() error {
 }
 
 func (s *Session) Stop() error {
-	_ = s.sendBridgeCommand(bridgeCommand{Type: "stop"})
+	if !s.IsTmuxAttached() {
+		_ = s.sendBridgeCommand(bridgeCommand{Type: "stop"})
+	}
 	s.cancel()
 	if s.stdin != nil {
 		_ = s.stdin.Close()
+	}
+	if s.IsTmuxAttached() {
+		_ = exec.Command("tmux", "kill-session", "-t", s.tmuxSession).Run()
+		s.setStatus("stopped", "Session stopped")
+		s.manager.remove(s.id)
+		return nil
 	}
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
@@ -504,6 +603,24 @@ func (s *Session) Stop() error {
 	s.setStatus("stopped", "Session stopped")
 	s.manager.remove(s.id)
 	return nil
+}
+
+func (s *Session) IsTmuxAttached() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.tmuxSession) != "" && s.cmd == nil
+}
+
+func (s *Session) TmuxSession() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tmuxSession
+}
+
+func (s *Session) Detach() {
+	s.cancel()
+	s.setStatus("stopped", "Session stopped")
+	s.manager.remove(s.id)
 }
 
 func (s *Session) sendBridgeCommand(command bridgeCommand) error {
@@ -700,9 +817,255 @@ func (s *Session) emit(msg Message) {
 	s.manager.emit(s.id, msg)
 }
 
+func (s *Session) pollLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			_ = s.Sync()
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Session) Sync() error {
+	if !s.IsTmuxAttached() {
+		return nil
+	}
+
+	s.mu.RLock()
+	workspacePath := s.workspacePath
+	threadID := s.threadID
+	transcriptPath := s.transcriptPath
+	transcriptNotBefore := s.transcriptNotBefore
+	s.mu.RUnlock()
+
+	if workspacePath == "" {
+		workspacePath = tmuxCurrentPath(s.tmuxSession)
+		if workspacePath != "" {
+			s.mu.Lock()
+			s.workspacePath = workspacePath
+			s.mu.Unlock()
+		}
+	}
+
+	if threadID == "" {
+		threadID = ThreadIDForTmux(s.tmuxSession, workspacePath)
+		if threadID != "" {
+			s.mu.Lock()
+			s.threadID = threadID
+			s.mu.Unlock()
+		}
+	}
+
+	if transcriptPath == "" {
+		if path := validStampedClaudeTranscriptPath(tmuxOption(s.tmuxSession, "@orion_transcript_path"), workspacePath); path != "" {
+			transcriptPath = path
+		}
+	}
+	if transcriptPath == "" {
+		if threadID != "" {
+			transcriptPath = claudeTranscriptPath(workspacePath, threadID)
+		}
+		if transcriptPath == "" {
+			if path := claudeTranscriptMatchingPrompt(workspacePath, s.transcriptHintsSnapshot()); path != "" {
+				transcriptPath = path
+				s.clearTranscriptHints()
+			} else if path := firstClaudeTranscriptForWorkspace(workspacePath, transcriptNotBefore); path != "" {
+				transcriptPath = path
+			} else if path := latestClaudeTranscriptForWorkspace(workspacePath, transcriptNotBefore); path != "" {
+				transcriptPath = path
+			}
+		}
+	}
+	if transcriptPath == "" {
+		return nil
+	}
+	s.mu.Lock()
+	s.transcriptPath = transcriptPath
+	s.mu.Unlock()
+
+	messages, meta, err := parseClaudeTranscript(transcriptPath, workspacePath, s.id)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if meta.ID != "" {
+		s.threadID = meta.ID
+	}
+	if meta.CWD != "" {
+		s.workspacePath = meta.CWD
+	}
+	if meta.Model != "" {
+		s.model = meta.Model
+	}
+	if meta.PermissionMode != "" {
+		s.permissionMode = meta.PermissionMode
+	}
+	if s.permissionMode == "" {
+		s.permissionMode = defaultPermissionMode
+	}
+	resolvedThreadID := s.threadID
+	resolvedWorkspacePath := s.workspacePath
+	s.mu.Unlock()
+	stampClaudeTmuxTranscript(s.tmuxSession, resolvedWorkspacePath, resolvedThreadID, transcriptPath)
+
+	for _, msg := range messages {
+		if s.markSeen(msg.ID) {
+			s.emit(msg)
+		}
+	}
+	s.updateStatusAfterTranscriptSync(messages, transcriptPath)
+	return nil
+}
+
+func (s *Session) updateStatusAfterTranscriptSync(messages []Message, transcriptPath string) {
+	if s.hasOpenPlan() {
+		s.setStatus("waiting_input", "Waiting for plan approval")
+		return
+	}
+
+	last := lastMeaningfulClaudeMessage(messages)
+	if last == nil {
+		return
+	}
+
+	switch last.Type {
+	case "permission_request":
+		s.setStatus("waiting_input", "Waiting for user input")
+	case "assistant", "plan_resolved", "permission_resolved":
+		s.setStatus("idle", "")
+	case "tool", "tool_result", "thinking_delta":
+		if s.currentStatus() == "running" && claudeTranscriptQuiet(transcriptPath, 4*time.Second) && claudeTmuxPaneAppearsIdle(s.tmuxSession) {
+			s.setStatus("idle", "")
+		}
+	}
+}
+
+func lastMeaningfulClaudeMessage(messages []Message) *Message {
+	for i := len(messages) - 1; i >= 0; i-- {
+		switch messages[i].Type {
+		case "status", "system", "error":
+			continue
+		default:
+			return &messages[i]
+		}
+	}
+	return nil
+}
+
+func claudeTranscriptQuiet(path string, quietFor time.Duration) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) >= quietFor
+}
+
+func claudeTmuxPaneAppearsIdle(tmuxSession string) bool {
+	if strings.TrimSpace(tmuxSession) == "" {
+		return false
+	}
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-S", "-12", "-t", tmuxSession).Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if line == "❯" || strings.HasPrefix(line, "❯ ") || strings.HasPrefix(line, "❯\t") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Session) markSeen(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen == nil {
+		s.seen = make(map[string]bool)
+	}
+	if s.seen[id] {
+		return false
+	}
+	s.seen[id] = true
+	return true
+}
+
+func (s *Session) addTranscriptHint(text string, after time.Time) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.mu.Lock()
+	s.transcriptHints = append(s.transcriptHints, claudeTranscriptHint{Text: text, After: after})
+	if len(s.transcriptHints) > 8 {
+		s.transcriptHints = s.transcriptHints[len(s.transcriptHints)-8:]
+	}
+	s.mu.Unlock()
+}
+
+func (s *Session) transcriptHintsSnapshot() []claudeTranscriptHint {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]claudeTranscriptHint, len(s.transcriptHints))
+	copy(out, s.transcriptHints)
+	return out
+}
+
+func (s *Session) clearTranscriptHints() {
+	s.mu.Lock()
+	s.transcriptHints = nil
+	s.mu.Unlock()
+}
+
+func (s *Session) sendToTmux(text string, attachments []chatattachments.Attachment) error {
+	text = strings.TrimSpace(text)
+	if text == "" && len(attachments) == 0 {
+		return nil
+	}
+	text = claudePromptWithAttachments(text, attachments)
+	s.addTranscriptHint(text, time.Now().Add(-2*time.Second))
+	s.setStatus("running", "Claude is thinking")
+	if err := sendTextToTmux(s.tmuxSession, text); err != nil {
+		s.emit(Message{Type: "error", Text: err.Error()})
+		s.setStatus("idle", "")
+		return err
+	}
+	return nil
+}
+
+func (s *Session) hasOpenPlan() bool {
+	s.messagesMu.Lock()
+	defer s.messagesMu.Unlock()
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		switch s.messages[i].Type {
+		case "plan_resolved":
+			return false
+		case "plan":
+			return true
+		}
+	}
+	return false
+}
+
 func ResolveThreadIDForTmux(tmuxSession string, workspacePath string) (string, error) {
 	if workspacePath == "" {
 		workspacePath = tmuxCurrentPath(tmuxSession)
+	}
+	if path := validStampedClaudeTranscriptPath(tmuxOption(tmuxSession, "@orion_transcript_path"), workspacePath); path != "" {
+		thread := loadHistoryThread(path, workspacePath)
+		if strings.TrimSpace(thread.ThreadID) != "" {
+			return thread.ThreadID, nil
+		}
 	}
 	return resolveThreadIDForWorkspace(
 		workspacePath,
@@ -903,6 +1266,37 @@ func tmuxOption(name string, option string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func setTmuxOption(session string, option string, value string) {
+	if strings.TrimSpace(session) == "" || strings.TrimSpace(option) == "" {
+		return
+	}
+	_ = exec.Command("tmux", "set-option", "-t", session, option, value).Run()
+}
+
+func hasTmuxSession(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
+}
+
+func tmuxSessionStartTime(name string) time.Time {
+	if value := tmuxOption(name, "@orion_started_at_unix_nano"); value != "" {
+		if nanos, err := strconv.ParseInt(value, 10, 64); err == nil && nanos > 0 {
+			return time.Unix(0, nanos)
+		}
+	}
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", name, "#{session_created}").Output()
+	if err != nil {
+		return time.Time{}
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
+}
+
 func tmuxPanePID(name string) int {
 	out, err := exec.Command("tmux", "display-message", "-t", name, "-p", "#{pane_pid}").Output()
 	if err != nil {
@@ -957,6 +1351,61 @@ func tmuxCurrentPath(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func sendTextToTmux(tmuxSession string, text string) error {
+	bufferName := "orion-claude-chat-" + shortID()
+	load := exec.Command("tmux", "load-buffer", "-b", bufferName, "-")
+	load.Stdin = strings.NewReader(text)
+	if out, err := load.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux load-buffer failed: %v %s", err, strings.TrimSpace(string(out)))
+	}
+	defer exec.Command("tmux", "delete-buffer", "-b", bufferName).Run()
+
+	if out, err := exec.Command("tmux", "paste-buffer", "-t", tmuxSession, "-b", bufferName).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux paste-buffer failed: %v %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("tmux", "send-keys", "-t", tmuxSession, "Enter").CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys failed: %v %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func claudePromptWithAttachments(text string, attachments []chatattachments.Attachment) string {
+	text = strings.TrimSpace(text)
+	if len(attachments) == 0 {
+		return text
+	}
+	var builder strings.Builder
+	if text != "" {
+		builder.WriteString(text)
+		builder.WriteString("\n\n")
+	} else {
+		builder.WriteString("Please inspect the attached image")
+		if len(attachments) > 1 {
+			builder.WriteString("s")
+		}
+		builder.WriteString(".\n\n")
+	}
+	builder.WriteString("Attached image")
+	if len(attachments) > 1 {
+		builder.WriteString("s")
+	}
+	builder.WriteString(" on this machine:\n")
+	for i, attachment := range attachments {
+		name := strings.TrimSpace(attachment.Name)
+		if name == "" {
+			name = filepath.Base(attachment.Path)
+		}
+		builder.WriteString(fmt.Sprintf("%d. %s", i+1, attachment.Path))
+		if name != "" {
+			builder.WriteString(" (")
+			builder.WriteString(name)
+			builder.WriteString(")")
+		}
+		builder.WriteString("\n")
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func claudeProjectDir(path string) string {

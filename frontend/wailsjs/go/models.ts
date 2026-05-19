@@ -182,6 +182,7 @@ export namespace codexchat {
 	    toolUseId?: string;
 	    toolName?: string;
 	    details?: string;
+	    planPath?: string;
 	    attachments?: chatattachments.Attachment[];
 	    createdAt: string;
 
@@ -202,6 +203,7 @@ export namespace codexchat {
 	        this.toolUseId = source["toolUseId"];
 	        this.toolName = source["toolName"];
 	        this.details = source["details"];
+	        this.planPath = source["planPath"];
 	        this.attachments = this.convertValues(source["attachments"], chatattachments.Attachment);
 	        this.createdAt = source["createdAt"];
 	    }
@@ -1046,6 +1048,7 @@ export namespace state {
 	    provider?: string;
 	    icon?: string;
 	    viewMode?: string;
+	    status?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
 	    model?: string;
@@ -1068,6 +1071,7 @@ export namespace state {
 	        this.provider = source["provider"];
 	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
+	        this.status = source["status"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
 	        this.model = source["model"];
@@ -1086,6 +1090,7 @@ export namespace state {
 	    provider?: string;
 	    icon?: string;
 	    viewMode?: string;
+	    status?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
 	    model?: string;
@@ -1108,6 +1113,7 @@ export namespace state {
 	        this.provider = source["provider"];
 	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
+	        this.status = source["status"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
 	        this.model = source["model"];

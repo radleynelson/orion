@@ -317,6 +317,11 @@
   box-shadow: 0 0 8px color-mix(in srgb, var(--accent-yellow) 40%, transparent);
 }
 
+.sidebar-item .icon.needs-input {
+  background: var(--accent-blue);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-blue) 55%, transparent);
+}
+
 .sidebar-item .label {
   flex: 1;
   overflow: hidden;
@@ -346,6 +351,26 @@
 
 .workspace-activity-badges .agent-sigil + .agent-sigil {
   margin-left: -4px;
+}
+
+.workspace-turn-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 28%, transparent);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
+.workspace-working-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-yellow);
+  opacity: 0.8;
+  flex: 0 0 auto;
 }
 
 .workspace-info-button {
@@ -3771,6 +3796,27 @@ button.workspace-min-row:hover em {
   color: var(--text-primary);
   border-color: var(--border-dim);
   border-bottom-color: var(--bg-primary);
+}
+
+.tab.needs-input {
+  color: var(--text-primary);
+}
+
+.tab-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.tab-status-dot.needs-input {
+  background: var(--accent-blue);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--accent-blue) 55%, transparent);
+}
+
+.tab-status-dot.working {
+  background: var(--accent-yellow);
+  opacity: 0.85;
 }
 
 .tab.tab-drop-target {

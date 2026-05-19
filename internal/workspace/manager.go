@@ -490,12 +490,18 @@ func markTmuxSession(name string, sessionType string, label string, workspacePat
 		label = labelForType(sessionType)
 	}
 	setTmuxOption(name, "@orion_type", sessionType)
+	if sessionType == "claude" || sessionType == "codex" {
+		setTmuxOption(name, "@orion_provider", sessionType)
+	}
 	setTmuxOption(name, "@orion_label", label)
 	setTmuxOption(name, "@orion_icon", strings.TrimSpace(icon))
 	setTmuxOption(name, "@orion_workspace", workspacePath)
 	setTmuxOption(name, "@orion_started_at_unix_nano", fmt.Sprintf("%d", time.Now().UnixNano()))
 	if command != "" {
 		setTmuxOption(name, "@orion_command", command)
+		if threadID := threadIDForResumeCommand(sessionType, command); threadID != "" {
+			setTmuxOption(name, "@orion_thread_id", threadID)
+		}
 	}
 }
 
@@ -515,6 +521,96 @@ func sessionTypeForCommand(command string) string {
 		return sessionType
 	}
 	return "shell"
+}
+
+func threadIDForResumeCommand(sessionType string, command string) string {
+	sessionType = normalizeSessionType(sessionType)
+	switch sessionType {
+	case "claude":
+		return firstFlagValue(command, "--resume", "-r", "--session-id")
+	case "codex":
+		for _, id := range codexResumeIDs(command) {
+			if strings.TrimSpace(id) != "" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+func firstFlagValue(command string, flags ...string) string {
+	fields := strings.Fields(command)
+	for i, field := range fields {
+		for _, flag := range flags {
+			switch {
+			case field == flag:
+				if i+1 < len(fields) {
+					return unquoteShellField(fields[i+1])
+				}
+			case strings.HasPrefix(field, flag+"="):
+				return unquoteShellField(strings.TrimPrefix(field, flag+"="))
+			}
+		}
+	}
+	return ""
+}
+
+func codexResumeIDs(command string) []string {
+	if !strings.Contains(command, "codex") {
+		return nil
+	}
+	fields := strings.Fields(command)
+	var ids []string
+	for i, field := range fields {
+		switch {
+		case field == "resume":
+			if id := codexResumePositionalID(fields[i+1:]); id != "" {
+				ids = append(ids, id)
+			}
+		case field == "--resume" || field == "-r":
+			if i+1 < len(fields) && !strings.HasPrefix(fields[i+1], "-") {
+				ids = append(ids, unquoteShellField(fields[i+1]))
+			}
+		case strings.HasPrefix(field, "--resume="):
+			ids = append(ids, unquoteShellField(strings.TrimPrefix(field, "--resume=")))
+		}
+	}
+	return ids
+}
+
+func codexResumePositionalID(fields []string) string {
+	for i := len(fields) - 1; i >= 0; i-- {
+		field := strings.TrimSpace(fields[i])
+		if field == "" || strings.HasPrefix(field, "-") {
+			continue
+		}
+		if i > 0 && codexResumeFlagConsumesValue(fields[i-1]) {
+			continue
+		}
+		return unquoteShellField(field)
+	}
+	return ""
+}
+
+func codexResumeFlagConsumesValue(field string) bool {
+	switch strings.TrimSpace(field) {
+	case "-m", "--model", "-c", "--config", "-s", "--sandbox", "-C", "--cd", "--profile":
+		return true
+	default:
+		return false
+	}
+}
+
+func unquoteShellField(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		first := value[0]
+		last := value[len(value)-1]
+		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }
 
 func normalizeSessionType(value string) string {

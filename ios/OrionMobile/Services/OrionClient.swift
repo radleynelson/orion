@@ -116,6 +116,10 @@ actor OrionClient {
     // Config
     func getConfig() async throws -> AppConfig { try await get("/api/config") }
 
+    func getAgentCompletions(provider: String, workspacePath: String) async throws -> [AgentCompletion] {
+        try await get("/api/agent-completions", query: ["provider": provider, "workspace": workspacePath])
+    }
+
     // Kill a tmux session
     func killSession(tmuxSession: String) async throws {
         let _: [String: String] = try await post("/api/kill-session", body: ["tmuxSession": tmuxSession])

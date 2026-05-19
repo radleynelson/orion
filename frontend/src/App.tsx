@@ -111,6 +111,20 @@ function shouldLetMonacoHandleShortcut(e: KeyboardEvent): boolean {
   return e.key.toLowerCase() === 'b' || e.key === '[' || e.key === ']';
 }
 
+function tabNeedsInput(tab?: Tab | null): boolean {
+  return tab?.status === 'waiting_input';
+}
+
+function tabIsWorking(tab?: Tab | null): boolean {
+  return tab?.status === 'running' || tab?.status === 'starting';
+}
+
+function activeTabStatusLabel(tab?: Tab | null): string {
+  if (tabNeedsInput(tab)) return 'your turn';
+  if (tabIsWorking(tab)) return 'working';
+  return tab ? 'ready' : 'ready';
+}
+
 function App() {
   const [tabsHydrated, setTabsHydrated] = useState(false);
   const {
@@ -134,6 +148,7 @@ function App() {
     mergeTabInto,
     reorderTab,
     renameTab,
+    setTabSessionStatus,
     focusedPaneId,
     getAllTerminalIds,
     serverTabs,
@@ -228,6 +243,7 @@ function App() {
               icon: saved.icon || 'claude',
               provider: 'claude',
               viewMode: 'chat',
+              status: session.status || saved.status,
               runtimeSessionId: session.id,
               threadId: session.threadId || saved.threadId,
               model: session.model || saved.model,
@@ -259,6 +275,7 @@ function App() {
               icon: saved.icon || 'codex',
               provider: 'codex',
               viewMode: 'chat',
+              status: session.status || saved.status,
               runtimeSessionId: session.id,
               threadId: session.threadId || saved.threadId,
               model: session.model || saved.model,
@@ -602,6 +619,7 @@ function App() {
         icon: 'codex',
         provider: 'codex',
         viewMode: 'chat',
+        status: session.status,
         runtimeSessionId: session.id,
         threadId: session.threadId,
         model: session.model,
@@ -628,6 +646,7 @@ function App() {
         icon: 'claude',
         provider: 'claude',
         viewMode: 'chat',
+        status: session.status,
         runtimeSessionId: session.id,
         threadId: session.threadId,
         model: session.model,
@@ -886,6 +905,7 @@ function App() {
       icon: session.icon || chatKind,
       provider: chatKind,
       viewMode: 'chat',
+      status: session.status,
       runtimeSessionId: session.runtimeSessionId || session.tmuxName,
       threadId: session.threadId,
       model: session.model,
@@ -961,6 +981,7 @@ function App() {
       icon: tab.icon || kind,
       provider: kind,
       viewMode: 'chat',
+      status: session.status,
       runtimeSessionId: session.id,
       threadId: session.threadId || tab.threadId,
       model: session.model || tab.model,
@@ -1177,6 +1198,7 @@ function App() {
               icon: tab.icon || 'claude',
               provider: 'claude',
               viewMode: 'chat',
+              status: tab.status || '',
               runtimeSessionId: chat.id,
               threadId: chat.threadId || tab.threadId || '',
               model: tab.model || '',
@@ -1202,6 +1224,7 @@ function App() {
               icon: tab.icon || '',
               provider: tab.provider || (tab.tabType === 'claude' || tab.tabType === 'codex' ? tab.tabType : ''),
               viewMode: 'terminal',
+              status: tab.status || '',
               runtimeSessionId: tab.runtimeSessionId || tmuxSession,
               threadId: tab.threadId || '',
               model: tab.model || '',
@@ -1233,6 +1256,10 @@ function App() {
       for (const session of live) {
         if (!currentTabs.some((tab) => tabMatchesSession(tab, session))) {
           addChatSessionTab(session);
+        } else if (session.status) {
+          for (const key of sessionKeys(session)) {
+            setTabSessionStatus(key, session.status);
+          }
         }
       }
 
@@ -1247,7 +1274,7 @@ function App() {
     } catch (err) {
       console.debug('Failed to sync live chat tabs:', err);
     }
-  }, [project, workspaces, addChatSessionTab, removeTab, sessionKeys, tabKeys, tabMatchesSession]);
+  }, [project, workspaces, addChatSessionTab, removeTab, sessionKeys, tabKeys, tabMatchesSession, setTabSessionStatus]);
 
   useEffect(() => {
     if (!project || workspaces.length === 0) return;
@@ -1496,6 +1523,7 @@ function App() {
             viewMode: 'terminal',
             runtimeSessionId: data.runtimeSessionId || data.tmuxSession,
             threadId: data.threadId,
+            status: data.status,
           });
         } catch {}
       }),
@@ -1595,7 +1623,7 @@ function App() {
     return getAllTerminalIds(tab).length;
   };
   const paneCount = countPanes(activeTab);
-  const sessionStatus = activeTab ? 'ready' : 'ready';
+  const sessionStatus = activeTabStatusLabel(activeTab);
 
   useEffect(() => {
     setToolbarPopover(null);
@@ -1921,7 +1949,7 @@ function App() {
               {activeTabs.map((tab) => (
                 <div
                   key={tab.id}
-                  className={`tab ${tab.id === activeTabId ? 'active' : ''} ${dragOverTabId === tab.id ? (dragMerge ? 'tab-drop-target' : 'tab-reorder-target') : ''}`}
+                  className={`tab ${tab.id === activeTabId ? 'active' : ''} ${tabNeedsInput(tab) ? 'needs-input' : ''} ${tabIsWorking(tab) ? 'working' : ''} ${dragOverTabId === tab.id ? (dragMerge ? 'tab-drop-target' : 'tab-reorder-target') : ''}`}
                   onClick={() => setActiveTab(tab.id)}
                   onContextMenu={(e) => {
                     if (tab.tabType === 'editor') {
@@ -1968,6 +1996,12 @@ function App() {
                   }}
                 >
                   <span className="tab-icon"><AgentSigil id={tab.icon || tab.provider || tab.tabType} size={18} /></span>
+                  {(tabNeedsInput(tab) || tabIsWorking(tab)) && (
+                    <span
+                      className={`tab-status-dot ${tabNeedsInput(tab) ? 'needs-input' : 'working'}`}
+                      title={tabNeedsInput(tab) ? 'Your turn' : 'Agent is working'}
+                    />
+                  )}
                   {renamingTabId === tab.id ? (
                     <input
                       autoFocus
