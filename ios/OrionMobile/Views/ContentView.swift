@@ -484,6 +484,7 @@ private struct MobileHomeView: View {
     @State private var serverStatusesByWorkspace: [String: [ServerStatus]] = [:]
     @State private var changedFiles: [GitChangedFile] = []
     @State private var showQuickAsk = false
+    @State private var showingNewWorktree = false
     @State private var detailWorkspace: Workspace?
     @State private var expandedWorkspacePaths: Set<String> = []
     @State private var didInitializeExpandedWorkspaces = false
@@ -535,6 +536,32 @@ private struct MobileHomeView: View {
                 workspace: workspace,
                 onClose: { detailWorkspace = nil },
                 onRefresh: { await loadHome() }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showingNewWorktree) {
+            NewWorktreeSheet(
+                baseRefs: workspaceBaseRefs(mainBranch: state.projectInfo?.mainBranch, workspaces: state.workspaces),
+                onCancel: { showingNewWorktree = false },
+                onCreate: { draft in
+                    showingNewWorktree = false
+                    Task {
+                        do {
+                            try await state.createWorkspace(
+                                name: draft.name,
+                                baseRef: draft.baseRef,
+                                startWith: draft.startWith,
+                                firstPrompt: draft.firstPrompt,
+                                codexOptions: draft.codexOptions
+                            )
+                            didInitializeExpandedWorkspaces = false
+                            await loadHome()
+                        } catch {
+                            state.showTransientError("Failed to create worktree: \(error.localizedDescription)")
+                        }
+                    }
+                }
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -604,6 +631,17 @@ private struct MobileHomeView: View {
                 Text("\(state.workspaces.count)")
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundStyle(OrionTheme.textDim)
+                Button { showingNewWorktree = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OrionTheme.textPrimary)
+                        .frame(width: 30, height: 30)
+                        .background(OrionTheme.bgSurface)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(OrionTheme.borderDim, lineWidth: 0.7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("New workspace")
             }
             ForEach(state.workspaces) { workspace in
                 MobileWorkspaceCard(
