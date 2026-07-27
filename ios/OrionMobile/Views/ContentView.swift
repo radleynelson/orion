@@ -3857,7 +3857,7 @@ struct CodexChatView: View {
         }
         .onAppear {
             backSwipeOffset = 0
-            connection.reconnectOrProbe()
+            connection.reconnectOrProbe(force: connection.connectionState == .reconnecting)
         }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }

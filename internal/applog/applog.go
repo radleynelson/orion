@@ -51,6 +51,8 @@ func Init() {
 	mu.Lock()
 	logPath = path
 	out = io.MultiWriter(f, os.Stderr)
+	log.SetOutput(out)
+	log.SetFlags(0)
 	writeLine("INFO ", fmt.Sprintf("--- orion started pid=%d ---", os.Getpid()))
 	mu.Unlock()
 

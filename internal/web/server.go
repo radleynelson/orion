@@ -54,6 +54,8 @@ type AppAPI interface {
 	GetProjectInfo(path string) (*workspace.ProjectInfo, error)
 	ListWorkspaces(repoRoot string) ([]workspace.Workspace, error)
 	CreateWorkspaceFrom(repoRoot string, name string, baseRef string) (*workspace.Workspace, error)
+	AdoptWorkspace(path string) (*workspace.Workspace, error)
+	CleanupAdoptedWorkspace(path string) error
 	RecoverSessions(repoName string, workspacePaths []string) []state.SessionInfo
 	GetSavedTabs() []state.SavedTab
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
@@ -143,6 +145,8 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/projects", s.authMiddleware(s.handleProjects))
 	mux.HandleFunc("/api/projects/info", s.authMiddleware(s.handleProjectInfo))
 	mux.HandleFunc("/api/workspaces", s.authMiddleware(s.handleWorkspaces))
+	mux.HandleFunc("/api/workspaces/adopt", s.authMiddleware(s.handleWorkspaceAdopt))
+	mux.HandleFunc("/api/workspaces/cleanup", s.authMiddleware(s.handleWorkspaceCleanup))
 	mux.HandleFunc("/api/sessions", s.authMiddleware(s.handleSessions))
 	mux.HandleFunc("/api/terminal", s.authMiddleware(s.handleTerminal))
 	mux.HandleFunc("/api/shell", s.authMiddleware(s.handleShell))
@@ -363,6 +367,45 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleWorkspaceAdopt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	result, err := s.app.AdoptWorkspace(req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleWorkspaceCleanup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	if err := s.app.CleanupAdoptedWorkspace(req.Path); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {

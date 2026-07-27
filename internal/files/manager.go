@@ -32,11 +32,10 @@ func (m *Manager) SetContext(ctx context.Context) {
 	m.ctx = ctx
 }
 
-// Directories to skip in file listings
+// Directories to skip in file listings and workspace searches.
 var skipDirs = map[string]bool{
 	".git":         true,
 	"node_modules": true,
-	"vendor":       true,
 	"dist":         true,
 	"build":        true,
 	".next":        true,
@@ -45,6 +44,16 @@ var skipDirs = map[string]bool{
 	".sidecar":     true,
 	".rad":         true,
 	"tmp":          true,
+}
+
+func shouldSkipDir(parentDir, name string) bool {
+	if skipDirs[name] {
+		return true
+	}
+
+	// Rails apps often keep editable engine source under vendor/gems, but
+	// vendor/bundle is generated dependency output and can be very large.
+	return name == "bundle" && filepath.Base(parentDir) == "vendor"
 }
 
 // ListDirectory returns the contents of a directory, sorted (dirs first, then files).
@@ -63,7 +72,7 @@ func (m *Manager) ListDirectory(dir string, depth int) ([]FileEntry, error) {
 		if strings.HasPrefix(name, ".") && name != ".env" && name != ".env.local" && name != ".orion.toml" && name != ".gitignore" {
 			continue
 		}
-		if entry.IsDir() && skipDirs[name] {
+		if entry.IsDir() && shouldSkipDir(dir, name) {
 			continue
 		}
 
@@ -181,7 +190,7 @@ func (m *Manager) SearchFiles(root string, query string, maxResults int) ([]Sear
 
 		// Skip hidden dirs and known heavy directories
 		if d.IsDir() {
-			if strings.HasPrefix(name, ".") || skipDirs[name] {
+			if strings.HasPrefix(name, ".") || shouldSkipDir(filepath.Dir(path), name) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -384,7 +393,7 @@ func (m *Manager) SearchContents(root string, query string, maxResults int) ([]G
 	rgPath, err := exec.LookPath("rg")
 	if err == nil {
 		cmd = exec.Command(rgPath, "--json", "--max-count", "3", "--max-filesize", "1M",
-			"-g", "!node_modules", "-g", "!.git", "-g", "!vendor", "-g", "!dist",
+			"-g", "!node_modules", "-g", "!.git", "-g", "!**/vendor/bundle/**", "-g", "!dist",
 			"-g", "!build", "-g", "!.next",
 			query, root)
 	} else {

@@ -14,6 +14,7 @@ import (
 	"orion/internal/config"
 	"orion/internal/notify"
 	"orion/internal/tmuxutil"
+	"orion/internal/workspacekey"
 )
 
 // Workspace represents a git worktree.
@@ -84,6 +85,7 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			if current != nil {
+				applyWorkspaceMetadata(current)
 				current.IsMain = isFirst
 				isFirst = false
 				workspaces = append(workspaces, *current)
@@ -115,6 +117,7 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 		}
 	}
 	if current != nil {
+		applyWorkspaceMetadata(current)
 		current.IsMain = isFirst
 		workspaces = append(workspaces, *current)
 	}
@@ -122,7 +125,7 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 	// Check for running tmux sessions
 	repoName := filepath.Base(repoRoot)
 	for i := range workspaces {
-		baseName := sessionName(repoName, workspaces[i].Name, 0)
+		baseName := sessionName(repoName, workspacekey.ID(workspaces[i].Path), 0)
 		if hasSession(baseName) {
 			workspaces[i].HasAgent = true
 		}
@@ -171,65 +174,155 @@ func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*W
 		}
 		parentDir = resolved
 	}
-	worktreePath := filepath.Join(parentDir, repoName+"-"+name)
-
 	// Apply branch prefix from config (e.g. "mckay" → branch "mckay/name")
 	branchName := name
 	if cfg != nil && cfg.BranchPrefix != "" {
 		branchName = cfg.BranchPrefix + "/" + name
 	}
 
+	layout := ""
+	if cfg != nil {
+		layout = strings.ToLower(strings.TrimSpace(cfg.WorktreeLayout))
+	}
+	workspaceID := repoName + "-" + name
+	displayName := workspaceID
+	worktreePath := filepath.Join(parentDir, displayName)
+	managedBy := "orion"
+	gitArgs := []string{"worktree", "add", "-b", branchName, worktreePath, baseBranch}
+	if layout == "codex" {
+		shortID, err := uniqueWorktreeID(parentDir)
+		if err != nil {
+			return nil, err
+		}
+		workspaceID = repoName + "-" + shortID
+		displayName = repoName + "-" + name
+		worktreePath = filepath.Join(parentDir, shortID, repoName)
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0755); err != nil {
+			return nil, fmt.Errorf("failed to create managed worktree parent: %w", err)
+		}
+		gitArgs = []string{"worktree", "add", "--detach", worktreePath, baseBranch}
+	}
+
 	m.emitWorkspaceCreateProgress(worktreePath, "Creating git worktree")
-	cmd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath, baseBranch)
+	cmd := exec.Command("git", gitArgs...)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if layout == "codex" {
+			_ = os.Remove(filepath.Dir(worktreePath))
+		}
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 
-	// Copy credential files
-	if cfg != nil {
-		m.emitWorkspaceCreateProgress(worktreePath, "Copying credentials")
-		copyCredentialFiles(mainPath, worktreePath, cfg.Credentials.Copy)
+	metadata := workspacekey.Metadata{
+		ID:               workspaceID,
+		Name:             displayName,
+		EnvironmentName:  name,
+		Branch:           branchName,
+		BaseRef:          baseBranch,
+		MainWorktreePath: mainPath,
+		ManagedBy:        managedBy,
 	}
-
-	if cfg != nil {
-		if strings.TrimSpace(cfg.Hooks.WorktreeCreated.Command) != "" {
-			m.emitWorkspaceCreateProgress(worktreePath, "Running setup hook")
-		}
-		hookCtx := hookContext{
-			Name:             name,
-			Branch:           branchName,
-			BaseRef:          baseBranch,
-			WorkspacePath:    worktreePath,
-			RepoRoot:         repoRoot,
-			MainWorktreePath: mainPath,
-		}
-		if err := runHook(hookWorktreeCreated, cfg.Hooks.WorktreeCreated, hookCtx, true); err != nil {
-			return nil, err
-		}
+	if err := workspacekey.Save(worktreePath, metadata); err != nil {
+		return nil, fmt.Errorf("write workspace metadata: %w", err)
 	}
-
-	// Run setup script if exists
-	if mainPath != "" {
-		setupScript := filepath.Join(mainPath, ".worktree-setup.sh")
-		if _, err := os.Stat(setupScript); err == nil {
-			setupCmd := exec.Command("bash", setupScript)
-			setupCmd.Dir = worktreePath
-			setupCmd.Run() // best-effort
-		}
+	if err := m.prepareWorkspace(repoRoot, worktreePath, cfg, &metadata); err != nil {
+		return nil, err
 	}
 
 	m.emitWorkspaceCreateProgress(worktreePath, "Ready")
+	resultBranch := branchName
+	if layout == "codex" {
+		resultBranch = "(detached)"
+	}
 	return &Workspace{
-		Name:   filepath.Base(worktreePath),
+		Name:   displayName,
 		Path:   worktreePath,
-		Branch: branchName,
+		Branch: resultBranch,
 	}, nil
+}
+
+// AdoptWorkspace provisions an existing non-main git worktree with the same
+// credentials, hooks, and setup script used for an Orion-created workspace.
+// It is idempotent so Codex may call it whenever an environment is opened.
+func (m *Manager) AdoptWorkspace(path string) (*Workspace, error) {
+	worktreePath, err := getRepoRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	mainPath := getMainWorktreePath(worktreePath)
+	if mainPath == "" {
+		return nil, fmt.Errorf("cannot find main worktree for %s", worktreePath)
+	}
+	if filepath.Clean(mainPath) == filepath.Clean(worktreePath) {
+		return nil, fmt.Errorf("the main worktree does not need adoption")
+	}
+
+	cfg := config.Load(mainPath)
+	metadata, ok := workspacekey.Load(worktreePath)
+	if !ok {
+		repoName := filepath.Base(mainPath)
+		shortID := filepath.Base(filepath.Dir(worktreePath))
+		if shortID == "." || shortID == string(filepath.Separator) || shortID == repoName {
+			shortID = shortHash(worktreePath)
+		}
+		envName := "codex-" + sanitize(shortID)
+		branchName := envName
+		if cfg.BranchPrefix != "" {
+			branchName = cfg.BranchPrefix + "/" + envName
+		}
+		metadata = workspacekey.Metadata{
+			ID:               repoName + "-" + sanitize(shortID),
+			Name:             repoName + "-" + envName,
+			EnvironmentName:  envName,
+			Branch:           branchName,
+			BaseRef:          getMainBranch(mainPath),
+			MainWorktreePath: mainPath,
+			ManagedBy:        "codex",
+		}
+		if err := workspacekey.Save(worktreePath, metadata); err != nil {
+			return nil, fmt.Errorf("write workspace metadata: %w", err)
+		}
+	}
+	if err := m.prepareWorkspace(mainPath, worktreePath, cfg, &metadata); err != nil {
+		return nil, err
+	}
+
+	return &Workspace{
+		Name:   metadata.Name,
+		Path:   worktreePath,
+		Branch: displayBranch(worktreePath),
+	}, nil
+}
+
+// CleanupAdoptedWorkspace runs Orion's deletion hook without removing the Git
+// worktree. Codex owns removal of worktrees that it created.
+func (m *Manager) CleanupAdoptedWorkspace(path string) error {
+	worktreePath, err := getRepoRoot(path)
+	if err != nil {
+		// Codex may remove the checkout immediately after invoking cleanup. If
+		// metadata is still reachable at the supplied path, use it directly.
+		worktreePath = filepath.Clean(path)
+	}
+	metadata, ok := workspacekey.Load(worktreePath)
+	if !ok || !metadata.Provisioned {
+		return nil
+	}
+	mainPath := metadata.MainWorktreePath
+	if mainPath == "" {
+		mainPath = getMainWorktreePath(worktreePath)
+	}
+	cfg := config.Load(mainPath)
+	if err := runHook(hookWorktreeDeleting, cfg.Hooks.WorktreeDeleting, hookContextForMetadata(worktreePath, mainPath, metadata), false); err != nil {
+		return err
+	}
+	metadata.Provisioned = false
+	metadata.ProvisionedAt = ""
+	return workspacekey.Save(worktreePath, metadata)
 }
 
 // DeleteWorkspace removes a worktree and kills its tmux sessions.
 func (m *Manager) DeleteWorkspace(repoRoot, path string) error {
-	name := filepath.Base(path)
+	name := workspacekey.ID(path)
 	repoName := filepath.Base(repoRoot)
 	baseName := sessionName(repoName, name, 0)
 
@@ -254,6 +347,9 @@ func (m *Manager) DeleteWorkspace(repoRoot, path string) error {
 		WorkspacePath:    path,
 		RepoRoot:         repoRoot,
 		MainWorktreePath: mainPath,
+	}
+	if metadata, ok := workspacekey.Load(path); ok {
+		hookCtx = hookContextForMetadata(path, mainPath, metadata)
 	}
 	if err := runHook(hookWorktreeDeleting, cfg.Hooks.WorktreeDeleting, hookCtx, false); err != nil {
 		return err
@@ -361,29 +457,17 @@ func (m *Manager) LaunchCommand(repoRoot string, workspacePath string, command s
 
 func (m *Manager) launchCommand(repoRoot string, workspacePath string, command string, sessionType string, label string, icon string) (string, error) {
 	repoName := filepath.Base(repoRoot)
-	wsName := filepath.Base(workspacePath)
+	wsName := workspacekey.ID(workspacePath)
 
 	idx := nextSessionIndex(repoName, wsName)
 	tmuxName := sessionName(repoName, wsName, idx)
 
 	if !hasSession(tmuxName) {
-		if err := createTmuxSession(tmuxName, workspacePath); err != nil {
+		if err := createTmuxSession(tmuxName, workspacePath, initialCommand(workspacePath, command)); err != nil {
 			return "", err
 		}
 	}
 	markTmuxSession(tmuxName, sessionType, label, workspacePath, command, icon)
-
-	// Source .orion/env.sh first so the agent has port awareness
-	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
-	if _, err := os.Stat(envFile); err == nil {
-		sendKeys(tmuxName, "source .orion/env.sh")
-	}
-
-	if command != "" {
-		if err := sendKeys(tmuxName, command); err != nil {
-			return "", err
-		}
-	}
 
 	return tmuxName, nil
 }
@@ -391,13 +475,13 @@ func (m *Manager) launchCommand(repoRoot string, workspacePath string, command s
 // LaunchShell creates a bare tmux session (no agent command).
 func (m *Manager) LaunchShell(repoRoot string, workspacePath string) (string, error) {
 	repoName := filepath.Base(repoRoot)
-	wsName := filepath.Base(workspacePath)
+	wsName := workspacekey.ID(workspacePath)
 
 	idx := nextSessionIndex(repoName, wsName)
 	tmuxName := sessionName(repoName, wsName, idx)
 
 	if !hasSession(tmuxName) {
-		if err := createTmuxSession(tmuxName, workspacePath); err != nil {
+		if err := createTmuxSession(tmuxName, workspacePath, ""); err != nil {
 			return "", err
 		}
 	}
@@ -444,6 +528,93 @@ func getMainWorktreePath(repoRoot string) string {
 	return ""
 }
 
+// MainWorktreePath returns the first worktree registered for the repository.
+func MainWorktreePath(path string) string {
+	return getMainWorktreePath(path)
+}
+
+func (m *Manager) prepareWorkspace(repoRoot, worktreePath string, cfg *config.OrionConfig, metadata *workspacekey.Metadata) error {
+	if metadata.Provisioned {
+		return nil
+	}
+	mainPath := metadata.MainWorktreePath
+	if mainPath == "" {
+		mainPath = getMainWorktreePath(repoRoot)
+		metadata.MainWorktreePath = mainPath
+	}
+	if cfg != nil {
+		m.emitWorkspaceCreateProgress(worktreePath, "Copying credentials")
+		copyCredentialFiles(mainPath, worktreePath, cfg.Credentials.Copy)
+		if strings.TrimSpace(cfg.Hooks.WorktreeCreated.Command) != "" {
+			m.emitWorkspaceCreateProgress(worktreePath, "Running setup hook")
+		}
+		if err := runHook(hookWorktreeCreated, cfg.Hooks.WorktreeCreated, hookContextForMetadata(worktreePath, mainPath, *metadata), true); err != nil {
+			return err
+		}
+	}
+	if mainPath != "" {
+		setupScript := filepath.Join(mainPath, ".worktree-setup.sh")
+		if _, err := os.Stat(setupScript); err == nil {
+			setupCmd := exec.Command("bash", setupScript)
+			setupCmd.Dir = worktreePath
+			_ = setupCmd.Run()
+		}
+	}
+	metadata.Provisioned = true
+	if err := workspacekey.Save(worktreePath, *metadata); err != nil {
+		return fmt.Errorf("mark workspace provisioned: %w", err)
+	}
+	return nil
+}
+
+func hookContextForMetadata(worktreePath, mainPath string, metadata workspacekey.Metadata) hookContext {
+	return hookContext{
+		Name:             metadata.EnvironmentName,
+		Branch:           metadata.Branch,
+		BaseRef:          metadata.BaseRef,
+		WorkspacePath:    worktreePath,
+		RepoRoot:         mainPath,
+		MainWorktreePath: mainPath,
+	}
+}
+
+func applyWorkspaceMetadata(workspace *Workspace) {
+	if metadata, ok := workspacekey.Load(workspace.Path); ok && strings.TrimSpace(metadata.Name) != "" {
+		workspace.Name = metadata.Name
+	}
+}
+
+func displayBranch(worktreePath string) string {
+	branch := getWorktreeBranch(worktreePath)
+	if branch == "" {
+		return "(detached)"
+	}
+	return branch
+}
+
+func uniqueWorktreeID(parentDir string) (string, error) {
+	for i := 0; i < 64; i++ {
+		var bytes [2]byte
+		if _, err := rand.Read(bytes[:]); err != nil {
+			return "", fmt.Errorf("generate managed worktree id: %w", err)
+		}
+		id := hex.EncodeToString(bytes[:])
+		if _, err := os.Stat(filepath.Join(parentDir, id)); os.IsNotExist(err) {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("could not allocate a unique managed worktree id")
+}
+
+func shortHash(value string) string {
+	var bytes [2]byte
+	copy(bytes[:], []byte(value))
+	for i := range value {
+		bytes[i%len(bytes)] ^= value[i]
+	}
+	return hex.EncodeToString(bytes[:])
+}
+
 func sanitize(s string) string {
 	r := strings.NewReplacer(".", "-", ":", "-", " ", "-", "/", "-")
 	return r.Replace(s)
@@ -462,9 +633,13 @@ func hasSession(name string) bool {
 	return cmd.Run() == nil
 }
 
-func createTmuxSession(name, workDir string) error {
+func createTmuxSession(name, workDir, initialCommand string) error {
 	tmuxutil.ConfigureExtendedKeys()
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", workDir)
+	args := []string{"new-session", "-d", "-s", name, "-c", workDir}
+	if wrapped := tmuxutil.WrapInitialCommand(initialCommand); wrapped != "" {
+		args = append(args, wrapped)
+	}
+	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
 	}
@@ -476,6 +651,18 @@ func createTmuxSession(name, workDir string) error {
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	return nil
+}
+
+func initialCommand(workspacePath string, command string) string {
+	command = strings.TrimSpace(command)
+	envFile := filepath.Join(workspacePath, ".orion", "env.sh")
+	if _, err := os.Stat(envFile); err != nil {
+		return command
+	}
+	if command == "" {
+		return ". " + shellQuote(envFile)
+	}
+	return ". " + shellQuote(envFile) + "\n" + command
 }
 
 // createTmuxSessionForAgent creates a tmux session with mouse OFF so that
@@ -656,13 +843,6 @@ func shellQuote(value string) string {
 		return value
 	}
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
-func sendKeys(name, keys string) error {
-	if keys == "" {
-		return exec.Command("tmux", "send-keys", "-t", name, "Enter").Run()
-	}
-	return exec.Command("tmux", "send-keys", "-t", name, keys, "Enter").Run()
 }
 
 func killSession(name string) error {

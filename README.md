@@ -37,6 +37,62 @@ open build/bin/Orion.app
 
 On first launch, click **"Open project..."** in the sidebar and select a git repository.
 
+## Optional Codex Remote Host
+
+On macOS, Orion can launch a Codex TUI attached to a persistent Codex Remote
+Control host. This lets the same Codex task stream in Orion and on paired
+ChatGPT desktop/mobile clients.
+
+This integration is optional and uses Codex's experimental `remote-control`
+command. Orion's ordinary workspaces, agents, and servers do not depend on it.
+
+Prerequisites:
+
+- A current standalone `codex` CLI available on `PATH`
+- A ChatGPT account with Codex and Remote Control access
+- macOS, for the per-user LaunchAgent
+
+Install the host:
+
+```bash
+scripts/codex-remote install
+scripts/codex-remote pair
+```
+
+The installer creates:
+
+- An isolated profile at `~/.codex-orion-remote`
+- Generic launchers under `~/.orion/scripts`
+- A per-user `com.orion.codex-remote` LaunchAgent that starts at login
+- A process-local open-file limit suitable for the persistent daemon
+
+It does not copy another user's Codex configuration, MCP servers, tokens, or
+project credentials. Login occurs against the new isolated profile.
+
+To expose the attached TUI in a project, print the agent configuration and add
+it to that project's private, gitignored `.orion.toml`:
+
+```bash
+scripts/codex-remote print-orion-config
+```
+
+The generated agent uses Codex's full-permission mode, matching Orion's normal
+Codex default. Review the printed entry before adding it if a project needs
+stricter approvals or sandboxing.
+
+Management commands:
+
+```bash
+scripts/codex-remote status
+scripts/codex-remote pair
+scripts/codex-remote restart  # interrupts active remote turns
+scripts/codex-remote uninstall
+```
+
+Uninstalling removes the service and launchers but preserves
+`~/.codex-orion-remote`, including its local task history. Pairing codes expire;
+completed pairings persist until revoked or the account signs out.
+
 ## Configuration
 
 Orion uses `.orion.toml` in your project root to configure that repo. If you open a git repository that does not have `.orion.toml`, Orion creates a small default config with Claude and Codex agents enabled at full-permission settings. If the repo has an older `.orion.config.toml`, Orion can still read it, but new projects should use `.orion.toml`.

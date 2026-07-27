@@ -127,6 +127,7 @@ function activeTabStatusLabel(tab?: Tab | null): string {
 
 function App() {
   const [tabsHydrated, setTabsHydrated] = useState(false);
+  const workspacesRef = useRef<any[]>([]);
   const {
     project,
     setProject,
@@ -176,6 +177,10 @@ function App() {
     dirtyFiles,
   } = useStore();
 
+  useEffect(() => {
+    workspacesRef.current = workspaces;
+  }, [workspaces]);
+
   // Refit terminals after code review pane opens/closes
   useEffect(() => {
     // Delay to let the layout fully settle before terminals refit
@@ -212,6 +217,7 @@ function App() {
       await SetActiveProject(info.root);
       setProject({ name: info.name, root: info.root, mainBranch: info.mainBranch });
       const ws = await ListWorkspaces(info.root);
+      workspacesRef.current = ws;
       setWorkspaces(ws);
 
       const mainWs = ws.find((w: any) => w.isMain);
@@ -219,6 +225,14 @@ function App() {
 
       const savedTabs = (await GetSavedTabs()) || [];
       const restoredSessions = new Set<string>();
+      let restoredWorkspacePath = '';
+      let preferredRestoredWorkspacePath = '';
+      const rememberRestoredWorkspace = (workspacePath: string, tabType: string) => {
+        if (!restoredWorkspacePath) restoredWorkspacePath = workspacePath;
+        if (!preferredRestoredWorkspacePath && (tabType === 'codex-chat' || tabType === 'claude-chat')) {
+          preferredRestoredWorkspacePath = workspacePath;
+        }
+      };
       for (const saved of savedTabs) {
         try {
           if (saved.tabType === 'claude-chat') {
@@ -253,6 +267,7 @@ function App() {
               permissionMode: session.permissionMode || saved.permissionMode,
             });
             restoredSessions.add(saved.threadId || saved.tmuxSession);
+            rememberRestoredWorkspace(saved.workspacePath, saved.tabType);
             continue;
           }
           if (saved.tabType === 'codex-chat' && saved.threadId) {
@@ -285,6 +300,7 @@ function App() {
               collaborationMode: session.collaborationMode || saved.collaborationMode,
             });
             restoredSessions.add(saved.threadId);
+            rememberRestoredWorkspace(saved.workspacePath, saved.tabType);
             continue;
           }
           const termId = generateId('term');
@@ -308,7 +324,10 @@ function App() {
             collaborationMode: saved.collaborationMode,
           });
           restoredSessions.add(saved.tmuxSession);
-        } catch {}
+          rememberRestoredWorkspace(saved.workspacePath, saved.tabType);
+        } catch (err) {
+          console.error('Failed to restore saved tab', saved, err);
+        }
       }
 
       // Fallback: scan tmux directly for any orion-* sessions that weren't
@@ -317,8 +336,41 @@ function App() {
         const recovered = await RecoverSessions(info.name, ws.map((w: any) => w.path));
         for (const sess of (recovered || [])) {
           if (restoredSessions.has(sess.tmuxName)) continue;
-          const termId = generateId('term');
           try {
+            if (sess.type === 'codex' && sess.threadId) {
+              const session = await ResumeCodexChatWithOptions(
+                info.root,
+                sess.workspacePath,
+                sess.threadId,
+                sess.model || '',
+                sess.reasoningEffort || '',
+                sess.approvalPolicy || '',
+                sess.sandboxMode || '',
+                sess.collaborationMode || '',
+              );
+              addTab({
+                id: generateId('tab'),
+                label: sess.label || 'Codex Chat',
+                rootPane: { type: 'chat', id: generateId('pane'), chatSessionId: session.id, chatThreadId: session.threadId, chatKind: 'codex' } as PaneLeaf,
+                tabType: 'codex-chat',
+                workspacePath: sess.workspacePath,
+                icon: sess.icon || 'codex',
+                provider: 'codex',
+                viewMode: 'chat',
+                status: session.status || sess.status,
+                runtimeSessionId: session.id,
+                threadId: session.threadId || sess.threadId,
+                model: session.model || sess.model,
+                reasoningEffort: session.reasoningEffort || sess.reasoningEffort,
+                approvalPolicy: session.approvalPolicy || sess.approvalPolicy,
+                sandboxMode: session.sandboxMode || sess.sandboxMode,
+                collaborationMode: session.collaborationMode || sess.collaborationMode,
+              });
+              restoredSessions.add(sess.tmuxName);
+              rememberRestoredWorkspace(sess.workspacePath, 'codex-chat');
+              continue;
+            }
+            const termId = generateId('term');
             await CreateAttachedTerminal(termId, sess.tmuxName);
             const tab: Tab = {
               id: generateId('tab'),
@@ -344,14 +396,21 @@ function App() {
               addTab(tab);
             }
             restoredSessions.add(sess.tmuxName);
-          } catch {}
+            rememberRestoredWorkspace(sess.workspacePath, sess.type);
+          } catch (err) {
+            console.error('Failed to attach recovered session', sess, err);
+          }
         }
-      } catch {}
+      } catch (err) {
+        console.error('Failed to recover tmux sessions', err);
+      }
 
-      // Reconcile active tab to belong to the active (main) workspace.
-      // Each addTab above sets activeTabId to itself, so end state is the
-      // last-added tab, which may belong to a non-main workspace.
-      if (mainWs) setActiveWorkspace(mainWs.path);
+      const targetWorkspacePath = preferredRestoredWorkspacePath || restoredWorkspacePath;
+      if (targetWorkspacePath) {
+        setActiveWorkspace(targetWorkspacePath);
+      } else if (mainWs) {
+        setActiveWorkspace(mainWs.path);
+      }
 
       if (savedTabs.length === 0 && restoredSessions.size === 0 && mainWs) {
         const termId = generateId('term');
@@ -364,7 +423,8 @@ function App() {
           workspacePath: mainWs.path,
         });
       }
-    } catch {
+    } catch (err) {
+      console.error('Failed to load project', info, err);
     } finally {
       setTabsHydrated(true);
     }
@@ -385,7 +445,9 @@ function App() {
         if (!lastRoot) return;
         const info = await GetProjectInfo(lastRoot);
         await loadProject(info);
-      } catch {}
+      } catch (err) {
+        console.error('Failed to initialize last project', err);
+      }
     })();
   }, []);
 
@@ -1234,6 +1296,24 @@ function App() {
               permissionMode: tab.permissionMode || '',
               collaborationMode: tab.collaborationMode || '',
             });
+          }
+        }
+      }
+      if (savedTabs.length === 0) {
+        const workspacePaths = workspacesRef.current.map((w: any) => w.path).filter(Boolean);
+        if (workspacePaths.length === 0) {
+          console.warn('Skipping empty tab save because workspaces are not hydrated yet');
+          return;
+        }
+        if (workspacePaths.length > 0) {
+          try {
+            const recovered = await RecoverSessions(project.name, workspacePaths);
+            if ((recovered || []).length > 0) {
+              console.warn('Skipping empty tab save because live tmux sessions are recoverable', recovered);
+              return;
+            }
+          } catch (err) {
+            console.error('Failed to check recoverable sessions before empty tab save', err);
           }
         }
       }

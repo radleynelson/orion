@@ -722,14 +722,8 @@ final class AppState {
             activeConnection.connect(host: host, token: token)
         }
         if let activeChatConnection,
-           activeSessionShowsChat,
-           !activeChatConnection.isConnected,
-           activeChatConnection.connectionState != .reconnecting {
-            activeChatConnection.connect(host: host, token: token)
-        } else if let activeChatConnection,
-                  activeSessionShowsChat,
-                  activeChatConnection.connectionState == .connected {
-            activeChatConnection.reconnectOrProbe()
+           activeSessionShowsChat {
+            activeChatConnection.reconnectOrProbe(force: activeChatConnection.connectionState == .reconnecting)
         }
 
         // Reconnect voice WebSocket if voice mode is on and it's disconnected
@@ -748,9 +742,7 @@ final class AppState {
 
     private func connectChatSession(_ session: SessionInfo) {
         if activeChatConnection?.sessionId == session.chatConnectionId {
-            if let activeChatConnection, !activeChatConnection.isConnected, activeChatConnection.connectionState != .reconnecting {
-                activeChatConnection.connect(host: host, token: token)
-            }
+            activeChatConnection?.reconnectOrProbe(force: activeChatConnection?.connectionState == .reconnecting)
             return
         }
 

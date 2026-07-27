@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -227,7 +229,7 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 
 	id := "codex-chat-" + shortID()
 	ctx, cancel := context.WithCancel(m.ctx)
-	cmd := exec.CommandContext(ctx, "codex", "app-server", "--listen", "stdio://")
+	cmd := exec.CommandContext(ctx, codexExecutable(), "app-server", "--listen", "stdio://")
 	cmd.Dir = workspacePath
 
 	stdin, err := cmd.StdinPipe()
@@ -307,6 +309,47 @@ func (m *Manager) StartWithOptions(options StartOptions) (*SessionInfo, error) {
 
 	info := session.Info()
 	return &info, nil
+}
+
+func codexExecutable() string {
+	if resolved, err := exec.LookPath("codex"); err == nil {
+		return resolved
+	}
+
+	var candidates []string
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", "codex"),
+			filepath.Join(home, ".codex", "bin", "codex"),
+		)
+	}
+	candidates = append(candidates,
+		"/opt/homebrew/bin/codex",
+		"/usr/local/bin/codex",
+		"/Applications/Codex.app/Contents/Resources/codex",
+	)
+	for _, candidate := range candidates {
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+
+	if out, err := exec.Command("/bin/zsh", "-lc", "command -v codex").Output(); err == nil {
+		candidate := strings.TrimSpace(string(out))
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+
+	return "codex"
+}
+
+func isExecutableFile(pathValue string) bool {
+	stat, err := os.Stat(pathValue)
+	if err != nil || stat.IsDir() {
+		return false
+	}
+	return stat.Mode()&0111 != 0
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {

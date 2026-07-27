@@ -1,0 +1,429 @@
+#!/bin/zsh
+set -eu
+
+PROGRAM="${0:t}"
+COMMAND="${1:-help}"
+
+REMOTE_HOME="${ORION_CODEX_REMOTE_HOME:-$HOME/.codex-orion-remote}"
+ORION_HOME="${ORION_HOME:-$HOME/.orion}"
+SCRIPTS_DIR="$ORION_HOME/scripts"
+SERVICE_SCRIPT="$SCRIPTS_DIR/codex-orion-remote-service"
+ATTACH_SCRIPT="$SCRIPTS_DIR/codex-shared-remote"
+LAUNCH_AGENTS_DIR="${ORION_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+LAUNCH_LABEL="${ORION_CODEX_REMOTE_LABEL:-com.orion.codex-remote}"
+LAUNCH_AGENT="$LAUNCH_AGENTS_DIR/$LAUNCH_LABEL.plist"
+LAUNCH_DOMAIN="gui/$(id -u)"
+SOCKET="$REMOTE_HOME/app-server-control/app-server-control.sock"
+LAUNCHCTL="${ORION_LAUNCHCTL_BIN:-/bin/launchctl}"
+
+usage() {
+  cat <<EOF
+Usage: $PROGRAM <command>
+
+Install and manage an optional Codex Remote Control host for Orion.
+
+Commands:
+  install             Install the per-user service and start it at login
+  status              Show login, service, and socket status
+  pair                Start the service if needed and create a pairing code
+  restart             Restart the service (interrupts active remote turns)
+  uninstall           Remove the service; preserve Codex history and profile
+  print-orion-config  Print the private .orion.toml agent entry
+  help                Show this help
+
+Environment overrides:
+  ORION_CODEX_BIN                 Explicit Codex executable
+  ORION_CODEX_REMOTE_HOME         Isolated profile directory
+  ORION_CODEX_REMOTE_LABEL        Per-user LaunchAgent label
+  ORION_CODEX_REMOTE_SKIP_LOGIN   Set to 1 to skip interactive login
+  ORION_CODEX_REMOTE_SKIP_LAUNCHCTL
+                                  Set to 1 for packaging/tests only
+EOF
+}
+
+fail() {
+  print -u2 -- "$PROGRAM: $*"
+  exit 1
+}
+
+require_macos() {
+  [[ "$(uname -s)" == "Darwin" ]] || fail "Codex Remote auto-start currently supports macOS only."
+}
+
+find_codex() {
+  local candidate=""
+  if [[ -n "${ORION_CODEX_BIN:-}" ]]; then
+    candidate="$ORION_CODEX_BIN"
+  elif candidate="$(command -v codex 2>/dev/null)" && [[ -n "$candidate" ]]; then
+    :
+  elif [[ -x "$HOME/.local/bin/codex" ]]; then
+    candidate="$HOME/.local/bin/codex"
+  else
+    return 1
+  fi
+
+  [[ -x "$candidate" ]] || return 1
+  CODEX_BIN="${candidate:A}"
+}
+
+resolve_codex() {
+  find_codex ||
+    fail "Codex was not found. Install the standalone Codex CLI and try again."
+
+  "$CODEX_BIN" remote-control --help >/dev/null 2>&1 ||
+    fail "This Codex version does not provide 'codex remote-control'. Update Codex and try again."
+}
+
+xml_escape() {
+  print -r -- "$1" |
+    /usr/bin/sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
+}
+
+write_service_script() {
+  mkdir -p "$SCRIPTS_DIR"
+  /bin/chmod 700 "$SCRIPTS_DIR"
+
+  local tmp="$SERVICE_SCRIPT.tmp.$$"
+  cat >"$tmp" <<'EOF'
+#!/bin/zsh
+set -eu
+
+REMOTE_HOME="${ORION_CODEX_REMOTE_HOME:-$HOME/.codex-orion-remote}"
+CODEX_BIN="${ORION_CODEX_BIN:-}"
+
+if [[ -z "$CODEX_BIN" ]]; then
+  CODEX_BIN="$(command -v codex 2>/dev/null || true)"
+fi
+if [[ -z "$CODEX_BIN" && -x "$HOME/.local/bin/codex" ]]; then
+  CODEX_BIN="$HOME/.local/bin/codex"
+fi
+if [[ -z "$CODEX_BIN" || ! -x "$CODEX_BIN" ]]; then
+  print -u2 -- "The standalone Codex CLI was not found."
+  exit 1
+fi
+
+export CODEX_HOME="$REMOTE_HOME"
+export PATH="${CODEX_BIN:h}:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+exec "$CODEX_BIN" remote-control start --json
+EOF
+  /bin/chmod 700 "$tmp"
+  /bin/mv -f "$tmp" "$SERVICE_SCRIPT"
+}
+
+write_attach_script() {
+  local tmp="$ATTACH_SCRIPT.tmp.$$"
+  cat >"$tmp" <<'EOF'
+#!/bin/zsh
+set -eu
+
+REMOTE_HOME="${ORION_CODEX_REMOTE_HOME:-$HOME/.codex-orion-remote}"
+CODEX_BIN="${ORION_CODEX_BIN:-}"
+LAUNCH_LABEL="${ORION_CODEX_REMOTE_LABEL:-com.orion.codex-remote}"
+SERVICE_SCRIPT="${ORION_HOME:-$HOME/.orion}/scripts/codex-orion-remote-service"
+SOCKET="$REMOTE_HOME/app-server-control/app-server-control.sock"
+
+if [[ -z "$CODEX_BIN" ]]; then
+  CODEX_BIN="$(command -v codex 2>/dev/null || true)"
+fi
+if [[ -z "$CODEX_BIN" && -x "$HOME/.local/bin/codex" ]]; then
+  CODEX_BIN="$HOME/.local/bin/codex"
+fi
+if [[ -z "$CODEX_BIN" || ! -x "$CODEX_BIN" ]]; then
+  print -u2 -- "The standalone Codex CLI was not found."
+  exit 1
+fi
+
+if [[ ! -S "$SOCKET" ]]; then
+  if /bin/launchctl print "gui/$(id -u)/$LAUNCH_LABEL" >/dev/null 2>&1; then
+    /bin/launchctl kickstart "gui/$(id -u)/$LAUNCH_LABEL" >/dev/null
+  else
+    "$SERVICE_SCRIPT" >/dev/null
+  fi
+
+  for _ in {1..100}; do
+    [[ -S "$SOCKET" ]] && break
+    sleep 0.1
+  done
+fi
+
+if [[ ! -S "$SOCKET" ]]; then
+  print -u2 -- "Codex Remote did not create its control socket:"
+  print -u2 -- "$SOCKET"
+  print -u2 -- "Run 'scripts/codex-remote status' from the Orion repository."
+  exit 1
+fi
+
+exec env CODEX_HOME="$REMOTE_HOME" "$CODEX_BIN" \
+  --remote unix:// \
+  --cd "$PWD" \
+  --dangerously-bypass-approvals-and-sandbox \
+  "$@"
+EOF
+  /bin/chmod 700 "$tmp"
+  /bin/mv -f "$tmp" "$ATTACH_SCRIPT"
+}
+
+write_launch_agent() {
+  mkdir -p "$LAUNCH_AGENTS_DIR" "$REMOTE_HOME"
+  /bin/chmod 700 "$REMOTE_HOME"
+
+  local escaped_label escaped_service escaped_home escaped_codex escaped_stdout escaped_stderr
+  escaped_label="$(xml_escape "$LAUNCH_LABEL")"
+  escaped_service="$(xml_escape "$SERVICE_SCRIPT")"
+  escaped_home="$(xml_escape "$HOME")"
+  escaped_codex="$(xml_escape "$CODEX_BIN")"
+  escaped_stdout="$(xml_escape "$REMOTE_HOME/login-start.stdout.log")"
+  escaped_stderr="$(xml_escape "$REMOTE_HOME/login-start.stderr.log")"
+
+  local tmp="$LAUNCH_AGENT.tmp.$$"
+  cat >"$tmp" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$escaped_label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$escaped_service</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$escaped_home</string>
+    <key>ORION_CODEX_BIN</key>
+    <string>$escaped_codex</string>
+    <key>ORION_CODEX_REMOTE_HOME</key>
+    <string>$(xml_escape "$REMOTE_HOME")</string>
+    <key>PATH</key>
+    <string>$(xml_escape "${CODEX_BIN:h}:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>8192</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$escaped_stdout</string>
+  <key>StandardErrorPath</key>
+  <string>$escaped_stderr</string>
+</dict>
+</plist>
+EOF
+  /usr/bin/plutil -lint "$tmp" >/dev/null
+  /bin/chmod 600 "$tmp"
+  /bin/mv -f "$tmp" "$LAUNCH_AGENT"
+}
+
+is_loaded() {
+  "$LAUNCHCTL" print "$LAUNCH_DOMAIN/$LAUNCH_LABEL" >/dev/null 2>&1
+}
+
+bootstrap_service() {
+  if [[ "${ORION_CODEX_REMOTE_SKIP_LAUNCHCTL:-0}" == "1" ]]; then
+    print -- "Skipped LaunchAgent loading (ORION_CODEX_REMOTE_SKIP_LAUNCHCTL=1)."
+    return
+  fi
+
+  if is_loaded; then
+    print -- "LaunchAgent is already loaded. Existing sessions were not interrupted."
+    print -- "Run '$PROGRAM restart' later if this installation changed the plist."
+    return
+  fi
+
+  "$LAUNCHCTL" bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_AGENT"
+}
+
+is_logged_in() {
+  env CODEX_HOME="$REMOTE_HOME" "$CODEX_BIN" login status >/dev/null 2>&1
+}
+
+ensure_login() {
+  if is_logged_in; then
+    return
+  fi
+  if [[ "${ORION_CODEX_REMOTE_SKIP_LOGIN:-0}" == "1" ]]; then
+    print -- "Skipped Codex login (ORION_CODEX_REMOTE_SKIP_LOGIN=1)."
+    return
+  fi
+
+  print -- ""
+  print -- "Sign in to the isolated Codex Remote profile."
+  env CODEX_HOME="$REMOTE_HOME" "$CODEX_BIN" login
+}
+
+wait_for_socket() {
+  local attempts="${1:-100}"
+  local i=0
+  while (( i < attempts )); do
+    [[ -S "$SOCKET" ]] && return 0
+    sleep 0.1
+    (( i += 1 ))
+  done
+  return 1
+}
+
+ensure_running() {
+  [[ -S "$SOCKET" ]] && return
+
+  if [[ "${ORION_CODEX_REMOTE_SKIP_LAUNCHCTL:-0}" != "1" ]] && is_loaded; then
+    "$LAUNCHCTL" kickstart "$LAUNCH_DOMAIN/$LAUNCH_LABEL" >/dev/null
+  else
+    env \
+      ORION_CODEX_BIN="$CODEX_BIN" \
+      ORION_CODEX_REMOTE_HOME="$REMOTE_HOME" \
+      "$SERVICE_SCRIPT" >/dev/null
+  fi
+
+  wait_for_socket 100 ||
+    fail "Codex Remote did not create $SOCKET. Check $REMOTE_HOME/login-start.stderr.log."
+}
+
+install_remote() {
+  require_macos
+  resolve_codex
+  write_service_script
+  write_attach_script
+  write_launch_agent
+  ensure_login
+  bootstrap_service
+
+  if is_logged_in && [[ "${ORION_CODEX_REMOTE_SKIP_LAUNCHCTL:-0}" != "1" ]]; then
+    ensure_running
+  fi
+
+  print -- ""
+  print -- "Codex Remote is installed."
+  print -- "Profile:     $REMOTE_HOME"
+  print -- "LaunchAgent: $LAUNCH_AGENT"
+  print -- "Orion agent: $ATTACH_SCRIPT"
+  print -- ""
+  print -- "Next:"
+  print -- "  $PROGRAM pair"
+  print -- "  $PROGRAM print-orion-config"
+}
+
+show_status() {
+  require_macos
+  resolve_codex
+
+  print -- "Codex:       $CODEX_BIN"
+  print -- "Profile:     $REMOTE_HOME"
+  print -- "LaunchAgent: $LAUNCH_AGENT"
+  if is_logged_in; then
+    print -- "Login:       authenticated"
+  else
+    print -- "Login:       not authenticated"
+  fi
+  if [[ "${ORION_CODEX_REMOTE_SKIP_LAUNCHCTL:-0}" == "1" ]]; then
+    print -- "LaunchAgent: check skipped"
+  elif is_loaded; then
+    print -- "Service:     loaded"
+  else
+    print -- "Service:     not loaded"
+  fi
+  if [[ -S "$SOCKET" ]]; then
+    print -- "Socket:      ready"
+  else
+    print -- "Socket:      missing"
+  fi
+}
+
+pair_device() {
+  require_macos
+  resolve_codex
+  is_logged_in ||
+    fail "The isolated profile is not authenticated. Run '$PROGRAM install' first."
+  ensure_running
+  env CODEX_HOME="$REMOTE_HOME" "$CODEX_BIN" remote-control pair
+}
+
+restart_service() {
+  require_macos
+  resolve_codex
+  [[ -f "$LAUNCH_AGENT" ]] || fail "Codex Remote is not installed. Run '$PROGRAM install' first."
+  [[ "${ORION_CODEX_REMOTE_SKIP_LAUNCHCTL:-0}" != "1" ]] ||
+    fail "Restart is unavailable while LaunchAgent management is disabled."
+
+  print -- "Stopping Codex Remote. This interrupts active remote turns."
+  env CODEX_HOME="$REMOTE_HOME" "$CODEX_BIN" remote-control stop --json >/dev/null 2>&1 || true
+  if is_loaded; then
+    "$LAUNCHCTL" bootout "$LAUNCH_DOMAIN/$LAUNCH_LABEL"
+  fi
+  "$LAUNCHCTL" bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_AGENT"
+  ensure_running
+  print -- "Codex Remote restarted."
+}
+
+uninstall_remote() {
+  require_macos
+
+  print -- "Stopping and removing the Codex Remote service."
+  if find_codex; then
+    env CODEX_HOME="$REMOTE_HOME" "$CODEX_BIN" remote-control stop --json >/dev/null 2>&1 || true
+  else
+    print -- "Codex is not installed; continuing with service removal."
+  fi
+  if [[ "${ORION_CODEX_REMOTE_SKIP_LAUNCHCTL:-0}" != "1" ]] && is_loaded; then
+    "$LAUNCHCTL" bootout "$LAUNCH_DOMAIN/$LAUNCH_LABEL"
+  fi
+
+  [[ "$LAUNCH_AGENT" == "$LAUNCH_AGENTS_DIR/"*.plist ]] ||
+    fail "Refusing to remove an unexpected LaunchAgent path: $LAUNCH_AGENT"
+  [[ "$SERVICE_SCRIPT" == "$SCRIPTS_DIR/"* ]] ||
+    fail "Refusing to remove an unexpected service path: $SERVICE_SCRIPT"
+  [[ "$ATTACH_SCRIPT" == "$SCRIPTS_DIR/"* ]] ||
+    fail "Refusing to remove an unexpected launcher path: $ATTACH_SCRIPT"
+
+  /bin/rm -f "$LAUNCH_AGENT" "$SERVICE_SCRIPT" "$ATTACH_SCRIPT"
+  print -- "Service removed."
+  print -- "Preserved profile and history: $REMOTE_HOME"
+}
+
+print_orion_config() {
+  cat <<'EOF'
+# Add this to a private, gitignored .orion.toml:
+[agents.codex_shared_remote]
+label = "Codex Shared Remote"
+provider = "codex"
+icon = "codex"
+command = "$HOME/.orion/scripts/codex-shared-remote"
+reasoning_effort = "xhigh"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+collaboration_mode = "default"
+EOF
+}
+
+case "$COMMAND" in
+  install)
+    install_remote
+    ;;
+  status)
+    show_status
+    ;;
+  pair)
+    pair_device
+    ;;
+  restart)
+    restart_service
+    ;;
+  uninstall)
+    uninstall_remote
+    ;;
+  print-orion-config)
+    print_orion_config
+    ;;
+  help | -h | --help)
+    usage
+    ;;
+  *)
+    usage >&2
+    fail "unknown command: $COMMAND"
+    ;;
+esac

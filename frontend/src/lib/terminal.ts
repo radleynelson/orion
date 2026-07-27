@@ -1,6 +1,5 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { EventsOn, EventsEmit, BrowserOpenURL, ClipboardGetText, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 
@@ -138,6 +137,15 @@ let lastTerminalCopyText = '';
 let lastTerminalCopyAt = 0;
 let pendingTerminalClipboardWrite: Promise<void> | null = null;
 
+function shouldEnableWebGLRenderer(): boolean {
+  if (__ORION_BROWSER_PREVIEW__) return false;
+  try {
+    return localStorage.getItem('orion.enableWebGL') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function copyTerminalText(text: string): void {
   lastTerminalCopyText = text;
   lastTerminalCopyAt = Date.now();
@@ -207,18 +215,18 @@ export function createTerminal(
 
   terminal.open(container);
 
-  // Try WebGL renderer for GPU-accelerated rendering. Browser preview mode
-  // intentionally uses xterm's default renderer to keep headless tests quiet.
-  if (!__ORION_BROWSER_PREVIEW__) {
-    try {
+  // Keep WebGL opt-in. On macOS WKWebView, the WebGL terminal renderer has
+  // matched repeated idle/sleep crashes in JavaScriptCore's heap collector.
+  if (shouldEnableWebGLRenderer()) {
+    void import('@xterm/addon-webgl').then(({ WebglAddon }) => {
       const webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
         webglAddon.dispose();
       });
       terminal.loadAddon(webglAddon);
-    } catch (e) {
+    }).catch(() => {
       console.warn('WebGL addon failed, falling back to canvas renderer');
-    }
+    });
   }
 
   // Clickable links — Cmd+click opens in default browser.

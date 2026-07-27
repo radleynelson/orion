@@ -335,13 +335,13 @@ final class CodexChatConnection {
         send(CodexChatWSMessage(type: "plan_action", action: "approve"))
     }
 
-    func reconnectOrProbe() {
+    func reconnectOrProbe(force: Bool = false) {
         guard let host, let token else { return }
-        if connectionState == .reconnecting { return }
-        if !isConnected || connectionState == .failed {
+        if force || !isConnected || connectionState == .failed {
             connect(host: host, token: token)
             return
         }
+        if connectionState == .reconnecting { return }
         verifyServerReachable()
     }
 

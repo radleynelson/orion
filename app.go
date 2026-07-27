@@ -30,6 +30,7 @@ import (
 	"orion/internal/watcher"
 	"orion/internal/web"
 	"orion/internal/workspace"
+	"orion/internal/workspacekey"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -79,17 +80,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	// Fix PATH for macOS dock launches. launchd hands GUI apps a minimal PATH,
-	// so version managers like asdf/nvm/volta/fnm/bun aren't visible. Ask the
-	// user's login shell for its PATH and merge it in — same trick VS Code uses.
-	mergePathFromLoginShell()
-	path := os.Getenv("PATH")
-	for _, p := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/opt/homebrew/sbin", "/usr/local/sbin"} {
-		if !strings.Contains(path, p) {
-			path = p + ":" + path
-		}
-	}
-	os.Setenv("PATH", path)
+	repairLaunchPath()
 
 	a.termMgr.SetContext(ctx)
 	a.claudeMgr.SetContext(ctx)
@@ -125,7 +116,11 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start mobile companion web server
 	a.webSrv = web.NewServer(a, a.termMgr, a.codexMgr, a.claudeMgr)
-	go a.webSrv.Start(mobileServerPort())
+	go func() {
+		if err := a.webSrv.Start(mobileServerPort()); err != nil {
+			applog.Errorf("mobile web server stopped: %v", err)
+		}
+	}()
 
 	wailsRuntime.EventsOn(ctx, "terminal:input", func(optionalData ...interface{}) {
 		if len(optionalData) < 2 {
@@ -326,6 +321,9 @@ func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) 
 		return nil, err
 	}
 	if ws != nil {
+		if err := a.srvMgr.AllocatePorts(repoRoot, ws.Path, false); err != nil {
+			return nil, fmt.Errorf("allocate workspace environment: %w", err)
+		}
 		if samePath(a.appState.ProjectRoot(), repoRoot) {
 			if all, listErr := a.wsMgr.ListWorkspaces(repoRoot); listErr == nil {
 				paths := make([]string, 0, len(all))
@@ -342,8 +340,45 @@ func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) 
 	return ws, nil
 }
 
+// AdoptWorkspace brings a Codex-created worktree under Orion's environment
+// lifecycle without taking ownership of deleting the Git worktree.
+func (a *App) AdoptWorkspace(path string) (*workspace.Workspace, error) {
+	ws, err := a.wsMgr.AdoptWorkspace(path)
+	if err != nil {
+		return nil, err
+	}
+	mainPath := workspace.MainWorktreePath(ws.Path)
+	if mainPath == "" {
+		return nil, fmt.Errorf("cannot find main worktree for %s", ws.Path)
+	}
+	if err := a.srvMgr.AllocatePorts(mainPath, ws.Path, false); err != nil {
+		return nil, fmt.Errorf("allocate workspace environment: %w", err)
+	}
+	if samePath(a.appState.ProjectRoot(), mainPath) {
+		a.appState.RememberWorkspace(ws.Path)
+	}
+	a.EmitWorkspaceCreated(mainPath, *ws)
+	return ws, nil
+}
+
+// CleanupAdoptedWorkspace releases Orion runtime state and runs the deletion
+// hook for a Codex-owned worktree. Codex remains responsible for removing it.
+func (a *App) CleanupAdoptedWorkspace(path string) error {
+	wsID := workspacekey.ID(path)
+	if err := a.srvMgr.StopServers(path); err != nil {
+		applog.Warnf("StopServers during CleanupAdoptedWorkspace failed: %v", err)
+	}
+	a.portReg.ReleaseWorkspace(wsID)
+	a.portReg.ReleaseRedisDB(wsID)
+	if err := a.wsMgr.CleanupAdoptedWorkspace(path); err != nil {
+		return err
+	}
+	a.appState.ForgetWorkspace(path)
+	return nil
+}
+
 func (a *App) DeleteWorkspace(repoRoot string, path string) error {
-	wsID := filepath.Base(path)
+	wsID := workspacekey.ID(path)
 	// Kill server tmux sessions (rails s, vite dev, etc.) before removing the
 	// worktree — otherwise they keep running, hold ports, and write to a path
 	// that no longer exists.
@@ -769,7 +804,7 @@ func (a *App) GetWorkspaceEnv(workspacePath string) map[string]string {
 
 func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {
 	cfg := config.Load(repoRoot)
-	wsID := filepath.Base(workspacePath)
+	wsID := workspacekey.ID(workspacePath)
 	alloc := a.portReg.GetAllocation(wsID)
 	if alloc == nil && filepath.Clean(repoRoot) == filepath.Clean(workspacePath) {
 		alloc = make(port.Allocation)
@@ -1504,6 +1539,21 @@ func mobileServerPort() int {
 	return 9867
 }
 
+// repairLaunchPath fixes PATH for macOS dock launches before any git/tmux/codex
+// subprocesses are started. launchd hands GUI apps a minimal PATH, so ask the
+// user's login shell for its PATH and also add common Homebrew directories.
+func repairLaunchPath() {
+	mergePathFromLoginShell()
+
+	path := os.Getenv("PATH")
+	for _, p := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/opt/homebrew/sbin", "/usr/local/sbin"} {
+		if !pathListContains(path, p) {
+			path = p + ":" + path
+		}
+	}
+	os.Setenv("PATH", path)
+}
+
 // mergePathFromLoginShell asks the user's login shell for its PATH and merges
 // any new entries into the current process PATH. This picks up version-manager
 // shims (asdf, nvm, volta, fnm, bun, etc.) that aren't visible to GUI apps
@@ -1548,4 +1598,17 @@ func mergePathFromLoginShell() {
 		}
 	}
 	os.Setenv("PATH", merged)
+}
+
+func pathListContains(pathValue, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, entry := range filepath.SplitList(pathValue) {
+		if entry == target {
+			return true
+		}
+	}
+	return false
 }

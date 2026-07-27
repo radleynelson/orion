@@ -478,6 +478,7 @@ export namespace config {
 	export class OrionConfig {
 	    BranchPrefix: string;
 	    WorktreesDir: string;
+	    WorktreeLayout: string;
 	    Credentials: CredentialsConfig;
 	    Hooks: HooksConfig;
 	    Servers: Record<string, ServerConfig>;
@@ -493,6 +494,7 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.BranchPrefix = source["BranchPrefix"];
 	        this.WorktreesDir = source["WorktreesDir"];
+	        this.WorktreeLayout = source["WorktreeLayout"];
 	        this.Credentials = this.convertValues(source["Credentials"], CredentialsConfig);
 	        this.Hooks = this.convertValues(source["Hooks"], HooksConfig);
 	        this.Servers = this.convertValues(source["Servers"], ServerConfig, true);
