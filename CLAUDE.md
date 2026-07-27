@@ -2,6 +2,93 @@
 
 Orion is a Wails v2 desktop app (Go + React/TypeScript) that manages agentic coding workspaces. It wraps git worktrees, tmux sessions, and xterm.js terminals into a unified GUI with port isolation, credential management, and one-click agent launching.
 
+## Radley's Codex Shared Remote Host
+
+This is a personal, machine-local service on Radley's Mac. It is not an Orion
+project dependency and must not be turned into a required setup for coworkers.
+Coworkers who opt in should use `scripts/codex-remote install`; the generic
+installer creates their own profile and LaunchAgent without copying Radley's
+MCP configuration or credentials.
+
+- Codex has one standalone installation at `~/.local/bin/codex`.
+- The shared Orion host uses the isolated profile
+  `CODEX_HOME=~/.codex-orion-remote` so it does not collide with the ChatGPT
+  desktop app's existing Remote host.
+- The persistent server is a Codex remote-control daemon listening at
+  `~/.codex-orion-remote/app-server-control/app-server-control.sock`.
+- `~/Library/LaunchAgents/com.radley.codex-orion-remote.plist` starts the host at
+  macOS login. The daemon stays running when Orion and its TUI tabs close.
+- The LaunchAgent sets `SoftResourceLimits.NumberOfFiles = 8192` for the daemon.
+  Do not remove this process-local limit: macOS otherwise supplies a soft limit
+  of 256, which the persistent daemon can exceed while loading skills and
+  per-thread MCP processes.
+- The LaunchAgent calls `~/.orion/scripts/codex-orion-remote-service`. That
+  wrapper loads `BETTERSTACK_API_TOKEN` from the macOS Keychain service
+  `com.radley.codex-orion-remote.betterstack` and prepends the Ruby 3.4 rbenv
+  shims needed by Review Town. Never place the token directly in the plist,
+  wrapper, or Codex config.
+- The login LaunchAgent is intentionally one-shot. `launchctl` normally shows
+  it as `state = not running` with `last exit code = 0` after it hands off to
+  the persistent Codex daemon.
+- `~/.orion/scripts/codex-shared-remote` is an idempotent launcher: it starts the
+  daemon if needed and attaches the TUI with `codex --remote unix://`.
+- Slant exposes that launcher as the private, gitignored
+  `[agents.codex_shared_remote]` entry labeled `Codex Shared Remote`.
+
+Use the isolated `CODEX_HOME` for every management command. Starting remote
+control against ordinary `~/.codex` collides with the desktop app host and can
+return `409 Remote app server already online`.
+
+```bash
+# Health/status
+CODEX_HOME="$HOME/.codex-orion-remote" codex doctor --json --summary
+CODEX_HOME="$HOME/.codex-orion-remote" codex remote-control start --json
+launchctl print "gui/$(id -u)/com.radley.codex-orion-remote"
+
+# Restart through the LaunchAgent so its credentials, PATH, and limits apply.
+# First confirm no connected clients or active turns would be interrupted.
+CODEX_HOME="$HOME/.codex-orion-remote" codex remote-control stop --json
+launchctl kickstart "gui/$(id -u)/com.radley.codex-orion-remote"
+
+# Generate a short-lived device pairing code
+CODEX_HOME="$HOME/.codex-orion-remote" codex remote-control pair --json
+
+# Stop only when Radley explicitly asks
+CODEX_HOME="$HOME/.codex-orion-remote" codex remote-control stop --json
+```
+
+Pairing codes expire; completed device pairings persist until revoked or the
+account signs out. Never commit pairing codes, `auth.json`, or files from the
+isolated profile. The host is unavailable while the Mac is logged out, asleep,
+offline, or powered off. The experimental profile currently disables the Slant
+and Sentry OAuth MCP entries until they are authenticated separately.
+
+### Shared Codex/Orion worktree lifecycle
+
+Slant intentionally uses Orion's default sibling worktree layout. Orion-created
+worktrees therefore have human-readable paths such as `slant-feature-name`,
+which keeps Codex `/resume` history easy to distinguish by working directory.
+This layout choice is independent of the shared Codex Remote host. Codex-created
+worktrees may still use Codex's nested `<worktree-root>/<short-id>/slant`
+layout and are adopted by Orion when opened.
+
+Orion is the sole environment owner in both directions:
+
+- Orion creation copies credentials, runs `hooks.worktree_created` (including
+  the PostgreSQL database setup), allocates ports/Redis, and writes
+  `.orion/env.sh`.
+- A Codex-created checkout runs Slant's `.codex/environments/environment.toml`,
+  which calls `~/.orion/scripts/orion-worktree`. The script asks Orion's
+  authenticated local API to adopt the checkout and runs the identical
+  provisioning path. It starts Orion automatically if needed.
+- Adoption is idempotent; reopening an environment does not rerun the database
+  hook. Codex cleanup asks Orion to stop servers, release runtime allocations,
+  and run `hooks.worktree_deleting` before Codex removes its checkout.
+
+The old `~/.codex/scripts/slant-worktree` implementation is superseded and must
+not be used for new environments; it duplicated database, port, Redis, and
+server management.
+
 ## Tech Stack
 
 - **Backend**: Go (Wails v2 framework)

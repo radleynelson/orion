@@ -1,0 +1,70 @@
+#!/bin/zsh
+set -eu
+
+REPO_ROOT="${0:A:h:h}"
+MANAGER="$REPO_ROOT/scripts/codex-remote"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/orion-codex-remote-test.XXXXXX")"
+TEST_HOME="$TEST_ROOT/home with spaces"
+FAKE_CODEX="$TEST_ROOT/bin with spaces/codex"
+
+cleanup() {
+  [[ "$TEST_ROOT" == *"/orion-codex-remote-test."* ]] &&
+    /bin/rm -rf "$TEST_ROOT"
+}
+trap cleanup EXIT
+
+mkdir -p "$TEST_HOME" "${FAKE_CODEX:h}"
+cat >"$FAKE_CODEX" <<'EOF'
+#!/bin/zsh
+if [[ "$1" == "remote-control" && "$2" == "--help" ]]; then
+  exit 0
+fi
+if [[ "$1" == "login" && "$2" == "status" ]]; then
+  exit 1
+fi
+if [[ "$1" == "remote-control" && "$2" == "stop" ]]; then
+  exit 0
+fi
+exit 0
+EOF
+chmod 700 "$FAKE_CODEX"
+
+run_manager() {
+  env \
+    HOME="$TEST_HOME" \
+    ORION_CODEX_BIN="$FAKE_CODEX" \
+    ORION_HOME="$TEST_HOME/.orion" \
+    ORION_CODEX_REMOTE_HOME="$TEST_HOME/.codex-orion-remote" \
+    ORION_LAUNCH_AGENTS_DIR="$TEST_HOME/Library/LaunchAgents" \
+    ORION_CODEX_REMOTE_SKIP_LOGIN=1 \
+    ORION_CODEX_REMOTE_SKIP_LAUNCHCTL=1 \
+    "$MANAGER" "$@"
+}
+
+run_manager install >/dev/null
+run_manager install >/dev/null
+
+SERVICE="$TEST_HOME/.orion/scripts/codex-orion-remote-service"
+ATTACH="$TEST_HOME/.orion/scripts/codex-shared-remote"
+PLIST="$TEST_HOME/Library/LaunchAgents/com.orion.codex-remote.plist"
+
+[[ -x "$SERVICE" ]]
+[[ -x "$ATTACH" ]]
+[[ -f "$PLIST" ]]
+/usr/bin/plutil -lint "$PLIST" >/dev/null
+
+if rg -i "radley|betterstack|review.town" "$SERVICE" "$ATTACH" "$PLIST" >/dev/null; then
+  print -u2 -- "Generated installation contains personal configuration."
+  exit 1
+fi
+
+run_manager status >/dev/null
+run_manager print-orion-config | rg 'agents\.codex_shared_remote' >/dev/null
+run_manager uninstall >/dev/null
+
+[[ ! -e "$SERVICE" ]]
+[[ ! -e "$ATTACH" ]]
+[[ ! -e "$PLIST" ]]
+[[ -d "$TEST_HOME/.codex-orion-remote" ]]
+
+print -- "codex-remote installer test passed"
