@@ -254,6 +254,7 @@ final class CodexChatConnection {
     var messages: [CodexChatMessage] = []
     var onPermanentFailure: (() -> Void)?
     var onAssistantVoiceText: ((String) -> Void)?
+    var onStatusChange: ((String) -> Void)?
 
     private var host: String?
     private var token: String?
@@ -334,13 +335,13 @@ final class CodexChatConnection {
         send(CodexChatWSMessage(type: "plan_action", action: "approve"))
     }
 
-    func reconnectOrProbe() {
+    func reconnectOrProbe(force: Bool = false) {
         guard let host, let token else { return }
-        if connectionState == .reconnecting { return }
-        if !isConnected || connectionState == .failed {
+        if force || !isConnected || connectionState == .failed {
             connect(host: host, token: token)
             return
         }
+        if connectionState == .reconnecting { return }
         verifyServerReachable()
     }
 
@@ -414,6 +415,9 @@ final class CodexChatConnection {
             DispatchQueue.main.async {
                 if !self.messages.contains(where: { $0.id == chatMessage.id }) {
                     self.messages.append(chatMessage)
+                    if chatMessage.type == "status", let status = chatMessage.status {
+                        self.onStatusChange?(status)
+                    }
                     self.publishAssistantVoiceTextIfNeeded(chatMessage)
                 }
             }

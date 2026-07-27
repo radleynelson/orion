@@ -161,6 +161,7 @@ export default function CodexChat({
   const config = CHAT_CONFIG[kind];
   const setCodeReviewVisible = useStore((s) => s.setCodeReviewVisible);
   const setCodeReviewBase = useStore((s) => s.setCodeReviewBase);
+  const setTabSessionStatus = useStore((s) => s.setTabSessionStatus);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -229,6 +230,13 @@ export default function CodexChat({
     .reverse()
     .find((m) => m.type === "status");
   const lastStatus = lastStatusMessage?.status || "idle";
+
+  useEffect(() => {
+    setTabSessionStatus(sessionId, lastStatus);
+    if (lastStatusMessage?.threadId) {
+      setTabSessionStatus(lastStatusMessage.threadId, lastStatus);
+    }
+  }, [sessionId, lastStatus, lastStatusMessage?.threadId, setTabSessionStatus]);
   const liveActivity = useMemo(
     () =>
       liveActivityItems(

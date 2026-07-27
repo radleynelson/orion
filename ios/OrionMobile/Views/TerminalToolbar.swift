@@ -21,6 +21,14 @@ struct TerminalToolbar: View {
                 ShortcutButton(label: "^D") { sendKey("\u{04}") }
                 ShortcutButton(label: "^L") { sendKey("\u{0C}") }
                 ShortcutButton(label: "^Z") { sendKey("\u{1A}") }
+                if let session = state.activeSession, state.isTranscriptChatCapable(session) {
+                    ShortcutButton(label: "Chat", highlight: true) {
+                        Task {
+                            do { try await state.showChatView(for: session) }
+                            catch { state.showTransientError("Failed to open chat: \(error.localizedDescription)") }
+                        }
+                    }
+                }
                 Divider().frame(height: 24).background(OrionTheme.border)
                 KeyboardButton()
                 MicButton()

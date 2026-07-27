@@ -15,6 +15,7 @@ import (
 	"orion/internal/config"
 	"orion/internal/port"
 	"orion/internal/tmuxutil"
+	"orion/internal/workspacekey"
 )
 
 // ServerStatus represents the state of a server for a workspace.
@@ -51,7 +52,7 @@ func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bo
 		return nil
 	}
 
-	wsID := filepath.Base(workspacePath)
+	wsID := workspacekey.ID(workspacePath)
 
 	// Check if already allocated
 	existing := m.portReg.GetAllocation(wsID)
@@ -106,7 +107,7 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 		return nil, fmt.Errorf("no servers configured in .orion.toml")
 	}
 
-	wsID := filepath.Base(workspacePath)
+	wsID := workspacekey.ID(workspacePath)
 
 	var alloc port.Allocation
 
@@ -165,20 +166,14 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 			workDir = filepath.Join(workspacePath, srv.Dir)
 		}
 
-		// Create tmux session
-		if err := createTmuxSession(tmuxName, workDir); err != nil {
-			statuses = append(statuses, ServerStatus{
-				Name: name, Running: false, TmuxSession: tmuxName,
-			})
-			continue
-		}
-
 		// Build environment command prefix
 		envParts := buildEnvString(name, srv, alloc, cfg, redisDB)
-
-		// Send the command
 		fullCmd := envParts + srv.Command
-		if err := sendKeys(tmuxName, fullCmd); err != nil {
+
+		// Create tmux session with the command as the pane startup command.
+		// Sending it later through stdin races with interactive shell startup
+		// prompts, which can consume the first byte.
+		if err := createTmuxSession(tmuxName, workDir, fullCmd); err != nil {
 			statuses = append(statuses, ServerStatus{
 				Name: name, Running: false, TmuxSession: tmuxName,
 			})
@@ -199,7 +194,7 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 
 // StopServers stops all servers for a workspace.
 func (m *Manager) StopServers(workspacePath string) error {
-	wsID := filepath.Base(workspacePath)
+	wsID := workspacekey.ID(workspacePath)
 
 	// Find and kill all server tmux sessions for this workspace
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
@@ -225,7 +220,7 @@ func (m *Manager) StopServers(workspacePath string) error {
 // GetServerStatuses returns the current status of all servers for a workspace.
 func (m *Manager) GetServerStatuses(repoRoot string, workspacePath string) []ServerStatus {
 	cfg := config.Load(repoRoot)
-	wsID := filepath.Base(workspacePath)
+	wsID := workspacekey.ID(workspacePath)
 	alloc := m.portReg.GetAllocation(wsID)
 	if alloc == nil && filepath.Clean(repoRoot) == filepath.Clean(workspacePath) {
 		alloc = defaultAllocation(cfg)
@@ -401,9 +396,13 @@ func cachedSessions() map[string]bool {
 	return set
 }
 
-func createTmuxSession(name, workDir string) error {
+func createTmuxSession(name, workDir, initialCommand string) error {
 	tmuxutil.ConfigureExtendedKeys()
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", workDir)
+	args := []string{"new-session", "-d", "-s", name, "-c", workDir}
+	if wrapped := tmuxutil.WrapInitialCommand(initialCommand); wrapped != "" {
+		args = append(args, wrapped)
+	}
+	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
 	}
@@ -415,10 +414,6 @@ func createTmuxSession(name, workDir string) error {
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	return nil
-}
-
-func sendKeys(name, keys string) error {
-	return exec.Command("tmux", "send-keys", "-t", name, keys, "Enter").Run()
 }
 
 func killSession(name string) error {

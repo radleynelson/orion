@@ -19,6 +19,7 @@ type SessionInfo struct {
 	Provider          string `json:"provider,omitempty"`
 	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
+	Status            string `json:"status,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	ThreadID          string `json:"threadId,omitempty"`
 	Model             string `json:"model,omitempty"`
@@ -38,6 +39,7 @@ type SavedTab struct {
 	Provider          string `json:"provider,omitempty"`
 	Icon              string `json:"icon,omitempty"`
 	ViewMode          string `json:"viewMode,omitempty"`
+	Status            string `json:"status,omitempty"`
 	RuntimeSessionID  string `json:"runtimeSessionId,omitempty"`
 	ThreadID          string `json:"threadId,omitempty"`
 	Model             string `json:"model,omitempty"`
@@ -447,6 +449,7 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 	var sessions []SessionInfo
 	shellCount := make(map[string]int)
 
+nextSession:
 	for _, line := range strings.Split(string(out), "\n") {
 		name := strings.TrimSpace(line)
 		if name == "" || !strings.HasPrefix(name, prefix) {
@@ -456,6 +459,18 @@ func RecoverSessions(repoName string, workspacePaths []string) []SessionInfo {
 		// Skip web companion grouped sessions — they're transient
 		if strings.HasPrefix(name, webPrefix) {
 			continue
+		}
+
+		// Prefer explicit Orion metadata when it exists. This keeps recovery
+		// working even if the project was opened from a worktree path whose
+		// basename no longer matches the tmux session's original repo prefix.
+		if metadataWorkspace := strings.TrimSpace(tmuxOption(name, "@orion_workspace")); metadataWorkspace != "" {
+			for _, ws := range wsEntries {
+				if metadataWorkspace == ws.path || strings.HasPrefix(metadataWorkspace, ws.path+string(os.PathSeparator)) {
+					sessions = append(sessions, recoveredSessionInfo(name, "Shell", ws.path))
+					continue nextSession
+				}
+			}
 		}
 
 		if strings.HasPrefix(name, shellPrefix) {
@@ -537,6 +552,7 @@ func recoveredSessionInfo(tmuxSession string, fallbackLabel string, workspacePat
 		info.Provider = sessionType
 		info.ViewMode = "terminal"
 		info.RuntimeSessionID = tmuxSession
+		info.ThreadID = strings.TrimSpace(tmuxOption(tmuxSession, "@orion_thread_id"))
 	}
 	return info
 }

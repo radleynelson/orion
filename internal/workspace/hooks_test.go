@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"orion/internal/config"
+	"orion/internal/workspacekey"
 )
 
 func TestRenderHookCommandShellQuotesBranchNames(t *testing.T) {
@@ -160,6 +161,89 @@ blocking = false
 	}
 	if _, err := os.Stat(ws.Path); !os.IsNotExist(err) {
 		t.Fatalf("worktree still exists after nonblocking hook failure: %v", err)
+	}
+}
+
+func TestCodexLayoutCreatesDetachedNestedWorktreeAndRunsSetup(t *testing.T) {
+	repo := initHookTestRepo(t)
+	worktreesDir := filepath.Join(t.TempDir(), "managed-worktrees")
+	cfg := `branch_prefix = "radley"
+worktrees_dir = "` + worktreesDir + `"
+worktree_layout = "codex"
+
+[hooks.worktree_created]
+command = "mkdir -p .orion && printf '%s\n%s\n' \"$ORION_WORKSPACE_NAME\" \"$ORION_BRANCH\" > .orion/hook-context"
+`
+	if err := os.WriteFile(filepath.Join(repo, config.FileName), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := NewManager().CreateWorkspaceFrom(repo, "proof", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(ws.Path) != filepath.Base(repo) {
+		t.Fatalf("worktree basename = %q, want repository name %q", filepath.Base(ws.Path), filepath.Base(repo))
+	}
+	if filepath.Dir(filepath.Dir(ws.Path)) != worktreesDir {
+		t.Fatalf("worktree path = %q, want nested under %q", ws.Path, worktreesDir)
+	}
+	if ws.Branch != "(detached)" {
+		t.Fatalf("branch = %q, want detached", ws.Branch)
+	}
+	if got := getWorktreeBranch(ws.Path); got != "" {
+		t.Fatalf("git branch = %q, want detached HEAD", got)
+	}
+	metadata, ok := workspacekey.Load(ws.Path)
+	if !ok || !metadata.Provisioned {
+		t.Fatalf("metadata = %#v, loaded=%v, want provisioned", metadata, ok)
+	}
+	if metadata.Branch != "radley/proof" || metadata.EnvironmentName != "proof" {
+		t.Fatalf("metadata context = %#v", metadata)
+	}
+	data, err := os.ReadFile(filepath.Join(ws.Path, ".orion", "hook-context"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "proof\nradley/proof" {
+		t.Fatalf("hook context = %q", got)
+	}
+}
+
+func TestAdoptWorkspaceIsIdempotent(t *testing.T) {
+	repo := initHookTestRepo(t)
+	cfg := `branch_prefix = "radley"
+
+[hooks.worktree_created]
+command = "mkdir -p .orion && count=0; test ! -f .orion/adopt-count || count=$(cat .orion/adopt-count); echo $((count + 1)) > .orion/adopt-count"
+`
+	if err := os.WriteFile(filepath.Join(repo, config.FileName), []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	worktreePath := filepath.Join(t.TempDir(), "a1b2", filepath.Base(repo))
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "worktree", "add", "--detach", worktreePath, "main")
+
+	mgr := NewManager()
+	first, err := mgr.AdoptWorkspace(worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := mgr.AdoptWorkspace(worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Name != second.Name || !strings.Contains(first.Name, "codex-a1b2") {
+		t.Fatalf("adopted names = %q and %q", first.Name, second.Name)
+	}
+	data, err := os.ReadFile(filepath.Join(worktreePath, ".orion", "adopt-count"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "1" {
+		t.Fatalf("hook ran %s times, want once", got)
 	}
 }
 

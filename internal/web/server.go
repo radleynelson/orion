@@ -54,6 +54,8 @@ type AppAPI interface {
 	GetProjectInfo(path string) (*workspace.ProjectInfo, error)
 	ListWorkspaces(repoRoot string) ([]workspace.Workspace, error)
 	CreateWorkspaceFrom(repoRoot string, name string, baseRef string) (*workspace.Workspace, error)
+	AdoptWorkspace(path string) (*workspace.Workspace, error)
+	CleanupAdoptedWorkspace(path string) error
 	RecoverSessions(repoName string, workspacePaths []string) []state.SessionInfo
 	GetSavedTabs() []state.SavedTab
 	LaunchShell(repoRoot string, workspacePath string) (string, error)
@@ -105,6 +107,12 @@ type Server struct {
 	// Track active web terminal connections for zombie cleanup
 	activeWebTerminals   map[string]bool
 	activeWebTerminalsMu sync.Mutex
+
+	// Older mobile clients used to send kill-session immediately after
+	// converting a terminal into chat. Keep a short grace window so that stale
+	// cleanup request cannot destroy the tmux session the chat just attached to.
+	recentChatAttachKills   map[string]time.Time
+	recentChatAttachKillsMu sync.Mutex
 }
 
 // NewServer creates a new web server instance.
@@ -119,7 +127,8 @@ func NewServer(app AppAPI, termMgr *terminal.Manager, codexMgr *codexchat.Manage
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		activeWebTerminals: make(map[string]bool),
+		activeWebTerminals:    make(map[string]bool),
+		recentChatAttachKills: make(map[string]time.Time),
 	}
 }
 
@@ -136,6 +145,8 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/projects", s.authMiddleware(s.handleProjects))
 	mux.HandleFunc("/api/projects/info", s.authMiddleware(s.handleProjectInfo))
 	mux.HandleFunc("/api/workspaces", s.authMiddleware(s.handleWorkspaces))
+	mux.HandleFunc("/api/workspaces/adopt", s.authMiddleware(s.handleWorkspaceAdopt))
+	mux.HandleFunc("/api/workspaces/cleanup", s.authMiddleware(s.handleWorkspaceCleanup))
 	mux.HandleFunc("/api/sessions", s.authMiddleware(s.handleSessions))
 	mux.HandleFunc("/api/terminal", s.authMiddleware(s.handleTerminal))
 	mux.HandleFunc("/api/shell", s.authMiddleware(s.handleShell))
@@ -148,6 +159,7 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/codex-chat/message", s.authMiddleware(s.handleCodexChatMessage))
 	mux.HandleFunc("/api/codex-chat/answer", s.authMiddleware(s.handleCodexChatAnswer))
 	mux.HandleFunc("/api/agents", s.authMiddleware(s.handleAgents))
+	mux.HandleFunc("/api/agent-completions", s.authMiddleware(s.handleAgentCompletions))
 	mux.HandleFunc("/api/agent", s.authMiddleware(s.handleLaunchAgent))
 	mux.HandleFunc("/api/servers", s.authMiddleware(s.handleServers))
 	mux.HandleFunc("/api/servers/start", s.authMiddleware(s.handleServersStart))
@@ -357,6 +369,45 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleWorkspaceAdopt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	result, err := s.app.AdoptWorkspace(req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleWorkspaceCleanup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	if err := s.app.CleanupAdoptedWorkspace(req.Path); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -420,6 +471,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Provider:         t.Provider,
 			Icon:             t.Icon,
 			ViewMode:         t.ViewMode,
+			Status:           t.Status,
 			RuntimeSessionID: t.RuntimeSessionID,
 			ThreadID:         t.ThreadID,
 			Model:            t.Model,
@@ -718,6 +770,9 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if strings.TrimSpace(req.TmuxSession) != "" {
+			s.markRecentChatAttach(info.ID)
+		}
 		info.Icon = firstNonEmpty(req.Icon, info.Icon, "claude")
 		s.claudeMgr.SetIcon(info.ID, info.Icon)
 		s.app.EmitSessionCreatedInfo(state.SessionInfo{
@@ -728,6 +783,7 @@ func (s *Server) handleClaudeChat(w http.ResponseWriter, r *http.Request) {
 			Provider:         "claude",
 			Icon:             info.Icon,
 			ViewMode:         "chat",
+			Status:           info.Status,
 			RuntimeSessionID: info.ID,
 			ThreadID:         info.ThreadID,
 			Model:            info.Model,
@@ -893,6 +949,9 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if strings.TrimSpace(req.TmuxSession) != "" {
+			s.markRecentChatAttach(info.ID)
+		}
 		info.Icon = firstNonEmpty(req.Icon, info.Icon, codexchat.Provider)
 		s.codexMgr.SetIcon(info.ID, info.Icon)
 		s.app.EmitSessionCreatedInfo(state.SessionInfo{
@@ -903,6 +962,7 @@ func (s *Server) handleCodexChat(w http.ResponseWriter, r *http.Request) {
 			Provider:          codexchat.Provider,
 			Icon:              info.Icon,
 			ViewMode:          codexchat.ViewModeChat,
+			Status:            info.Status,
 			RuntimeSessionID:  info.ID,
 			ThreadID:          info.ThreadID,
 			Model:             info.Model,
@@ -1200,6 +1260,10 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sessionId required", http.StatusBadRequest)
 		return
 	}
+	if s.shouldIgnoreRecentChatAttachKill(target) {
+		writeJSON(w, map[string]string{"status": "ignored"})
+		return
+	}
 	if stopped := s.stopClaudeChatTarget(target); stopped != "" {
 		s.app.EmitSessionKilled(stopped)
 		writeJSON(w, map[string]string{"status": "killed"})
@@ -1213,6 +1277,39 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 	exec.Command("tmux", "kill-session", "-t", target).Run()
 	s.app.EmitSessionKilled(target)
 	writeJSON(w, map[string]string{"status": "killed"})
+}
+
+const recentChatAttachKillGrace = 5 * time.Second
+
+func (s *Server) markRecentChatAttach(target string) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return
+	}
+	s.recentChatAttachKillsMu.Lock()
+	defer s.recentChatAttachKillsMu.Unlock()
+	if s.recentChatAttachKills == nil {
+		s.recentChatAttachKills = make(map[string]time.Time)
+	}
+	s.recentChatAttachKills[target] = time.Now().Add(recentChatAttachKillGrace)
+}
+
+func (s *Server) shouldIgnoreRecentChatAttachKill(target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	s.recentChatAttachKillsMu.Lock()
+	defer s.recentChatAttachKillsMu.Unlock()
+	expiresAt, ok := s.recentChatAttachKills[target]
+	if !ok {
+		return false
+	}
+	if time.Now().After(expiresAt) {
+		delete(s.recentChatAttachKills, target)
+		return false
+	}
+	return true
 }
 
 func (s *Server) stopClaudeChatTarget(target string) string {
@@ -1594,7 +1691,7 @@ func (s *Server) handleClaudeChatWS(w http.ResponseWriter, r *http.Request) {
 			info *claudechat.SessionInfo
 			err  error
 		)
-		if strings.HasPrefix(sessionID, "orion-") {
+		if tmuxSessionExists(sessionID) {
 			info, err = s.claudeMgr.Attach(sessionID, workspacePath, "Claude")
 		} else {
 			info, err = s.claudeMgr.Resume(workspacePath, "Claude Chat", sessionID)
@@ -1761,15 +1858,26 @@ func (s *Server) handleCodexChatWS(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.codexMgr.Get(sessionID)
 	if !ok {
 		workspacePath := firstNonEmpty(r.URL.Query().Get("workspacePath"), r.URL.Query().Get("workspace"))
+		if workspacePath == "" && tmuxSessionExists(sessionID) {
+			workspacePath = tmuxCurrentPath(sessionID)
+		}
 		if workspacePath == "" {
 			http.Error(w, "codex chat session not found", http.StatusNotFound)
 			return
 		}
-		info, err := s.codexMgr.StartWithOptions(codexchat.StartOptions{
-			WorkspacePath: workspacePath,
-			Label:         "Codex Chat",
-			ThreadID:      sessionID,
-		})
+		var (
+			info *codexchat.SessionInfo
+			err  error
+		)
+		if tmuxSessionExists(sessionID) {
+			info, err = s.codexMgr.Attach(sessionID, workspacePath, "Codex Chat")
+		} else {
+			info, err = s.codexMgr.StartWithOptions(codexchat.StartOptions{
+				WorkspacePath: workspacePath,
+				Label:         "Codex Chat",
+				ThreadID:      sessionID,
+			})
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -1946,6 +2054,7 @@ func reconcileSessionInfo(existing state.SessionInfo, incoming state.SessionInfo
 		out.Provider = firstNonEmpty(incoming.Provider, incoming.Type, out.Provider)
 		out.Icon = firstNonEmpty(out.Icon, incoming.Icon)
 		out.ViewMode = firstNonEmpty(out.ViewMode, incoming.ViewMode, "terminal")
+		out.Status = firstNonEmpty(incoming.Status, out.Status)
 		out.RuntimeSessionID = firstNonEmpty(out.RuntimeSessionID, incoming.RuntimeSessionID, incoming.TmuxName)
 		if typeChanged {
 			out.ThreadID = ""

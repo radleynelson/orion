@@ -106,7 +106,12 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 	// Create a tmux session with a name based on the terminal id
 	tmuxName := "orion-shell-" + id
 
-	createCmd := exec.Command("tmux", "new-session", "-d", "-s", tmuxName, "-c", dir)
+	args := []string{"new-session", "-d", "-s", tmuxName}
+	for _, assignment := range orionEnvAssignments(dir) {
+		args = append(args, "-e", assignment)
+	}
+	args = append(args, "-c", dir)
+	createCmd := exec.Command("tmux", args...)
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux new-session failed: err=%v out=%q name=%s dir=%s", err, strings.TrimSpace(string(out)), tmuxName, dir)
 	}
@@ -118,12 +123,6 @@ func (m *Manager) CreateInDir(id string, dir string) error {
 	exec.Command("tmux", "bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	exec.Command("tmux", "bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy").Run()
 	setTmuxMetadata(tmuxName, "shell", "Shell", dir)
-
-	// Source .orion/env.sh if it exists
-	envFile := filepath.Join(dir, ".orion", "env.sh")
-	if _, err := os.Stat(envFile); err == nil {
-		exec.Command("tmux", "send-keys", "-t", tmuxName, "source .orion/env.sh", "Enter").Run()
-	}
 
 	// Attach to the tmux session
 	cmd := exec.Command("tmux", "attach-session", "-d", "-t", tmuxName)
@@ -596,13 +595,18 @@ func safeSplitPoint(data []byte) int {
 // appendOrionEnv reads .orion/env.sh from a workspace dir and appends
 // the exported variables to the given environment slice.
 func appendOrionEnv(workspaceDir string, env []string) []string {
+	return append(env, orionEnvAssignments(workspaceDir)...)
+}
+
+func orionEnvAssignments(workspaceDir string) []string {
 	envFile := filepath.Join(workspaceDir, ".orion", "env.sh")
 	f, err := os.Open(envFile)
 	if err != nil {
-		return env
+		return nil
 	}
 	defer f.Close()
 
+	var assignments []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -613,9 +617,9 @@ func appendOrionEnv(workspaceDir string, env []string) []string {
 		if strings.HasPrefix(line, "export ") {
 			kv := strings.TrimPrefix(line, "export ")
 			if strings.Contains(kv, "=") {
-				env = append(env, kv)
+				assignments = append(assignments, kv)
 			}
 		}
 	}
-	return env
+	return assignments
 }

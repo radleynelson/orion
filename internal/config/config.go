@@ -17,14 +17,15 @@ const (
 
 // OrionConfig represents the per-repo .orion.toml configuration.
 type OrionConfig struct {
-	BranchPrefix string                  `toml:"branch_prefix"`
-	WorktreesDir string                  `toml:"worktrees_dir"`
-	Credentials  CredentialsConfig       `toml:"credentials"`
-	Hooks        HooksConfig             `toml:"hooks"`
-	Servers      map[string]ServerConfig `toml:"servers"`
-	Agents       map[string]AgentConfig  `toml:"agents"`
-	LSP          map[string]LSPConfig    `toml:"lsp"`
-	Plugins      PluginsConfig           `toml:"plugins"`
+	BranchPrefix   string                  `toml:"branch_prefix"`
+	WorktreesDir   string                  `toml:"worktrees_dir"`
+	WorktreeLayout string                  `toml:"worktree_layout"`
+	Credentials    CredentialsConfig       `toml:"credentials"`
+	Hooks          HooksConfig             `toml:"hooks"`
+	Servers        map[string]ServerConfig `toml:"servers"`
+	Agents         map[string]AgentConfig  `toml:"agents"`
+	LSP            map[string]LSPConfig    `toml:"lsp"`
+	Plugins        PluginsConfig           `toml:"plugins"`
 }
 
 type PluginsConfig struct {

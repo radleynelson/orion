@@ -182,6 +182,7 @@ export namespace codexchat {
 	    toolUseId?: string;
 	    toolName?: string;
 	    details?: string;
+	    planPath?: string;
 	    attachments?: chatattachments.Attachment[];
 	    createdAt: string;
 
@@ -202,6 +203,7 @@ export namespace codexchat {
 	        this.toolUseId = source["toolUseId"];
 	        this.toolName = source["toolName"];
 	        this.details = source["details"];
+	        this.planPath = source["planPath"];
 	        this.attachments = this.convertValues(source["attachments"], chatattachments.Attachment);
 	        this.createdAt = source["createdAt"];
 	    }
@@ -476,6 +478,7 @@ export namespace config {
 	export class OrionConfig {
 	    BranchPrefix: string;
 	    WorktreesDir: string;
+	    WorktreeLayout: string;
 	    Credentials: CredentialsConfig;
 	    Hooks: HooksConfig;
 	    Servers: Record<string, ServerConfig>;
@@ -491,6 +494,7 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.BranchPrefix = source["BranchPrefix"];
 	        this.WorktreesDir = source["WorktreesDir"];
+	        this.WorktreeLayout = source["WorktreeLayout"];
 	        this.Credentials = this.convertValues(source["Credentials"], CredentialsConfig);
 	        this.Hooks = this.convertValues(source["Hooks"], HooksConfig);
 	        this.Servers = this.convertValues(source["Servers"], ServerConfig, true);
@@ -1046,6 +1050,7 @@ export namespace state {
 	    provider?: string;
 	    icon?: string;
 	    viewMode?: string;
+	    status?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
 	    model?: string;
@@ -1068,6 +1073,7 @@ export namespace state {
 	        this.provider = source["provider"];
 	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
+	        this.status = source["status"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
 	        this.model = source["model"];
@@ -1086,6 +1092,7 @@ export namespace state {
 	    provider?: string;
 	    icon?: string;
 	    viewMode?: string;
+	    status?: string;
 	    runtimeSessionId?: string;
 	    threadId?: string;
 	    model?: string;
@@ -1108,6 +1115,7 @@ export namespace state {
 	        this.provider = source["provider"];
 	        this.icon = source["icon"];
 	        this.viewMode = source["viewMode"];
+	        this.status = source["status"];
 	        this.runtimeSessionId = source["runtimeSessionId"];
 	        this.threadId = source["threadId"];
 	        this.model = source["model"];

@@ -36,6 +36,7 @@ export interface Tab {
   icon?: string;
   provider?: 'codex' | 'claude';
   viewMode?: 'terminal' | 'chat';
+  status?: string;
   runtimeSessionId?: string;
   threadId?: string;
   model?: string;
@@ -82,6 +83,7 @@ interface OrionState {
   swapPane: (direction: 'next' | 'prev') => void;
   rotateSplit: () => void;
   renameTab: (tabId: string, newLabel: string) => void;
+  setTabSessionStatus: (sessionId: string, status: string) => void;
   detachPane: () => void;
 
   // Sidebar mode
@@ -596,6 +598,24 @@ export const useStore = create<OrionState>((set, get) => ({
       tabs: state.tabs.map((t) =>
         t.id === tabId ? { ...t, label: newLabel } : t
       ),
+    }));
+  },
+
+  setTabSessionStatus: (sessionId, status) => {
+    if (!sessionId || !status) return;
+    set((state) => ({
+      tabs: state.tabs.map((t) => {
+        const leaves = collectLeaves(t.rootPane);
+        const matchesChat = leaves.some((leaf) =>
+          leaf.type === 'chat' &&
+          (leaf.chatSessionId === sessionId || leaf.chatThreadId === sessionId),
+        );
+        const matchesTab =
+          t.id === sessionId ||
+          t.runtimeSessionId === sessionId ||
+          t.threadId === sessionId;
+        return matchesChat || matchesTab ? { ...t, status } : t;
+      }),
     }));
   },
 

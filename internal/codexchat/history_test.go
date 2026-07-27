@@ -3,6 +3,7 @@ package codexchat
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,170 @@ func TestLoadHistoryReadsCodexJSONL(t *testing.T) {
 	}
 }
 
+func TestParseCodexTranscriptReadsRuntimeItems(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	threadID := "thread-with-runtime-items"
+	workspace := filepath.Join(t.TempDir(), "orion")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05", "15")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "runtime.jsonl")
+	raw := `{"type":"session_meta","timestamp":"2026-05-15T10:00:00Z","payload":{"id":"` + threadID + `","cwd":"` + workspace + `","model":"gpt-5.5"}}
+{"type":"turn_context","timestamp":"2026-05-15T10:00:01Z","payload":{"model":"gpt-5.5","effort":"xhigh","collaboration_mode":{"mode":"default","settings":{"model":"gpt-5.5","reasoning_effort":"xhigh"}}}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:02Z","payload":{"type":"task_started"}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:03Z","payload":{"type":"user_message","message":"Run the focused tests","images":[],"local_images":[]}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:04Z","payload":{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Need to run the focused package tests."}]}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:05Z","payload":{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"go test ./internal/codexchat\",\"workdir\":\"` + workspace + `\"}"}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:06Z","payload":{"type":"function_call_output","call_id":"call_1","output":"ok  \torion/internal/codexchat\t0.482s"}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:07Z","payload":{"type":"agent_message","message":"Done.","phase":"final_answer"}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:08Z","payload":{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:09Z","payload":{"type":"task_complete","last_agent_message":"Done."}}
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, meta, err := parseCodexTranscript(path, workspace, "orion-test-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ID != threadID || meta.Model != "gpt-5.5" || meta.ReasoningEffort != "xhigh" {
+		t.Fatalf("unexpected meta: %#v", meta)
+	}
+	assertCodexMessage(t, messages, "status", "", "running", "")
+	assertCodexMessage(t, messages, "user", "", "", "Run the focused tests")
+	assertCodexMessage(t, messages, "thinking_delta", "", "", "Need to run the focused package tests.")
+	assertCodexMessage(t, messages, "tool", "Bash", "", "go test ./internal/codexchat")
+	assertCodexMessage(t, messages, "tool_result", "Bash", "", "orion/internal/codexchat")
+	assertCodexMessage(t, messages, "assistant", "", "", "Done.")
+	assertCodexMessage(t, messages, "result", "", "", "completed")
+
+	assistantCount := 0
+	for _, msg := range messages {
+		if msg.Type == "assistant" && msg.Text == "Done." {
+			assistantCount++
+		}
+	}
+	if assistantCount != 1 {
+		t.Fatalf("expected duplicate assistant rows to collapse, got %d in %#v", assistantCount, messages)
+	}
+}
+
+func TestParseCodexTranscriptMapsPlanModeFinalAnswerToPlan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	threadID := "thread-with-plan"
+	workspace := filepath.Join(t.TempDir(), "orion")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05", "15")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "plan.jsonl")
+	raw := `{"type":"session_meta","timestamp":"2026-05-15T10:00:00Z","payload":{"id":"` + threadID + `","cwd":"` + workspace + `"}}
+{"type":"turn_context","timestamp":"2026-05-15T10:00:01Z","payload":{"collaboration_mode":{"mode":"plan","settings":{"reasoning_effort":"high"}}}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:02Z","payload":{"type":"agent_message","message":"## Plan\n- Inspect the transcript format.\n- Wire the parser into mobile chat.","phase":"final_answer"}}
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, _, err := parseCodexTranscript(path, workspace, "orion-test-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 plan message, got %d: %#v", len(messages), messages)
+	}
+	if messages[0].Type != "plan" || messages[0].Status != "waiting_approval" || messages[0].Text != "Plan ready" {
+		t.Fatalf("unexpected plan message: %#v", messages[0])
+	}
+	if messages[0].Details == "" || messages[0].Details == "Plan ready" {
+		t.Fatalf("expected plan details, got %#v", messages[0])
+	}
+}
+
+func TestParseCodexTranscriptKeepsRepeatedUserMessages(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	workspace := filepath.Join(t.TempDir(), "orion")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05", "15")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "repeated.jsonl")
+	raw := `{"type":"session_meta","timestamp":"2026-05-15T10:00:00Z","payload":{"id":"thread-repeat","cwd":"` + workspace + `"}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:01Z","payload":{"type":"user_message","message":"try again","images":[],"local_images":[]}}
+{"type":"event_msg","timestamp":"2026-05-15T10:00:02Z","payload":{"type":"user_message","message":"try again","images":[],"local_images":[]}}
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, _, err := parseCodexTranscript(path, workspace, "orion-test-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, msg := range messages {
+		if msg.Type == "user" && msg.Text == "try again" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected two repeated user messages, got %d in %#v", count, messages)
+	}
+}
+
+func TestParseCodexTranscriptMapsAskUserQuestionToPermissionRequest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	workspace := filepath.Join(t.TempDir(), "orion")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05", "15")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "question.jsonl")
+	raw := `{"type":"session_meta","timestamp":"2026-05-15T10:00:00Z","payload":{"id":"thread-question","cwd":"` + workspace + `"}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:01Z","payload":{"type":"function_call","call_id":"ask_1","name":"request_user_input","arguments":"{\"question\":\"Which label should I use?\"}"}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:02Z","payload":{"type":"function_call_output","call_id":"ask_1","output":"Use Page header"}}
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, _, err := parseCodexTranscript(path, workspace, "orion-test-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCodexMessage(t, messages, "permission_request", "AskUserQuestion", "", "Which label should I use?")
+	assertCodexMessage(t, messages, "permission_resolved", "AskUserQuestion", "", "Use Page header")
+}
+
+func TestParseCodexTranscriptMapsUpdatePlanToTaskList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	workspace := filepath.Join(t.TempDir(), "orion")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05", "15")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "tasks.jsonl")
+	raw := `{"type":"session_meta","timestamp":"2026-05-15T10:00:00Z","payload":{"id":"thread-tasks","cwd":"` + workspace + `"}}
+{"type":"response_item","timestamp":"2026-05-15T10:00:01Z","payload":{"type":"function_call","call_id":"plan_1","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"Inspect parser\",\"status\":\"completed\"},{\"step\":\"Render task card\",\"status\":\"in_progress\"},{\"step\":\"Run tests\",\"status\":\"pending\"}],\"explanation\":\"UI pass\"}"}}
+`
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, _, err := parseCodexTranscript(path, workspace, "orion-test-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCodexMessage(t, messages, "task_list", "update_plan", "", "Render task card")
+}
+
 func TestLoadHistoryRejectsWrongWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -49,6 +214,26 @@ func TestLoadHistoryRejectsWrongWorkspace(t *testing.T) {
 	if messages := LoadHistory(threadID, otherWorkspace); len(messages) != 0 {
 		t.Fatalf("expected no messages for wrong workspace, got %#v", messages)
 	}
+}
+
+func assertCodexMessage(t *testing.T, messages []Message, typ string, toolName string, status string, contains string) {
+	t.Helper()
+	for _, msg := range messages {
+		if msg.Type != typ {
+			continue
+		}
+		if toolName != "" && msg.ToolName != toolName {
+			continue
+		}
+		if status != "" && msg.Status != status {
+			continue
+		}
+		if contains != "" && !strings.Contains(msg.Text, contains) && !strings.Contains(msg.Details, contains) {
+			continue
+		}
+		return
+	}
+	t.Fatalf("missing message type=%q tool=%q status=%q contains=%q in %#v", typ, toolName, status, contains, messages)
 }
 
 func TestCachedMessagesPreserveRichRows(t *testing.T) {

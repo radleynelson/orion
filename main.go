@@ -28,6 +28,7 @@ func main() {
 	flag.BoolVar(&newWindowFlag, "new", false, "Open to project picker (don't auto-load last project)")
 	flag.Parse()
 
+	repairLaunchPath()
 	applog.Init()
 
 	if projectFlag == "" && flag.NArg() > 0 {
