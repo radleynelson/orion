@@ -597,11 +597,12 @@ export function createTerminal(
   let wheelAccumulator = 0;
   let lastWheelTime = 0;
   let scrollAnimationFrame: number | null = null;
+  let idleFlushTimer: number | null = null;
   let pendingScrollCol = 1;
   let pendingScrollRow = 1;
   let pendingScrollThreshold = 16;
-  const scrollIdleResetMs = 180;
-  const minScrollPixelsPerLine = 12;
+  const scrollIdleFlushMs = 120;
+  const minScrollPixelsPerLine = 10;
   const maxScrollEventsPerFrame = 24;
 
   const normalizedWheelDelta = (e: WheelEvent, cellHeight: number, viewportHeight: number) => {
@@ -611,14 +612,33 @@ export function createTerminal(
   };
 
   const emitScrollEvents = (direction: 1 | -1, col: number, row: number, count: number) => {
+    if (count <= 0) return;
     const button = direction < 0 ? 64 : 65;
     sendData(`\x1b[<${button};${col};${row}M`.repeat(count));
   };
 
-  const flushWheelAccumulator = () => {
+  const clearIdleFlushTimer = () => {
+    if (idleFlushTimer !== null) {
+      window.clearTimeout(idleFlushTimer);
+      idleFlushTimer = null;
+    }
+  };
+
+  // Flush whatever is accumulated, optionally rounding up so small tail deltas
+  // (the last few px of a flick) still produce a final scroll step.
+  const flushWheelAccumulator = (forceTail = false) => {
     scrollAnimationFrame = null;
     const magnitude = Math.abs(wheelAccumulator);
-    if (magnitude < pendingScrollThreshold) return;
+    if (magnitude === 0) return;
+
+    if (magnitude < pendingScrollThreshold) {
+      if (!forceTail) return;
+      // Round the tail up to a single step in its direction.
+      const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
+      emitScrollEvents(direction, pendingScrollCol, pendingScrollRow, 1);
+      wheelAccumulator = 0;
+      return;
+    }
 
     const direction: 1 | -1 = wheelAccumulator > 0 ? 1 : -1;
     const count = Math.min(maxScrollEventsPerFrame, Math.floor(magnitude / pendingScrollThreshold));
@@ -626,8 +646,16 @@ export function createTerminal(
     wheelAccumulator -= direction * count * pendingScrollThreshold;
 
     if (Math.abs(wheelAccumulator) >= pendingScrollThreshold) {
-      scrollAnimationFrame = requestAnimationFrame(flushWheelAccumulator);
+      scrollAnimationFrame = requestAnimationFrame(() => flushWheelAccumulator(false));
     }
+  };
+
+  const scheduleIdleFlush = () => {
+    clearIdleFlushTimer();
+    idleFlushTimer = window.setTimeout(() => {
+      idleFlushTimer = null;
+      flushWheelAccumulator(true);
+    }, scrollIdleFlushMs);
   };
 
   const wheelHandler = (e: WheelEvent) => {
@@ -643,21 +671,24 @@ export function createTerminal(
 
     const delta = normalizedWheelDelta(e, cellHeight, rect.height);
     const now = Date.now();
-    if (
-      now - lastWheelTime > scrollIdleResetMs ||
-      (wheelAccumulator !== 0 && Math.sign(delta) !== Math.sign(wheelAccumulator))
-    ) {
-      wheelAccumulator = 0;
+
+    // If the user reversed direction, flush what's pending in the old direction
+    // before starting fresh — don't wipe their scroll.
+    if (wheelAccumulator !== 0 && Math.sign(delta) !== Math.sign(wheelAccumulator)) {
+      flushWheelAccumulator(true);
     }
+
     lastWheelTime = now;
     wheelAccumulator += delta;
     pendingScrollCol = col;
     pendingScrollRow = row;
-    pendingScrollThreshold = Math.max(minScrollPixelsPerLine, cellHeight * 1.15);
+    pendingScrollThreshold = Math.max(minScrollPixelsPerLine, cellHeight * 1.0);
 
     if (Math.abs(wheelAccumulator) >= pendingScrollThreshold && scrollAnimationFrame === null) {
-      scrollAnimationFrame = requestAnimationFrame(flushWheelAccumulator);
+      scrollAnimationFrame = requestAnimationFrame(() => flushWheelAccumulator(false));
     }
+    // Always schedule an idle flush so the tail of a flick is never lost.
+    scheduleIdleFlush();
   };
   // Use capture phase so we intercept before xterm.js's internal handlers
   el.addEventListener('wheel', wheelHandler, { passive: false, capture: true });
@@ -708,6 +739,7 @@ export function createTerminal(
 
   const dispose = () => {
     if (scrollAnimationFrame !== null) cancelAnimationFrame(scrollAnimationFrame);
+    if (idleFlushTimer !== null) window.clearTimeout(idleFlushTimer);
     el.removeEventListener('wheel', wheelHandler, { capture: true } as any);
     container.removeEventListener('keydown', keyCaptureHandler, { capture: true } as any);
     container.removeEventListener('keypress', keyCaptureHandler, { capture: true } as any);

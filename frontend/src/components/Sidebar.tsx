@@ -4,6 +4,7 @@ import { server, main } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import {
   ListWorkspaces,
+  ListBaseRefs,
   CreateWorkspaceFrom,
   DeleteWorkspace,
   LaunchAgent,
@@ -58,6 +59,8 @@ const DEFAULT_CODEX_OPTIONS: CodexLaunchOptions = {
   collaborationMode: 'default',
 };
 
+// baseRef left empty means "use the loaded default" (origin/<main> when a
+// remote exists). The create modal resolves it against ListBaseRefs on submit.
 const DEFAULT_WORKSPACE_DRAFT: NewWorkspaceDraft = {
   name: '',
   baseRef: '',
@@ -127,6 +130,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
 
   const [creating, setCreating] = useState(false);
   const [newWorkspaceDraft, setNewWorkspaceDraft] = useState<NewWorkspaceDraft>(DEFAULT_WORKSPACE_DRAFT);
+  const [baseRefOptions, setBaseRefOptions] = useState<{ remote: string[]; local: string[]; default: string }>({ remote: [], local: [], default: '' });
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [createStage, setCreateStage] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
@@ -245,10 +249,8 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       // Cmd+N: new workspace
       if (e.metaKey && !e.shiftKey && e.key === 'n') {
         e.preventDefault();
-        const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
         setNewWorkspaceDraft({
           ...DEFAULT_WORKSPACE_DRAFT,
-          baseRef: baseRefs[0] || project?.mainBranch || 'main',
           codexOptions: { ...DEFAULT_CODEX_OPTIONS },
         });
         setCreateError(null);
@@ -272,11 +274,26 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     if (!project) return;
     try {
       const ws = await ListWorkspaces(project.root);
-      setWorkspaces(ws);
+      const current = useStore.getState().workspaces;
+      const unchanged = current.length === ws.length && current.every((existing, index) => {
+        const incoming = ws[index];
+        return existing.path === incoming.path
+          && existing.name === incoming.name
+          && existing.branch === incoming.branch
+          && existing.isMain === incoming.isMain
+          && existing.hasAgent === incoming.hasAgent;
+      });
+      if (!unchanged) setWorkspaces(ws);
     } catch (err) {
       console.error('Failed to list workspaces:', err);
     }
   }, [project, setWorkspaces]);
+
+  useEffect(() => {
+    if (!project) return;
+    const interval = window.setInterval(refreshWorkspaces, 5000);
+    return () => window.clearInterval(interval);
+  }, [project, refreshWorkspaces]);
 
   useEffect(() => {
     if (!project) return;
@@ -300,16 +317,33 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
   }, [project, refreshWorkspaces]);
 
   const openNewWorkspace = useCallback(() => {
-    const baseRefs = workspaceBaseRefs(project?.mainBranch, workspaces);
     setNewWorkspaceDraft({
       ...DEFAULT_WORKSPACE_DRAFT,
-      baseRef: baseRefs[0] || project?.mainBranch || 'main',
       codexOptions: { ...DEFAULT_CODEX_OPTIONS },
     });
     setCreateError(null);
     setCreateStage('');
     setCreating(true);
-  }, [project?.mainBranch, workspaces]);
+  }, []);
+
+  // Load branch options (local + origin) each time the create modal opens, so
+  // the "Branch from" dropdown reflects the latest remote branches and defaults
+  // to origin/<main>.
+  useEffect(() => {
+    if (!creating || !project) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const refs = await ListBaseRefs(project.root);
+        if (!cancelled) {
+          setBaseRefOptions({ remote: refs.remote || [], local: refs.local || [], default: refs.default || '' });
+        }
+      } catch (err) {
+        console.error('Failed to list base refs:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [creating, project]);
 
   useEffect(() => {
     const cancel = EventsOn('workspace:create-progress', (payload: { stage?: string } = {}) => {
@@ -507,7 +541,8 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     setCreateError(null);
     setCreateStage('Creating git worktree');
     try {
-      const ws = await CreateWorkspaceFrom(project.root, normalizedWorkspaceName(newWorkspaceDraft.name), newWorkspaceDraft.baseRef);
+      const baseRef = newWorkspaceDraft.baseRef || baseRefOptions.default || project.mainBranch || 'main';
+      const ws = await CreateWorkspaceFrom(project.root, normalizedWorkspaceName(newWorkspaceDraft.name), baseRef);
       setCreating(false);
       await refreshWorkspaces();
       if (ws?.path) {
@@ -545,7 +580,7 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
       setCreatingWorkspace(false);
       setCreateStage('');
     }
-  }, [project, newWorkspaceDraft, refreshWorkspaces, setActiveWorkspace, handleLaunchCodexChat, handleLaunchClaudeChat, handleLaunchAgent, handleLaunchShell]);
+  }, [project, newWorkspaceDraft, baseRefOptions, refreshWorkspaces, setActiveWorkspace, handleLaunchCodexChat, handleLaunchClaudeChat, handleLaunchAgent, handleLaunchShell]);
 
   const handleStartServers = useCallback(async (wsPath: string, isMain: boolean) => {
     if (!project) return;
@@ -652,7 +687,15 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
     );
   }
 
-  const baseRefs = workspaceBaseRefs(project.mainBranch, workspaces);
+  // Remote + local branch options for the "Branch from" dropdown. Until
+  // ListBaseRefs resolves, fall back to the locally-derived refs so the select
+  // is never empty.
+  const remoteRefs = baseRefOptions.remote;
+  const localRefs = baseRefOptions.local.length > 0
+    ? baseRefOptions.local
+    : workspaceBaseRefs(project.mainBranch, workspaces);
+  const defaultBaseRef = baseRefOptions.default || remoteRefs[0] || localRefs[0] || project.mainBranch || 'main';
+  const selectedBaseRef = newWorkspaceDraft.baseRef || defaultBaseRef;
   const normalizedName = normalizedWorkspaceName(newWorkspaceDraft.name);
   const previewPath = normalizedName ? `${project.root}-${normalizedName}` : `${project.root}-new-worktree`;
   const createDisabled = creatingWorkspace || !normalizedName;
@@ -883,8 +926,15 @@ export default function Sidebar({ onNewSession }: SidebarProps) {
 
                 <label className="workspace-create-field">
                   <span>Branch from</span>
-                  <select value={newWorkspaceDraft.baseRef || baseRefs[0]} onChange={(e) => updateNewWorkspaceDraft('baseRef', e.target.value)}>
-                    {baseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+                  <select value={selectedBaseRef} onChange={(e) => updateNewWorkspaceDraft('baseRef', e.target.value)}>
+                    {remoteRefs.length > 0 && (
+                      <optgroup label="Latest from origin">
+                        {remoteRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+                      </optgroup>
+                    )}
+                    <optgroup label="Local branches">
+                      {localRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+                    </optgroup>
                   </select>
                 </label>
 

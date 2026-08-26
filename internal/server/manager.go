@@ -58,14 +58,9 @@ func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bo
 	existing := m.portReg.GetAllocation(wsID)
 	if existing != nil {
 		// Already allocated, just ensure env file exists
-		redisDB := 1 // main default
-		if !isMain {
-			if db, ok := m.portReg.GetRedisDB(wsID); ok {
-				redisDB = db
-			} else {
-				db, _ := m.portReg.AllocateRedisDB(wsID)
-				redisDB = db
-			}
+		redisDB, err := m.redisDBForWorkspace(wsID, isMain)
+		if err != nil {
+			return err
 		}
 		writeEnvFile(workspacePath, existing, cfg, redisDB)
 		return nil
@@ -88,10 +83,11 @@ func (m *Manager) AllocatePorts(repoRoot string, workspacePath string, isMain bo
 		if err != nil {
 			return err
 		}
-		db, err := m.portReg.AllocateRedisDB(wsID)
-		if err == nil {
-			redisDB = db
+		db, err := m.redisDBForWorkspace(wsID, false)
+		if err != nil {
+			return err
 		}
+		redisDB = db
 	}
 
 	writeEnvFile(workspacePath, alloc, cfg, redisDB)
@@ -133,10 +129,11 @@ func (m *Manager) StartServers(repoRoot string, workspacePath string, isMain boo
 	// Allocate Redis DB
 	redisDB := 1 // main uses DB 1
 	if !isMain {
-		db, err := m.portReg.AllocateRedisDB(wsID)
-		if err == nil {
-			redisDB = db
+		db, err := m.redisDBForWorkspace(wsID, false)
+		if err != nil {
+			return nil, err
 		}
+		redisDB = db
 	}
 
 	// Write .orion/env.sh so agents and shells know the ports
@@ -265,6 +262,17 @@ func defaultAllocation(cfg *config.OrionConfig) port.Allocation {
 		}
 	}
 	return alloc
+}
+
+func (m *Manager) redisDBForWorkspace(wsID string, isMain bool) (int, error) {
+	if isMain {
+		return 1, nil
+	}
+	db, err := m.portReg.AllocateRedisDB(wsID)
+	if err != nil {
+		return 0, fmt.Errorf("Redis DB allocation failed for workspace %s: %w", wsID, err)
+	}
+	return db, nil
 }
 
 func buildEnvString(serverName string, srv config.ServerConfig, alloc port.Allocation, cfg *config.OrionConfig, redisDB int) string {

@@ -165,6 +165,36 @@ func (r *Registry) GetRedisDB(wsID string) (int, bool) {
 	return db, ok
 }
 
+// GetRedisDBs returns a copy of all workspace Redis DB allocations.
+func (r *Registry) GetRedisDBs() map[string]int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]int, len(r.redisDBs))
+	for wsID, db := range r.redisDBs {
+		result[wsID] = db
+	}
+	return result
+}
+
+// ReconcileRedisDBs releases allocations for workspaces that no longer exist.
+// Callers must include every workspace that should retain its allocation,
+// including workspaces with running server sessions.
+func (r *Registry) ReconcileRedisDBs(activeWorkspaceIDs map[string]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	changed := false
+	for wsID := range r.redisDBs {
+		if !activeWorkspaceIDs[wsID] {
+			delete(r.redisDBs, wsID)
+			changed = true
+		}
+	}
+	if changed {
+		r.save()
+	}
+}
+
 // ReleaseRedisDB frees the Redis DB for a workspace.
 func (r *Registry) ReleaseRedisDB(wsID string) {
 	r.mu.Lock()

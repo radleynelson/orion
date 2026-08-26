@@ -311,6 +311,10 @@ func (a *App) ListWorkspaces(repoRoot string) ([]workspace.Workspace, error) {
 	return orderWorkspaces(workspaces, order), nil
 }
 
+func (a *App) ListBaseRefs(repoRoot string) (*workspace.BaseRefs, error) {
+	return a.wsMgr.ListBaseRefs(repoRoot)
+}
+
 func (a *App) CreateWorkspace(repoRoot string, name string) (*workspace.Workspace, error) {
 	return a.CreateWorkspaceFrom(repoRoot, name, "")
 }
@@ -321,6 +325,9 @@ func (a *App) CreateWorkspaceFrom(repoRoot string, name string, baseRef string) 
 		return nil, err
 	}
 	if ws != nil {
+		if err := a.reconcileRedisDBs(repoRoot); err != nil {
+			return nil, fmt.Errorf("reconcile Redis DB allocations: %w", err)
+		}
 		if err := a.srvMgr.AllocatePorts(repoRoot, ws.Path, false); err != nil {
 			return nil, fmt.Errorf("allocate workspace environment: %w", err)
 		}
@@ -350,6 +357,9 @@ func (a *App) AdoptWorkspace(path string) (*workspace.Workspace, error) {
 	mainPath := workspace.MainWorktreePath(ws.Path)
 	if mainPath == "" {
 		return nil, fmt.Errorf("cannot find main worktree for %s", ws.Path)
+	}
+	if err := a.reconcileRedisDBs(mainPath); err != nil {
+		return nil, fmt.Errorf("reconcile Redis DB allocations: %w", err)
 	}
 	if err := a.srvMgr.AllocatePorts(mainPath, ws.Path, false); err != nil {
 		return nil, fmt.Errorf("allocate workspace environment: %w", err)
@@ -764,10 +774,16 @@ func (a *App) GetConfig(repoRoot string) *config.OrionConfig {
 // --- Server methods ---
 
 func (a *App) AllocatePorts(repoRoot string, workspacePath string, isMain bool) error {
+	if err := a.reconcileRedisDBs(repoRoot); err != nil {
+		return fmt.Errorf("reconcile Redis DB allocations: %w", err)
+	}
 	return a.srvMgr.AllocatePorts(repoRoot, workspacePath, isMain)
 }
 
 func (a *App) StartServers(repoRoot string, workspacePath string, isMain bool) ([]server.ServerStatus, error) {
+	if err := a.reconcileRedisDBs(repoRoot); err != nil {
+		return nil, fmt.Errorf("reconcile Redis DB allocations: %w", err)
+	}
 	return a.srvMgr.StartServers(repoRoot, workspacePath, isMain)
 }
 
@@ -800,6 +816,68 @@ func (a *App) GetWorkspaceEnv(workspacePath string) map[string]string {
 		}
 	}
 	return result
+}
+
+func (a *App) reconcileRedisDBs(repoRoot string) error {
+	activeWorkspaceIDs := make(map[string]bool)
+	projectRoots := append([]string{repoRoot}, a.appState.GetRecentProjects()...)
+	seenRoots := make(map[string]bool)
+	for _, root := range projectRoots {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "." || seenRoots[root] {
+			continue
+		}
+		seenRoots[root] = true
+		if _, err := os.Stat(root); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("inspect project %s: %w", root, err)
+		}
+		workspaces, err := a.wsMgr.ListWorkspaces(root)
+		if err != nil {
+			return fmt.Errorf("list workspaces for %s: %w", root, err)
+		}
+		for _, ws := range workspaces {
+			activeWorkspaceIDs[workspacekey.ID(ws.Path)] = true
+		}
+	}
+
+	redisDBs := a.portReg.GetRedisDBs()
+	sessions, err := runningTmuxSessions()
+	if err != nil {
+		return err
+	}
+	for wsID := range redisDBs {
+		prefix := fmt.Sprintf("orion-srv-%s-", wsID)
+		for _, session := range sessions {
+			if strings.HasPrefix(session, prefix) {
+				activeWorkspaceIDs[wsID] = true
+				break
+			}
+		}
+	}
+
+	a.portReg.ReconcileRedisDBs(activeWorkspaceIDs)
+	return nil
+}
+
+func runningTmuxSessions() ([]string, error) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(out))
+		if message == "" || strings.Contains(message, "no server running") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list tmux sessions: %s", message)
+	}
+	var sessions []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if session := strings.TrimSpace(line); session != "" {
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions, nil
 }
 
 func (a *App) OpenBrowser(repoRoot string, workspacePath string) error {

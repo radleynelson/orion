@@ -266,6 +266,10 @@ export function LintFile(arg1, arg2) {
   return window['go']['main']['App']['LintFile'](arg1, arg2);
 }
 
+export function ListBaseRefs(arg1) {
+  return window['go']['main']['App']['ListBaseRefs'](arg1);
+}
+
 export function ListClaudeChatHistory(arg1, arg2) {
   return window['go']['main']['App']['ListClaudeChatHistory'](arg1, arg2);
 }

@@ -146,6 +146,8 @@ export function LaunchShell(arg1:string,arg2:string):Promise<string>;
 
 export function LintFile(arg1:string,arg2:string):Promise<plugin.LintResult>;
 
+export function ListBaseRefs(arg1:string):Promise<workspace.BaseRefs>;
+
 export function ListClaudeChatHistory(arg1:string,arg2:number):Promise<Array<claudesdk.HistoryThread>>;
 
 export function ListClaudeChatSessions(arg1:Array<string>):Promise<Array<state.SessionInfo>>;

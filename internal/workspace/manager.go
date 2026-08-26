@@ -33,6 +33,15 @@ type ProjectInfo struct {
 	MainBranch string `json:"mainBranch"`
 }
 
+// BaseRefs lists the refs a new worktree can branch from. Remote refs come
+// first so a worktree can start from the latest pushed state; Default is the
+// ref the UI should pre-select (origin/<main> when a remote exists).
+type BaseRefs struct {
+	Remote  []string `json:"remote"`
+	Local   []string `json:"local"`
+	Default string   `json:"default"`
+}
+
 // Manager handles workspace (worktree) operations. Bound to Wails.
 type Manager struct {
 	ctx context.Context
@@ -64,6 +73,24 @@ func (m *Manager) GetProjectInfo(path string) (*ProjectInfo, error) {
 		Root:       root,
 		MainBranch: getMainBranch(root),
 	}, nil
+}
+
+// ListBaseRefs returns the local and remote branches a new worktree can branch
+// from. The default prefers origin/<mainBranch> so worktrees start from the
+// latest pushed state, falling back to the local main branch when there is no
+// matching remote ref.
+func (m *Manager) ListBaseRefs(repoRoot string) (*BaseRefs, error) {
+	mainBranch := getMainBranch(repoRoot)
+
+	local := moveToFront(listRefs(repoRoot, "refs/heads"), mainBranch)
+	remote := moveToFront(listRemoteRefs(repoRoot), "origin/"+mainBranch)
+
+	def := mainBranch
+	if remoteMain := "origin/" + mainBranch; containsString(remote, remoteMain) {
+		def = remoteMain
+	}
+
+	return &BaseRefs{Remote: remote, Local: local, Default: def}, nil
 }
 
 // --- Worktree operations ---
@@ -121,6 +148,7 @@ func (m *Manager) ListWorkspaces(repoRoot string) ([]Workspace, error) {
 		current.IsMain = isFirst
 		workspaces = append(workspaces, *current)
 	}
+	applyCodexWorkspaceTitles(workspaces)
 
 	// Check for running tmux sessions
 	repoName := filepath.Base(repoRoot)
@@ -188,7 +216,10 @@ func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*W
 	displayName := workspaceID
 	worktreePath := filepath.Join(parentDir, displayName)
 	managedBy := "orion"
-	gitArgs := []string{"worktree", "add", "-b", branchName, worktreePath, baseBranch}
+	// --no-track keeps the new branch from adopting origin/<main> as its
+	// upstream when branching off a remote ref; feature branches manage their
+	// own upstream (Push sets it on first push).
+	gitArgs := []string{"worktree", "add", "-b", branchName, "--no-track", worktreePath, baseBranch}
 	if layout == "codex" {
 		shortID, err := uniqueWorktreeID(parentDir)
 		if err != nil {
@@ -201,6 +232,17 @@ func (m *Manager) CreateWorkspaceFrom(repoRoot, name string, baseRef string) (*W
 			return nil, fmt.Errorf("failed to create managed worktree parent: %w", err)
 		}
 		gitArgs = []string{"worktree", "add", "--detach", worktreePath, baseBranch}
+	}
+
+	// When branching from a remote-tracking ref, refresh it first so the new
+	// worktree starts from the latest pushed state. Best-effort: if the fetch
+	// fails (e.g. offline), fall back to the existing remote-tracking ref.
+	if strings.HasPrefix(baseBranch, "origin/") {
+		remoteBranch := strings.TrimPrefix(baseBranch, "origin/")
+		m.emitWorkspaceCreateProgress(worktreePath, "Fetching latest from origin")
+		fetchCmd := exec.Command("git", "fetch", "origin", remoteBranch)
+		fetchCmd.Dir = repoRoot
+		_ = fetchCmd.Run()
 	}
 
 	m.emitWorkspaceCreateProgress(worktreePath, "Creating git worktree")
@@ -511,6 +553,67 @@ func getMainBranch(root string) string {
 		}
 	}
 	return "main"
+}
+
+// listRefs returns the short names of refs under the given pattern (e.g.
+// "refs/heads" for local branches), in git's default ordering.
+func listRefs(repoRoot, pattern string) []string {
+	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", pattern)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var refs []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			refs = append(refs, line)
+		}
+	}
+	return refs
+}
+
+// listRemoteRefs returns origin's remote-tracking branches, excluding the
+// symbolic origin/HEAD alias.
+func listRemoteRefs(repoRoot string) []string {
+	var refs []string
+	for _, ref := range listRefs(repoRoot, "refs/remotes/origin") {
+		if ref == "origin" || strings.HasSuffix(ref, "/HEAD") {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// moveToFront returns items with target hoisted to the front if present;
+// otherwise items is returned unchanged.
+func moveToFront(items []string, target string) []string {
+	if target == "" {
+		return items
+	}
+	rest := make([]string, 0, len(items))
+	found := false
+	for _, item := range items {
+		if item == target {
+			found = true
+			continue
+		}
+		rest = append(rest, item)
+	}
+	if !found {
+		return items
+	}
+	return append([]string{target}, rest...)
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func getMainWorktreePath(repoRoot string) string {
